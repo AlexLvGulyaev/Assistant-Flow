@@ -347,15 +347,8 @@ def _inject_theme_css() -> None:
         [data-testid="stHeader"] {
           background: var(--bg-main) !important;
         }
-        [data-testid="stHeader"] {
-          position: sticky !important;
-          top: 0 !important;
-          z-index: 1000 !important;
-          border-bottom: 1px solid var(--border) !important;
-        }
-
         .main .block-container {
-          padding-top: 0.15rem !important;
+          padding-top: 0.02rem !important;
           padding-bottom: 0.6rem !important;
           max-width: 100% !important;
         }
@@ -372,25 +365,54 @@ def _inject_theme_css() -> None:
           color: var(--text-secondary) !important;
         }
         .topbar-box {
-          background: var(--bg-card);
-          border: 1px solid var(--border);
+          background: #0B1220;
+          border: none;
           border-radius: 10px;
-          padding: 6px 10px;
+          padding: 8px 10px;
           margin: 0 0 6px 0;
+          position: static;
+          top: auto;
+          z-index: auto;
+          backdrop-filter: none;
+          box-shadow: none;
+        }
+        .topbar-box [data-testid="column"] {
+          display: flex;
+          align-items: center;
+        }
+        .topbar-box [data-testid="stHorizontalBlock"] {
+          align-items: center;
+        }
+        .topbar-title-wrap {
+          display: flex;
+          flex-direction: row;
+          justify-content: center;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+          white-space: nowrap;
+        }
+        .topbar-app-title {
+          font-size: 1.02rem;
+          font-weight: 700;
+          color: var(--accent) !important;
+          line-height: 1.25;
+          margin: 0;
+        }
+        .topbar-db-path {
+          font-size: 0.77rem;
+          color: var(--text-secondary) !important;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .topbar-updated {
           font-size: 0.76rem;
           color: var(--text-secondary) !important;
           text-align: right;
-          margin-top: 3px;
+          margin-top: 0;
+          white-space: nowrap;
         }
-        h1 {
-          margin-top: 0 !important;
-          margin-bottom: 0.05rem !important;
-          padding-top: 0 !important;
-          font-size: 1.28rem !important;
-          line-height: 1.2 !important;
-        }
+        h1 { margin-top: 0 !important; margin-bottom: 0.05rem !important; }
         h2, h3 {
           margin-top: 0.28rem !important;
           margin-bottom: 0.2rem !important;
@@ -401,12 +423,12 @@ def _inject_theme_css() -> None:
         }
         .stTabs {
           margin-top: 0.05rem !important;
-          position: sticky;
-          top: 48px;
-          z-index: 999;
+          position: static !important;
+          top: auto !important;
+          z-index: auto !important;
           background: var(--bg-main);
-          padding-top: 2px;
-          border-bottom: 1px solid var(--border);
+          padding-top: 0;
+          border-bottom: none;
         }
         .stTabs [data-baseweb="tab-list"] {
           background: var(--bg-main) !important;
@@ -803,26 +825,25 @@ def main() -> None:
     now_msk = datetime.now(moscow_tz).strftime("%H:%M:%S")
 
     st.markdown('<div class="topbar-box">', unsafe_allow_html=True)
-    top_left, top_right = st.columns((3.3, 1))
+    top_left, top_btn_refresh, top_btn_logout, top_time = st.columns((5.4, 1, 1, 1.4))
     with top_left:
         st.markdown(
-            '<h1 class="compact-title">Assistant Flow — Админ-панель</h1>',
+            '<div class="topbar-title-wrap">'
+            '<div class="topbar-app-title">Assistant Flow — Админ-панель</div>'
+            f'<div class="topbar-db-path">Файлы базы знаний: {html.escape(str(svc.documents_directory))}</div>'
+            "</div>",
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<div class="compact-subtitle">Файлы базы знаний: <code>{svc.documents_directory}</code></div>',
-            unsafe_allow_html=True,
-        )
-    with top_right:
-        b1, b2 = st.columns(2)
-        with b1:
-            if st.button("Обновить", key="topbar_refresh"):
-                st.rerun()
-        with b2:
-            if st.button("Выход", key="topbar_logout"):
-                st.warning(
-                    "Авторизация пока не подключена. Кнопка выхода зарезервирована."
-                )
+    with top_btn_refresh:
+        if st.button("Обновить", key="topbar_refresh"):
+            st.rerun()
+    with top_btn_logout:
+        if st.button("Выход", key="topbar_logout"):
+            st.toast(
+                "Авторизация пока не подключена. Кнопка выхода зарезервирована.",
+                icon="⚠️",
+            )
+    with top_time:
         st.markdown(
             f'<div class="topbar-updated">обновлено: {now_msk}</div>',
             unsafe_allow_html=True,
