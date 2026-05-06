@@ -14,7 +14,7 @@ import os
 import sys
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import zoneinfo
 from pathlib import Path
 from typing import Any
@@ -285,6 +285,410 @@ def _format_dt_moscow_logs(dt: Any) -> str:
         return dt_local.strftime("%d.%m.%Y %H:%M:%S")
     except Exception:
         return str(dt)
+
+
+def _format_dt_moscow_overview(dt: Any) -> str:
+    """MSK для вкладки «Обзор»: DD.MM.YYYY HH (только час, без минут)."""
+    if dt is None:
+        return "—"
+    if not isinstance(dt, datetime):
+        return str(dt)
+    try:
+        if dt.tzinfo is not None:
+            dt_local = dt.astimezone(moscow_tz)
+        else:
+            dt_local = dt.replace(tzinfo=timezone.utc).astimezone(moscow_tz)
+        return dt_local.strftime("%d.%m.%Y %H")
+    except Exception:
+        return str(dt)
+
+
+OVERVIEW_TELEMETRY_LOG_CAP = 400
+
+
+def _overview_extract_latency_ms(details: dict[str, Any]) -> float | None:
+    for key in ("latency_ms", "duration_ms", "elapsed_ms"):
+        v = details.get(key)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _overview_extract_tokens_increment(details: dict[str, Any]) -> int | None:
+    """Возвращает вклад в сумму токенов из одной строки details или None."""
+    v = details.get("total_tokens")
+    if v is not None:
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            pass
+    usage = details.get("token_usage")
+    if isinstance(usage, dict):
+        for a, b in (
+            ("total_tokens", None),
+            ("input_tokens", "output_tokens"),
+            ("prompt_tokens", "completion_tokens"),
+        ):
+            if b is None:
+                u = usage.get(a)
+                if u is not None:
+                    try:
+                        return int(float(u))
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                x = usage.get(a)
+                y = usage.get(b)
+                if x is not None or y is not None:
+                    s = 0
+                    ok = False
+                    for part in (x, y):
+                        if part is None:
+                            continue
+                        try:
+                            s += int(float(part))
+                            ok = True
+                        except (TypeError, ValueError):
+                            continue
+                    if ok:
+                        return s
+    u_obj = details.get("usage")
+    if isinstance(u_obj, dict):
+        v2 = u_obj.get("total_tokens")
+        if v2 is not None:
+            try:
+                return int(float(v2))
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _overview_telemetry_from_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Лёгкая телеметрия по последним строкам журнала (без новых запросов к БД).
+    latency — среднее по полям details; токены и provider/model — если есть в details.
+    """
+    latencies: list[float] = []
+    tokens_sum = 0
+    tokens_any = False
+    pm_counts: dict[tuple[str, str], int] = defaultdict(int)
+    for r in rows:
+        d = r.get("details")
+        if not isinstance(d, dict):
+            continue
+        lm = _overview_extract_latency_ms(d)
+        if lm is not None:
+            latencies.append(lm)
+        inc = _overview_extract_tokens_increment(d)
+        if inc is not None:
+            tokens_sum += inc
+            tokens_any = True
+        prov = str(d.get("provider") or d.get("llm_provider") or "").strip()
+        model = str(d.get("model") or d.get("llm_model") or "").strip()
+        if prov or model:
+            pm_counts[(prov or "—", model or "—")] += 1
+
+    avg_lat: float | None = None
+    if latencies:
+        avg_lat = round(sum(latencies) / len(latencies), 1)
+
+    top_pm: str | None = None
+    if pm_counts:
+        (prov_t, model_t), _n = max(pm_counts.items(), key=lambda x: x[1])
+        top_pm = f"{prov_t} / {model_t}"
+
+    return {
+        "avg_latency_ms": avg_lat,
+        "tokens_total": int(tokens_sum) if tokens_any else None,
+        "top_provider_model": top_pm,
+    }
+
+
+def _overview_find_last_success_row(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Самая свежая запись со status=success (список уже от новых к старым)."""
+    for r in rows:
+        if str(r.get("status") or "").strip().lower() == "success":
+            return r
+    return None
+
+
+def _overview_find_last_admin_row(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    for r in rows:
+        stg = str(r.get("stage") or "")
+        if stg.startswith("admin_"):
+            return r
+    return None
+
+
+def _overview_ops_kv_html(rows: list[tuple[str, str]]) -> str:
+    parts = ['<div class="ops-kv">']
+    for lbl, val in rows:
+        parts.append(f'<span class="ops-kv-lbl">{html.escape(lbl)}</span>')
+        parts.append(f'<span class="ops-kv-val">{html.escape(val)}</span>')
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _overview_ops_kv_item(label: str, value_inner_html: str) -> str:
+    """Одна пара label/value; value_inner_html — доверенная вёрстка (бейджи)."""
+    return (
+        f'<span class="ops-kv-lbl">{html.escape(label)}</span>'
+        f'<span class="ops-kv-val">{value_inner_html}</span>'
+    )
+
+
+def _overview_ops_kv_mixed(items: list[str]) -> str:
+    return '<div class="ops-kv">' + "".join(items) + "</div>"
+
+
+def _render_panel_footnote_html(inner_html: str) -> str:
+    """
+    Служебное пояснение внизу карточки Overview/Summary.
+    inner_html — доверенная разметка (фрагменты с <code> и т.п.).
+    """
+    return f'<div class="panel-footnote">{inner_html}</div>'
+
+
+def _overview_metric_chips_html(items: list[tuple[str, str]]) -> str:
+    parts = ['<div class="ops-metric-row">']
+    for lbl, val in items:
+        parts.append(
+            '<div class="ops-metric-chip">'
+            f'<span class="ops-metric-chip-val">{html.escape(val)}</span>'
+            f'<span class="ops-metric-chip-lbl">{html.escape(lbl)}</span>'
+            "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _overview_log_status_badge_html(raw: str | None) -> str:
+    s = str(raw or "").strip().lower()
+    if s == "success":
+        tone = "success"
+    elif s == "error":
+        tone = "error"
+    elif s in ("skipped", "retry", "started"):
+        tone = "warning"
+    else:
+        tone = "muted"
+    label = _status_label(raw)
+    return (
+        f'<span class="log-status-badge log-status-badge--{tone}">'
+        f"{html.escape(label)}</span>"
+    )
+
+
+SUMMARY_LOG_SAMPLE_CAP = 500
+SUMMARY_HOURS_WINDOW = 24
+
+SUMMARY_LIFECYCLE_ORDER: tuple[str, ...] = (
+    "intake_received",
+    "route_selected",
+    "text_answer_done",
+    "rag_answer_done",
+    "processing_done",
+    "admin_reindex_started",
+    "admin_reindex_done",
+    "processing_error",
+)
+
+
+def _summary_rows_since_hours(
+    rows: list[dict[str, Any]], *, hours: int = SUMMARY_HOURS_WINDOW
+) -> list[dict[str, Any]]:
+    """Фильтр строк журнала по окну времени (UTC)."""
+    delta = timedelta(hours=max(1, int(hours)))
+    cutoff = datetime.now(timezone.utc) - delta
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        t = r.get("created_at")
+        if not isinstance(t, datetime):
+            continue
+        tt = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        if tt >= cutoff:
+            out.append(r)
+    return out
+
+
+def _summary_unique_execution_ids(rows: list[dict[str, Any]]) -> int:
+    s: set[str] = set()
+    for r in rows:
+        eid = str(r.get("execution_id") or "").strip()
+        if eid:
+            s.add(eid)
+    return len(s)
+
+
+def _summary_route_sample_outcomes(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    """
+    По сессиям в выборке: итоговый статус × нормализованный маршрут
+    (как в списке логов: route/mode/stage).
+    """
+    packed = group_logs_by_execution_id(rows)
+    out: dict[str, dict[str, int]] = {
+        "text": {"success": 0, "error": 0, "other": 0},
+        "rag": {"success": 0, "error": 0, "other": 0},
+        "image_generation": {"success": 0, "error": 0, "other": 0},
+        "unknown": {"success": 0, "error": 0, "other": 0},
+    }
+    for _eid, _start, events in packed:
+        rt = _logs_infer_route_from_events(events)
+        bucket = rt if rt in ("text", "rag", "image_generation") else "unknown"
+        final = str(_logs_session_final_status(events)).strip().lower()
+        if final == "success":
+            out[bucket]["success"] += 1
+        elif final == "error":
+            out[bucket]["error"] += 1
+        else:
+            out[bucket]["other"] += 1
+    return out
+
+
+def _summary_telemetry_extended_from_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Токены, latency (avg/max), топ provider/model, число строк по provider."""
+    latencies: list[float] = []
+    tokens_sum = 0
+    tokens_any = False
+    pm_counts: dict[tuple[str, str], int] = defaultdict(int)
+    prov_row_counts: dict[str, int] = defaultdict(int)
+    for r in rows:
+        d = r.get("details")
+        if not isinstance(d, dict):
+            continue
+        lm = _overview_extract_latency_ms(d)
+        if lm is not None:
+            latencies.append(lm)
+        inc = _overview_extract_tokens_increment(d)
+        if inc is not None:
+            tokens_sum += inc
+            tokens_any = True
+        prov = str(d.get("provider") or d.get("llm_provider") or "").strip()
+        model = str(d.get("model") or d.get("llm_model") or "").strip()
+        if prov:
+            prov_row_counts[prov] += 1
+        if prov or model:
+            pm_counts[(prov or "—", model or "—")] += 1
+
+    avg_lat = round(sum(latencies) / len(latencies), 1) if latencies else None
+    max_lat = round(max(latencies), 1) if latencies else None
+    top_pm: str | None = None
+    if pm_counts:
+        (prov_t, model_t), _n = max(pm_counts.items(), key=lambda x: x[1])
+        top_pm = f"{prov_t} / {model_t}"
+
+    by_prov = dict(sorted(prov_row_counts.items(), key=lambda x: (-x[1], x[0])))
+
+    return {
+        "avg_latency_ms": avg_lat,
+        "max_latency_ms": max_lat,
+        "tokens_total": int(tokens_sum) if tokens_any else None,
+        "top_provider_model": top_pm,
+        "by_provider_rows": by_prov,
+    }
+
+
+def _summary_lifecycle_list_html(by_stage: dict[str, Any]) -> str:
+    parts = ['<div class="summary-lifecycle-list">']
+    for stg in SUMMARY_LIFECYCLE_ORDER:
+        cnt = int(by_stage.get(stg, 0) or 0)
+        label = _stage_to_action(stg)
+        if stg == "processing_error" and cnt > 0:
+            item_cls = "summary-lifecycle-item summary-lifecycle-item--error"
+        elif cnt > 0:
+            item_cls = "summary-lifecycle-item summary-lifecycle-item--ok"
+        else:
+            item_cls = "summary-lifecycle-item summary-lifecycle-item--muted"
+        parts.append(
+            f'<div class="{item_cls}">'
+            f'<span class="summary-lifecycle-lbl">{html.escape(label)}</span>'
+            f'<span class="summary-lifecycle-cnt">{cnt}</span>'
+            "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _summary_route_rows_html(
+    *,
+    by_route: dict[str, int],
+    sample_out: dict[str, dict[str, int]],
+    unknown_sample_n: int,
+) -> str:
+    """Компактные карточки маршрутов: счётчики 24 ч из dashboard + исходы из выборки."""
+    n_text = int(by_route.get("text", 0) or 0)
+    n_rag = int(by_route.get("rag", 0) or 0)
+    n_img = int(by_route.get("image_generation", 0) or 0)
+    denom = max(1, n_text + n_rag + n_img + max(0, unknown_sample_n))
+
+    def pct(n: int) -> str:
+        return f"{round(100.0 * n / denom, 1)}%"
+
+    def outcome_line(bucket: str) -> str:
+        o = sample_out.get(bucket) or {}
+        s_ok = int(o.get("success", 0))
+        s_er = int(o.get("error", 0))
+        s_ot = int(o.get("other", 0))
+        if s_ok == 0 and s_er == 0 and s_ot == 0:
+            return (
+                '<span class="route-badge route-badge--muted">'
+                "нет сессий в выборке"
+                "</span>"
+            )
+        parts_o = [
+            f'<span class="log-status-badge log-status-badge--success">успех {s_ok}</span>',
+            f'<span class="log-status-badge log-status-badge--error">ошибка {s_er}</span>',
+        ]
+        if s_ot:
+            parts_o.append(
+                f'<span class="log-status-badge log-status-badge--warning">прочее {s_ot}</span>'
+            )
+        return '<span class="summary-route-outcomes">' + " · ".join(parts_o) + "</span>"
+
+    cards: list[tuple[str, str, str, str]] = [
+        ("Текст", str(n_text), pct(n_text), "text"),
+        ("RAG", str(n_rag), pct(n_rag), "rag"),
+        ("Генерация изображений", str(n_img), pct(n_img), "image_generation"),
+        (
+            "Прочее / без маршрута",
+            str(max(0, unknown_sample_n)),
+            pct(max(0, unknown_sample_n)),
+            "unknown",
+        ),
+    ]
+
+    blocks: list[str] = ['<div class="summary-route-grid">']
+    for title, cnt_s, share_s, bucket in cards:
+        blocks.append('<div class="summary-route-card">')
+        blocks.append(f'<div class="summary-route-card-title">{html.escape(title)}</div>')
+        blocks.append(
+            '<div class="summary-route-card-meta">'
+            f'<span class="summary-route-count">{html.escape(cnt_s)}</span>'
+            f'<span class="summary-route-share">{html.escape(share_s)}</span>'
+            "</div>"
+        )
+        blocks.append(
+            '<div class="summary-route-card-outcomes">'
+            f"{outcome_line(bucket)}"
+            "</div>"
+        )
+        blocks.append("</div>")
+    blocks.append("</div>")
+    return "".join(blocks)
 
 
 def _short_file_hash(raw: Any, *, prefix_len: int = 12) -> str:
@@ -1203,6 +1607,7 @@ def _inject_theme_css() -> None:
           --border: #1F2A44;
           --text-primary: #E5E7EB;
           --text-secondary: #9CA3AF;
+          --text-muted: #9CA3AF;
           --accent: #22C55E;
           --success: #22C55E;
           --muted: #9CA3AF;
@@ -1854,6 +2259,228 @@ def _inject_theme_css() -> None:
           margin-top: 2px;
           display: block;
         }
+
+        .ops-dashboard-wrap {
+          margin: 0 0 10px 0;
+        }
+        .ops-dashboard-intro {
+          font-size: 0.8rem;
+          color: var(--text-secondary) !important;
+          margin: 0 0 8px 0;
+          line-height: 1.35;
+        }
+        .ops-dashboard-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+          gap: 10px;
+          align-items: stretch;
+        }
+        .ops-dashboard-card {
+          display: flex;
+          flex-direction: column;
+          background: var(--bg-card);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 10px 12px;
+          margin: 0;
+          box-sizing: border-box;
+        }
+        .ops-dashboard-card--warn {
+          border-color: var(--warning);
+          background: rgba(245, 158, 11, 0.07);
+        }
+        .ops-dashboard-card-title {
+          font-size: 0.74rem;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          color: var(--accent) !important;
+          margin: 0 0 8px 0;
+          line-height: 1.25;
+        }
+        .panel-footnote {
+          margin-top: auto;
+          padding-top: 0.5rem;
+          margin-bottom: 0;
+          border-top: 1px solid rgba(31, 42, 68, 0.85);
+          font-size: 0.72rem !important;
+          line-height: 1.28 !important;
+          font-weight: 400;
+          color: var(--text-muted) !important;
+        }
+        .panel-footnote code {
+          font-size: 0.68rem;
+          color: var(--text-secondary) !important;
+          background: rgba(156, 163, 175, 0.12);
+          padding: 0 0.2rem;
+          border-radius: 3px;
+        }
+        .panel-footnote-heading {
+          display: block;
+          font-size: 0.68rem;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          color: var(--text-muted) !important;
+          margin: 0.45rem 0 0.35rem 0;
+          line-height: 1.2;
+        }
+        .ops-dashboard-card-note {
+          font-size: 0.72rem !important;
+          line-height: 1.28 !important;
+          color: var(--text-muted) !important;
+          margin: 0.65rem 0 0 0;
+          padding-top: 0.5rem;
+          border-top: 1px solid rgba(31, 42, 68, 0.85);
+          font-weight: 400;
+        }
+        .ops-kv {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+          gap: 5px 10px;
+          font-size: 0.78rem;
+          align-items: baseline;
+        }
+        .ops-kv-lbl {
+          color: var(--text-secondary) !important;
+        }
+        .ops-kv-val {
+          color: var(--text-primary) !important;
+          text-align: right;
+          word-break: break-word;
+        }
+        .ops-metric-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 4px;
+        }
+        .ops-metric-chip {
+          flex: 0 1 auto;
+          min-width: 76px;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 4px 8px;
+          line-height: 1.12;
+        }
+        .ops-metric-chip-val {
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: var(--text-primary) !important;
+          display: block;
+        }
+        .ops-metric-chip-lbl {
+          font-size: 0.55rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+          color: var(--text-secondary) !important;
+          margin-top: 2px;
+          display: block;
+        }
+        .ops-inline-badge-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px;
+          margin-top: 6px;
+        }
+
+        .summary-lifecycle-list {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+          margin-top: 4px;
+        }
+        .summary-lifecycle-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 5px 9px;
+          font-size: 0.78rem;
+          line-height: 1.25;
+        }
+        .summary-lifecycle-item--ok {
+          border-left: 3px solid var(--success);
+        }
+        .summary-lifecycle-item--error {
+          border-left: 3px solid var(--error);
+        }
+        .summary-lifecycle-item--muted {
+          opacity: 0.72;
+          border-left: 3px solid var(--border);
+        }
+        .summary-lifecycle-lbl {
+          color: var(--text-primary) !important;
+        }
+        .summary-lifecycle-cnt {
+          font-weight: 700;
+          color: var(--accent) !important;
+          flex-shrink: 0;
+        }
+        .summary-route-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 8px;
+          margin-top: 4px;
+        }
+        .summary-route-card {
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 9px;
+          padding: 8px 10px;
+        }
+        .summary-route-card-title {
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--text-secondary) !important;
+          margin-bottom: 6px;
+        }
+        .summary-route-card-meta {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .summary-route-count {
+          font-size: 1.05rem;
+          font-weight: 700;
+          color: var(--text-primary) !important;
+        }
+        .summary-route-share {
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: var(--warning) !important;
+        }
+        .summary-route-card-outcomes {
+          margin-top: 6px;
+          font-size: 0.72rem;
+          line-height: 1.45;
+        }
+        .summary-route-outcomes .log-status-badge {
+          margin-right: 4px;
+        }
+        .summary-provider-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 5px;
+          margin-top: 6px;
+        }
+        .summary-provider-chip {
+          font-size: 0.68rem;
+          padding: 2px 7px;
+          border-radius: 999px;
+          border: 1px solid var(--border);
+          background: rgba(156, 163, 175, 0.1);
+          color: var(--text-primary) !important;
+        }
+
         .doc-chunk-preview {
           max-height: 220px;
           overflow-y: auto;
@@ -2119,89 +2746,301 @@ def main() -> None:
     dashboard_stats = svc.get_dashboard_stats(hours=24)
 
     with tab_overview:
-        st.write("Краткий статус базы знаний и обработки запросов.")
+        overview_recent = svc.get_recent_logs(OVERVIEW_TELEMETRY_LOG_CAP)
+        overview_docs = svc.get_documents_with_versions()
+        telemetry = _overview_telemetry_from_rows(overview_recent)
+        by_route = dashboard_stats.get("by_route") or {}
+        text_n = int(by_route.get("text", 0))
+        rag_n = int(by_route.get("rag", 0))
+        img_n = int(by_route.get("image_generation", 0))
+        total_req_24h = text_n + rag_n + img_n
 
-        st.subheader("Статус системы")
-        sys_col1, sys_col2 = st.columns(2)
-        if insights.db_logs_available:
-            if insights.errors_last_24h == 0:
-                sys_col1.markdown("**Система:** Работает")
-            else:
-                sys_col1.markdown("**Система:** обнаружены ошибки в журнале за сутки")
-            sys_col2.metric(
-                "Ошибки (последние 24 часа)",
-                insights.errors_last_24h,
+        db_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
+        err_24h = (
+            int(dashboard_stats.get("error_events", 0)) if db_url_set else None
+        )
+        if err_24h is None:
+            err_line = "нет данных"
+        else:
+            err_line = str(err_24h)
+
+        last_succ = _overview_find_last_success_row(overview_recent)
+        if last_succ:
+            ls_time = _format_dt_moscow_overview(last_succ.get("created_at"))
+            ls_action = _stage_to_action(last_succ.get("stage"))
+            last_success_inner = (
+                f"{html.escape(ls_time)} — {html.escape(ls_action)} "
+                f'{_overview_log_status_badge_html("success")}'
+            )
+        elif overview_recent:
+            last_success_inner = html.escape(
+                f"нет успешных среди последних {len(overview_recent)} записей"
+            )
+        elif db_url_set:
+            last_success_inner = html.escape("журнал пуст или недоступен")
+        else:
+            last_success_inner = html.escape("нет данных")
+
+        lat_ms = telemetry.get("avg_latency_ms")
+        if lat_ms is not None:
+            lat_line = html.escape(
+                f"{lat_ms} мс (среднее по latency/duration в выборке журнала)"
             )
         else:
-            sys_col1.markdown("**Система:** нет данных о логах (проверьте подключение к БД)")
-            sys_col2.metric("Ошибки (последние 24 часа)", "—")
+            lat_line = html.escape("нет данных")
 
-        st.subheader("База знаний и синхронизация индекса")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric(
-            "Документов в БД",
-            status.postgres_documents if status.postgres_available else "—",
-        )
-        c2.metric("Файлов в каталоге", fs_txt_count)
-        c3.metric(
-            "Чанков в PostgreSQL",
-            status.postgres_chunks_sum if status.postgres_available else "—",
-        )
-        c4.metric("Чанков в Chroma", status.collection_count)
+        tok = telemetry.get("tokens_total")
+        tok_line = html.escape(str(tok)) if tok is not None else html.escape("нет данных")
 
-        if (
+        tpm = telemetry.get("top_provider_model")
+        tpm_line = html.escape(tpm) if tpm else html.escape("нет данных")
+
+        if status.postgres_available:
+            pg_val = (
+                f'{html.escape("подключение доступно")} '
+                '<span class="route-badge route-badge--success">OK</span>'
+            )
+        else:
+            pg_val = (
+                f'{html.escape("нет данных / недоступен")} '
+                '<span class="route-badge route-badge--muted">—</span>'
+            )
+
+        chroma_count = str(int(status.collection_count))
+        chroma_val = (
+            f"{html.escape(chroma_count + ' чанков в коллекции')} "
+            '<span class="route-badge route-badge--muted">НЕТ HEALTH</span>'
+        )
+
+        doc_mismatch = (
             status.postgres_available
             and status.postgres_documents is not None
             and status.postgres_documents != fs_txt_count
-        ):
-            st.warning(
-                "⚠ Рассинхронизация: база данных и файловая система не совпадают"
+        )
+        chunk_mismatch = (
+            status.postgres_available
+            and status.postgres_chunks_sum is not None
+            and status.postgres_chunks_sum != status.collection_count
+        )
+        if not status.postgres_available:
+            sync_label = "не сравнивается"
+            sync_badge = '<span class="route-badge route-badge--muted">—</span>'
+        elif doc_mismatch or chunk_mismatch:
+            sync_label = "расхождение"
+            sync_badge = '<span class="route-badge route-badge--warning">WARN</span>'
+        else:
+            sync_label = "OK"
+            sync_badge = '<span class="route-badge route-badge--success">OK</span>'
+
+        last_idx_dt: datetime | None = None
+        for r in overview_docs:
+            t = r.get("last_indexed_at")
+            if isinstance(t, datetime):
+                if last_idx_dt is None or t > last_idx_dt:
+                    last_idx_dt = t
+        last_idx_str = (
+            _format_dt_moscow_overview(last_idx_dt) if last_idx_dt else "—"
+        )
+
+        if overview_docs:
+            largest = max(
+                overview_docs,
+                key=lambda r: int(r.get("active_chunk_count") or 0),
+            )
+            max_ch = int(largest.get("active_chunk_count") or 0)
+            max_name = str(largest.get("filename") or "—")
+            largest_str = f"{max_name} · {max_ch} чанков"
+        else:
+            largest_str = "—"
+
+        last_adm = _overview_find_last_admin_row(overview_recent)
+        if last_adm:
+            adm_disp = (
+                f"{_format_dt_moscow_overview(last_adm.get('created_at'))} — "
+                f"{_stage_to_action(last_adm.get('stage'))}"
+            )
+        elif overview_recent:
+            adm_disp = "нет admin_* в выборке журнала"
+        else:
+            adm_disp = "нет данных"
+
+        card_a = (
+            '<div class="ops-dashboard-card">'
+            '<div class="ops-dashboard-card-title">A. Состояние системы</div>'
+            + _overview_ops_kv_mixed(
+                [
+                    _overview_ops_kv_item(
+                        "Telegram / бот",
+                        html.escape("не проверяется")
+                        + ' <span class="route-badge route-badge--muted">N/A</span>',
+                    ),
+                    _overview_ops_kv_item(
+                        "Assistant Flow / админ UI",
+                        html.escape("сессия Streamlit активна")
+                        + ' <span class="route-badge route-badge--info">UI</span>',
+                    ),
+                    _overview_ops_kv_item("PostgreSQL", pg_val),
+                    _overview_ops_kv_item("Chroma", chroma_val),
+                    _overview_ops_kv_item(
+                        "Последнее успешное событие (журнал)", last_success_inner
+                    ),
+                    _overview_ops_kv_item(
+                        "Ошибки за 24 ч (статус error)",
+                        html.escape(err_line),
+                    ),
+                    _overview_ops_kv_item("Средняя latency (выборка)", lat_line),
+                ]
+            )
+            + _render_panel_footnote_html(
+                "Chroma: только число записей в коллекции; сбои клиента могут дать 0 без "
+                "отдельного статуса. Telegram из UI не проверяется."
+            )
+            + "</div>"
+        )
+
+        activity_inner = _overview_metric_chips_html(
+            [
+                ("Text (норм.)", str(text_n)),
+                ("RAG (норм.)", str(rag_n)),
+                ("Image / gen", str(img_n)),
+                ("Всего запросов", str(total_req_24h)),
+            ]
+        ) + _overview_ops_kv_mixed(
+            [
+                _overview_ops_kv_item("Токены (из details)", tok_line),
+                _overview_ops_kv_item("Топ provider / model", tpm_line),
+            ]
+        )
+
+        card_b = (
+            '<div class="ops-dashboard-card">'
+            '<div class="ops-dashboard-card-title">B. AI-активность</div>'
+            + activity_inner
+            + _render_panel_footnote_html(
+                "Text/RAG/Image — уникальные <code>execution_id</code> за 24 ч с нормализацией "
+                "<code>route</code>/<code>mode</code>/<code>stage</code> (как в SQL "
+                "<code>count_routes_since</code>)."
+            )
+            + "</div>"
+        )
+
+        kb_rows_plain: list[tuple[str, str]] = [
+            (
+                "Документов в БД",
+                str(status.postgres_documents)
+                if status.postgres_available and status.postgres_documents is not None
+                else "—",
+            ),
+            ("Файлов в каталоге", str(fs_txt_count)),
+            (
+                "Активных чанков PostgreSQL",
+                str(status.postgres_chunks_sum)
+                if status.postgres_available and status.postgres_chunks_sum is not None
+                else "—",
+            ),
+            ("Чанков Chroma", chroma_count),
+            ("Синхронизация (БД / FS / Chroma)", sync_label),
+            ("Последняя индексация (метаданные)", last_idx_str),
+            ("Крупнейший документ", largest_str),
+        ]
+        card_c = (
+            '<div class="ops-dashboard-card">'
+            '<div class="ops-dashboard-card-title">C. База знаний</div>'
+            + _overview_ops_kv_html(kb_rows_plain)
+            + '<div class="ops-inline-badge-row">'
+            + sync_badge
+            + "</div>"
+            + _render_panel_footnote_html(
+                "Метрики из <code>get_knowledge_base_status</code> и сводки документов; "
+                "при расхождении чанков PostgreSQL и Chroma нужна переиндексация."
+            )
+            + "</div>"
+        )
+
+        card_d = (
+            '<div class="ops-dashboard-card">'
+            '<div class="ops-dashboard-card-title">D. Администрирование / безопасность</div>'
+            + _overview_ops_kv_mixed(
+                [
+                    _overview_ops_kv_item(
+                        "Admin auth",
+                        html.escape("не подключена")
+                        + ' <span class="route-badge route-badge--muted">OFF</span>',
+                    ),
+                    _overview_ops_kv_item(
+                        "Кнопка «Выход»",
+                        html.escape("зарезервирована")
+                        + ' <span class="route-badge route-badge--warning">RES</span>',
+                    ),
+                    _overview_ops_kv_item(
+                        "Последнее admin-действие",
+                        html.escape(adm_disp),
+                    ),
+                    _overview_ops_kv_item(
+                        "Публичная экспозиция",
+                        html.escape("Streamlit UI по умолчанию :8501"),
+                    ),
+                    _overview_ops_kv_item(
+                        "Security status",
+                        html.escape("требуется усиление (MVP)")
+                        + ' <span class="route-badge route-badge--warning">HARDEN</span>',
+                    ),
+                ]
+            )
+            + _render_panel_footnote_html(
+                "Без реальной авторизации панель не считается защищённой."
+            )
+            + "</div>"
+        )
+
+        warn_blocks: list[str] = []
+        if doc_mismatch:
+            warn_blocks.append(
+                "<strong>Документы</strong>: число записей в PostgreSQL и .txt на диске "
+                "не совпадает."
+            )
+        if chunk_mismatch:
+            warn_blocks.append(
+                "<strong>Индекс</strong>: сумма чанков в PostgreSQL и Chroma различается — "
+                "нужна переиндексация."
+            )
+        warn_html = ""
+        if warn_blocks:
+            warn_html = (
+                '<div class="ops-dashboard-card ops-dashboard-card--warn" '
+                'style="margin-top:10px;">'
+                '<div class="ops-dashboard-card-title">Предупреждение синхронизации</div>'
+                "<ul style=\"margin:0;padding-left:1.1rem;\">"
+                + "".join(f"<li>{w}</li>" for w in warn_blocks)
+                + "</ul></div>"
             )
 
-        if status.postgres_available and status.postgres_chunks_sum is not None:
-            if status.postgres_chunks_sum != status.collection_count:
-                st.warning("⚠ Индекс устарел — требуется переиндексация")
-            else:
-                st.success("Индекс актуален")
-        else:
-            st.caption(
-                "Сравнение PostgreSQL и Chroma недоступно: задайте `DATABASE_URL` "
-                "и дождитесь заполнения метаданных документов."
-            )
-
-        st.subheader("Активность за последние 24 часа")
-        if insights.db_logs_available:
-            ac1, ac2 = st.columns(2)
-            ac1.metric(
-                "Завершённых обработок (processing_done)",
-                insights.processing_done_last_24h,
-            )
-            ac2.metric(
-                "Ошибок обработки (processing_error)",
-                insights.errors_last_24h,
-            )
-        else:
-            st.caption("Нет данных из `processing_logs`.")
-
-        st.subheader("Последнее событие")
-        if insights.db_logs_available and (
-            insights.last_event_at is not None or insights.last_event_stage
-        ):
-            action = _stage_to_action(insights.last_event_stage)
-            ts_raw = _format_dt_moscow_logs(insights.last_event_at)
-            ts = ts_raw[:16] if len(ts_raw) >= 16 else ts_raw
-            st.write(f"**{ts}** — {action}")
-        else:
-            st.caption("Событий пока нет или журнал недоступен.")
+        overview_html = (
+            '<div class="ops-dashboard-wrap">'
+            '<p class="ops-dashboard-intro">'
+            "Компактный операционный дашборд: здоровье сервисов (честные статусы), "
+            "активность AI, база знаний и ограничения безопасности админки."
+            "</p>"
+            '<div class="ops-dashboard-grid">'
+            f"{card_a}{card_b}{card_c}{card_d}"
+            "</div>"
+            f"{warn_html}"
+            "</div>"
+        )
+        st.markdown(overview_html, unsafe_allow_html=True)
 
         if not status.postgres_available:
-            st.info(
-                "Чтобы видеть документы и чанки в PostgreSQL, задайте `DATABASE_URL` "
-                "и примените схему из каталога `database/`."
+            st.caption(
+                "PostgreSQL: задайте `DATABASE_URL` и схему из каталога `database/`, "
+                "чтобы видеть документы и чанки."
             )
 
     with tab_summary:
-        st.subheader("Активность за последние 24 часа")
+        st.markdown(
+            '<p class="ops-dashboard-intro">Операционная аналитика за последние 24 часа '
+            "(компактные карточки; сырые таблицы — внизу, в свёртке).</p>",
+            unsafe_allow_html=True,
+        )
         if not (os.getenv("DATABASE_URL") or "").strip():
             st.info(
                 "Сводка недоступна: задайте переменную окружения `DATABASE_URL` "
@@ -2213,78 +3052,210 @@ def main() -> None:
                 "После работы бота и админки здесь появятся метрики."
             )
         else:
-            m1, m2, m3 = st.columns(3)
-            m4, m5, m6 = st.columns(3)
-            m1.metric("Всего событий", dashboard_stats["total_events"])
-            m2.metric("Успешных", dashboard_stats["success_events"])
-            m3.metric("Ошибок", dashboard_stats["error_events"])
-            m4.metric("Админских операций", dashboard_stats["admin_events"])
-            m5.metric("Генераций изображений", dashboard_stats["image_generations"])
-            m6.metric("Переиндексаций", dashboard_stats["reindex_runs"])
-
-            st.markdown("**События по статусам**")
+            summary_sample = svc.get_recent_logs(SUMMARY_LOG_SAMPLE_CAP)
+            rows_24 = _summary_rows_since_hours(
+                summary_sample, hours=SUMMARY_HOURS_WINDOW
+            )
+            uniq_exec = _summary_unique_execution_ids(rows_24)
+            sample_out = _summary_route_sample_outcomes(rows_24)
+            unk_o = sample_out.get("unknown") or {}
+            unknown_sample_n = sum(int(unk_o.get(k, 0)) for k in ("success", "error", "other"))
+            telem = _summary_telemetry_extended_from_rows(rows_24)
             by_status = dashboard_stats.get("by_status") or {}
-            if by_status:
-                rows_s = [
-                    {"статус": _status_label(k), "количество": v}
-                    for k, v in sorted(by_status.items(), key=lambda x: (-x[1], x[0]))
-                ]
-                df_s = pd.DataFrame(rows_s)
-                st.dataframe(df_s, use_container_width=True, hide_index=True)
-            else:
-                st.caption("Нет данных по статусам.")
-
-            st.markdown("**События по этапам**")
             by_stage = dashboard_stats.get("by_stage") or {}
-            if by_stage:
-                normalized_stage_counts: dict[str, int] = {}
-                for raw_stage, count in by_stage.items():
-                    norm_stage = normalize_event_type(str(raw_stage))
-                    key = norm_stage or str(raw_stage)
-                    normalized_stage_counts[key] = normalized_stage_counts.get(key, 0) + int(
-                        count or 0
-                    )
-                rows_st = [
-                    {
-                        "этап": _stage_to_action(k),
-                        "количество": v,
-                    }
-                    for k, v in sorted(
-                        normalized_stage_counts.items(), key=lambda x: (-x[1], x[0])
-                    )
-                ]
-                df_st = pd.DataFrame(rows_st)
-                st.dataframe(df_st, use_container_width=True, hide_index=True)
-            else:
-                st.caption("Нет данных по этапам.")
-
-            st.markdown(
-                "**Запросы по маршрутам** "
-                "(этапы `route_selected` / `processing_done`, поле `route` в `details`)"
-            )
             by_route = dashboard_stats.get("by_route") or {}
-            normalized_route_counts: dict[str, int] = {}
-            for raw_route, count in by_route.items():
-                norm_route = normalize_route(str(raw_route))
-                normalized_route_counts[norm_route] = normalized_route_counts.get(norm_route, 0) + int(
-                    count or 0
-                )
-            route_total = sum(
-                int(normalized_route_counts.get(k, 0))
-                for k in ("rag", "text", "image_generation")
-            )
-            if route_total > 0:
-                rows_r = [
-                    {
-                        "маршрут": _route_label(k),
-                        "количество": int(normalized_route_counts.get(k, 0)),
-                    }
-                    for k in ("rag", "text", "image_generation")
+
+            def _ds_int(key: str) -> int:
+                return int(dashboard_stats.get(key) or 0)
+
+            activity_chips = _overview_metric_chips_html(
+                [
+                    ("Всего событий", str(_ds_int("total_events"))),
+                    ("Успешных", str(_ds_int("success_events"))),
+                    ("Ошибок", str(_ds_int("error_events"))),
+                    ("Уникальных execution_id", str(uniq_exec)),
+                    ("Админ операции", str(_ds_int("admin_events"))),
+                    ("Переиндексации", str(_ds_int("reindex_runs"))),
+                    ("Генерации изображений", str(_ds_int("image_generations"))),
                 ]
-                df_r = pd.DataFrame(rows_r)
-                st.dataframe(df_r, use_container_width=True, hide_index=True)
+            )
+
+            card_a = (
+                '<div class="ops-dashboard-card">'
+                '<div class="ops-dashboard-card-title">A. Сводка активности</div>'
+                + activity_chips
+                + _render_panel_footnote_html(
+                    "Агрегаты событий — из <code>get_dashboard_stats</code> (24 ч). "
+                    "Уникальные <code>execution_id</code> — только по сессиям в выборке "
+                    f"(до {SUMMARY_LOG_SAMPLE_CAP} последних строк журнала, отфильтровано по 24 ч); "
+                    "полный DISTINCT по окну в UI без нового API недоступен."
+                )
+                + "</div>"
+            )
+
+            route_body = _summary_route_rows_html(
+                by_route=by_route,
+                sample_out=sample_out,
+                unknown_sample_n=unknown_sample_n,
+            )
+            card_b = (
+                '<div class="ops-dashboard-card">'
+                '<div class="ops-dashboard-card-title">B. Маршруты</div>'
+                + route_body
+                + _render_panel_footnote_html(
+                    "Счётчики Text / RAG / Image — уникальные <code>execution_id</code> за 24 ч "
+                    "с нормализацией route/mode/stage (как в SQL <code>count_routes_since</code>). "
+                    "Доля — от суммы Text+RAG+Image+«прочее» в выборке. "
+                    "Успех/ошибка по маршруту — по итогу сессии в этой выборке (см. "
+                    "<code>_logs_infer_route_from_events</code> / "
+                    "<code>_logs_session_final_status</code>)."
+                )
+                + "</div>"
+            )
+
+            card_c = (
+                '<div class="ops-dashboard-card">'
+                '<div class="ops-dashboard-card-title">C. Этапы / lifecycle</div>'
+                + _summary_lifecycle_list_html(by_stage)
+                + _render_panel_footnote_html(
+                    "Числа — сырые <code>stage</code> из журнала за 24 ч; подписи через "
+                    "существующие хелперы нормализации."
+                )
+                + "</div>"
+            )
+
+            top_pm = telem.get("top_provider_model")
+            tok = telem.get("tokens_total")
+            avg_lat = telem.get("avg_latency_ms")
+            max_lat = telem.get("max_latency_ms")
+            by_prov = telem.get("by_provider_rows") or {}
+
+            tok_line = (
+                html.escape(str(tok)) if tok is not None else html.escape("нет данных")
+            )
+            tpm_line = (
+                html.escape(str(top_pm))
+                if top_pm
+                else html.escape("нет данных")
+            )
+            if avg_lat is not None:
+                avg_line = html.escape(f"{avg_lat} мс")
             else:
-                st.info("Нет данных по маршрутам за выбранный период.")
+                avg_line = html.escape("нет данных")
+            if max_lat is not None:
+                max_line = html.escape(f"{max_lat} мс")
+            else:
+                max_line = html.escape("нет данных")
+
+            if by_prov:
+                prov_parts = ['<div class="summary-provider-chips">']
+                for pk, pv in list(by_prov.items())[:12]:
+                    prov_parts.append(
+                        '<span class="summary-provider-chip">'
+                        f"{html.escape(str(pk))}: {int(pv)}"
+                        "</span>"
+                    )
+                prov_parts.append("</div>")
+                prov_html = "".join(prov_parts)
+            else:
+                prov_html = (
+                    '<span class="route-badge route-badge--muted">'
+                    "нет данных"
+                    "</span>"
+                )
+
+            card_d = (
+                '<div class="ops-dashboard-card">'
+                '<div class="ops-dashboard-card-title">D. Провайдеры и производительность</div>'
+                + _overview_ops_kv_mixed(
+                    [
+                        _overview_ops_kv_item("Топ provider / model", tpm_line),
+                        _overview_ops_kv_item("Токены (сумма по details)", tok_line),
+                        _overview_ops_kv_item("Средняя latency", avg_line),
+                        _overview_ops_kv_item("Макс. latency", max_line),
+                    ]
+                )
+                + '<span class="panel-footnote-heading">Строки журнала по провайдеру</span>'
+                + prov_html
+                + _render_panel_footnote_html(
+                    "По строкам журнала за 24 ч в выборке (поля <code>details</code>). "
+                    "Если в логах нет provider/tokens/latency — отображается «нет данных»."
+                )
+                + "</div>"
+            )
+
+            summary_html = (
+                '<div class="ops-dashboard-wrap">'
+                '<div class="ops-dashboard-grid">'
+                f"{card_a}{card_b}{card_c}{card_d}"
+                "</div></div>"
+            )
+            st.markdown(summary_html, unsafe_allow_html=True)
+
+            with st.expander("Показать технические таблицы", expanded=False):
+                st.caption(
+                    "Сырые агрегаты из `processing_logs` (как в прежней сводке)."
+                )
+                st.markdown("**События по статусам**")
+                if by_status:
+                    rows_s = [
+                        {"статус": _status_label(k), "количество": v}
+                        for k, v in sorted(
+                            by_status.items(), key=lambda x: (-x[1], str(x[0]))
+                        )
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(rows_s), use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.caption("Нет данных по статусам.")
+
+                st.markdown("**События по этапам (все stage)**")
+                if by_stage:
+                    rows_st_raw = [
+                        {
+                            "этап (raw)": str(k),
+                            "подпись": _stage_to_action(str(k)),
+                            "количество": int(v or 0),
+                        }
+                        for k, v in sorted(
+                            by_stage.items(), key=lambda x: (-int(x[1] or 0), str(x[0]))
+                        )
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(rows_st_raw),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("Нет данных по этапам.")
+
+                st.markdown("**Маршруты (raw, dashboard)**")
+                normalized_route_counts: dict[str, int] = {}
+                for raw_route, count in by_route.items():
+                    norm_route = normalize_route(str(raw_route))
+                    normalized_route_counts[norm_route] = normalized_route_counts.get(
+                        norm_route, 0
+                    ) + int(count or 0)
+                route_total = sum(
+                    int(normalized_route_counts.get(k, 0))
+                    for k in ("rag", "text", "image_generation")
+                )
+                if route_total > 0:
+                    rows_r = [
+                        {
+                            "маршрут": _route_label(k),
+                            "уникальных execution_id (24 ч)": int(
+                                normalized_route_counts.get(k, 0)
+                            ),
+                        }
+                        for k in ("text", "rag", "image_generation")
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(rows_r), use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.info("Нет данных по маршрутам за выбранный период.")
 
     with tab_text:
         st.subheader("Text-запросы")
