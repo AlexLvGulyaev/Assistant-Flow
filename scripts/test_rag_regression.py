@@ -18,7 +18,8 @@ if str(ROOT) not in sys.path:
 
 _EXPECTED_EMBEDDING_DIM = 1536
 _RELEVANT_Q = "Кратко: что описано в базе знаний?"
-_IRRELEVANT_Q = "Есть ли в базе информация про вакансии?"
+# Явно внешняя доменная проверка: ожидаем low_relevance fallback.
+_IRRELEVANT_Q = "Есть ли в базе информация про бухгалтерскую отчётность по РСБУ за 2024 год?"
 
 
 def _resolve_path(config_docs: str) -> Path:

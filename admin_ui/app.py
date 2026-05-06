@@ -1492,10 +1492,9 @@ def main() -> None:
         tab_text,
         tab_rag,
         tab_docs,
-        tab_index,
         tab_logs,
     ) = st.tabs(
-        ("Обзор", "Сводка", "Text-запросы", "RAG-запросы", "Документы", "Индексация", "Логи")
+        ("Обзор", "Сводка", "Text-запросы", "RAG-запросы", "Документы", "Логи")
     )
 
     status = svc.get_knowledge_base_status()
@@ -1927,27 +1926,58 @@ def main() -> None:
                             _render_rag_event_detail(selected_ev)
 
     with tab_docs:
-        st.write(
-            "Загрузите .txt-файлы в базу знаний. После загрузки выполните переиндексацию."
-        )
-        uploaded = st.file_uploader("Файл (.txt)", type=["txt"])
-        if uploaded is not None and st.button("Сохранить файл", key="save_upload"):
-            try:
-                dest = svc.save_uploaded_txt(uploaded.name, uploaded.getvalue())
-                st.success(f"Файл сохранён: `{dest}`")
-            except ValueError as exc:
-                st.error(str(exc))
+        st.subheader("Документы")
+        st.caption("Управление базой знаний: загрузка, поиск, версии и переиндексация.")
 
-        st.divider()
-        st.write("**Файлы в каталоге документов:**")
+        doc_rows = svc.get_documents_with_versions()
         files = svc.list_documents()
-        if files:
-            st.code("\n".join(files), language=None)
-        else:
-            st.info("Подходящих файлов пока нет.")
+        all_statuses = sorted(
+            {str(r.get("status") or "—").strip() for r in doc_rows if r is not None}
+        )
 
-        st.divider()
-        st.subheader("Документы в базе данных и версии")
+        tb1, tb2, tb3, tb4 = st.columns((2.4, 1.1, 1.3, 1.2))
+        with tb1:
+            uploaded = st.file_uploader("Загрузить .txt", type=["txt"], key="docs_upload")
+            if uploaded is not None and st.button("Upload", key="save_upload"):
+                try:
+                    dest = svc.save_uploaded_txt(uploaded.name, uploaded.getvalue())
+                    st.success(f"Файл сохранён: `{dest}`")
+                except ValueError as exc:
+                    st.error(str(exc))
+        with tb2:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            if st.button("Reindex all", type="primary", key="run_reindex_embedded"):
+                with st.spinner("Идёт переиндексация…"):
+                    result = svc.run_reindex()
+                if result.success:
+                    st.success("Переиндексация выполнена успешно.")
+                else:
+                    st.error("Переиндексация завершилась с ошибкой или не для всех файлов.")
+                st.caption(f"Чанков в коллекции Chroma: {result.collection_count}")
+                if result.error_message:
+                    st.warning(result.error_message)
+        with tb3:
+            search_query = st.text_input(
+                "Search",
+                value=str(st.session_state.get("docs_search_query", "")),
+                key="docs_search_query",
+                placeholder="filename...",
+            )
+        with tb4:
+            status_filter = st.selectbox(
+                "Статус",
+                options=("Все", *all_statuses) if all_statuses else ("Все",),
+                index=0,
+                key="docs_status_filter",
+            )
+
+        if files:
+            st.caption(f"Файлов в каталоге: {len(files)}")
+            with st.expander("Показать файлы каталога", expanded=False):
+                st.code("\n".join(files), language=None)
+        else:
+            st.caption("Файлы в каталоге пока не найдены.")
+
         doc_rows = svc.get_documents_with_versions()
         if not doc_rows and not (os.getenv("DATABASE_URL") or "").strip():
             st.caption(
@@ -1956,93 +1986,148 @@ def main() -> None:
         elif not doc_rows:
             st.info("В таблице `documents` пока нет записей или не удалось загрузить данные.")
         else:
+            query_norm = (search_query or "").strip().lower()
+            filtered_docs = doc_rows
+            if query_norm:
+                filtered_docs = [
+                    r
+                    for r in filtered_docs
+                    if query_norm in str(r.get("filename") or "").lower()
+                ]
+            if status_filter != "Все":
+                filtered_docs = [
+                    r
+                    for r in filtered_docs
+                    if str(r.get("status") or "—").strip() == status_filter
+                ]
+
+            if not filtered_docs:
+                st.session_state.pop("selected_document", None)
+                st.info("Документы по текущему фильтру не найдены.")
+                filtered_docs = []
+
             docs_page, docs_page_size = render_pagination_controls(
-                "docs", total_items=len(doc_rows), has_next=False
+                "docs", total_items=len(filtered_docs), has_next=False
             )
             docs_page_items, _, _ = get_paginated_slice(
-                doc_rows, docs_page, docs_page_size
+                filtered_docs, docs_page, docs_page_size
             )
-            table_data: list[dict[str, Any]] = []
-            for dr in docs_page_items:
-                table_data.append(
-                    {
-                        "filename": dr.get("filename") or "—",
-                        "status": dr.get("status") or "—",
-                        "active_version": dr.get("active_version"),
-                        "versions_count": dr.get("versions_count"),
-                        "active_chunk_count": dr.get("active_chunk_count"),
-                        "last_indexed_at": _format_dt_moscow_logs(
-                            dr.get("last_indexed_at")
-                        ),
-                    }
-                )
-            df_docs = pd.DataFrame(table_data)
-            df_docs = df_docs[
-                [
-                    "filename",
-                    "status",
-                    "active_version",
-                    "versions_count",
-                    "active_chunk_count",
-                    "last_indexed_at",
-                ]
-            ]
-            st.dataframe(df_docs, use_container_width=True, hide_index=True)
-
-            for dr in docs_page_items:
-                raw_id = dr.get("document_id")
-                if raw_id is None:
-                    continue
-                try:
-                    doc_id = (
-                        raw_id
-                        if isinstance(raw_id, uuid.UUID)
-                        else uuid.UUID(str(raw_id))
+            list_col, detail_col = st.columns((0.35, 0.65))
+            selected_doc = str(st.session_state.get("selected_document", ""))
+            with list_col:
+                st.markdown("**Список документов**")
+                st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
+                for idx, dr in enumerate(docs_page_items):
+                    doc_key = str(dr.get("document_id") or "")
+                    is_selected = bool(selected_doc) and doc_key == selected_doc
+                    item_cls = (
+                        "rag-list-item rag-list-item-selected"
+                        if is_selected
+                        else "rag-list-item"
                     )
-                except (ValueError, TypeError):
-                    continue
-                fname = str(dr.get("filename") or "документ")
-                with st.expander(
-                    f"Версии документа · {fname}",
-                    expanded=False,
-                ):
-                    vers = svc.get_document_versions(doc_id)
-                    if not vers:
-                        st.caption("Версий не найдено.")
+                    badge_html = (
+                        '<span class="rag-selected-badge">выбрано</span>'
+                        if is_selected
+                        else ""
+                    )
+                    fname = str(dr.get("filename") or "—")
+                    st_label = str(dr.get("status") or "—")
+                    active_ver = str(dr.get("active_version") or "—")
+                    chunks = str(dr.get("active_chunk_count") or 0)
+                    st.markdown(
+                        f'<div class="{item_cls}">'
+                        '<div class="rag-list-item-head">'
+                        f'<div class="rag-list-time">{html.escape(fname)}</div>'
+                        f"{badge_html}</div>"
+                        f'<div class="rag-list-fallback">Статус: {html.escape(st_label)}</div>'
+                        f'<div class="rag-list-query">Активная версия: {html.escape(active_ver)} · '
+                        f'Чанков: {html.escape(chunks)}</div>'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("→", key=f"doc_open_{idx}_{doc_key}"):
+                        st.session_state["selected_document"] = doc_key
+                        st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with detail_col:
+                reset_invalid_selection(
+                    docs_page_items,
+                    "selected_document",
+                    lambda it: str(it.get("document_id") or ""),
+                )
+                selected_doc = str(st.session_state.get("selected_document", ""))
+                if not selected_doc:
+                    st.info("Выберите документ слева")
+                else:
+                    selected_row = next(
+                        (
+                            r
+                            for r in docs_page_items
+                            if str(r.get("document_id") or "") == selected_doc
+                        ),
+                        None,
+                    )
+                    if selected_row is None:
+                        st.session_state.pop("selected_document", None)
+                        st.info("Выбранный документ не найден в текущем фильтре.")
                     else:
-                        vrows = []
-                        for v in vers:
-                            vrows.append(
-                                {
-                                    "version_number": v.get("version_number"),
-                                    "is_active": v.get("is_active"),
-                                    "chunk_count": v.get("chunk_count"),
-                                    "file_hash": _short_file_hash(v.get("file_hash")),
-                                    "indexed_at": _format_dt_moscow_logs(
-                                        v.get("indexed_at")
-                                    ),
-                                }
-                            )
-                        st.dataframe(
-                            pd.DataFrame(vrows),
-                            use_container_width=True,
-                            hide_index=True,
+                        fname = str(selected_row.get("filename") or "документ")
+                        st.markdown(f"**Открыт документ:** {html.escape(fname)}")
+                        st.markdown(
+                            f"<small>document_id: <code>{html.escape(selected_doc)}</code></small>",
+                            unsafe_allow_html=True,
+                        )
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Статус", str(selected_row.get("status") or "—"))
+                        m2.metric("Активная версия", selected_row.get("active_version") or "—")
+                        m3.metric("Чанков (active)", selected_row.get("active_chunk_count") or 0)
+                        m4.metric(
+                            "Индексирован",
+                            _format_dt_moscow_logs(selected_row.get("last_indexed_at")),
                         )
 
-    with tab_index:
-        st.write(
-            "Переиндексация очищает текущую Chroma-коллекцию и заново строит индекс по документам."
-        )
-        if st.button("Запустить переиндексацию", type="primary", key="run_reindex"):
-            with st.spinner("Идёт переиндексация…"):
-                result = svc.run_reindex()
-            if result.success:
-                st.success("**Статус:** переиндексация выполнена успешно.")
-            else:
-                st.error("**Статус:** переиндексация завершилась с ошибкой или не для всех файлов.")
-            st.metric("Чанков в коллекции Chroma", result.collection_count)
-            if result.error_message:
-                st.warning(result.error_message)
+                        raw_id = selected_row.get("document_id")
+                        vers: list[dict[str, Any]] = []
+                        if raw_id is not None:
+                            try:
+                                doc_id = (
+                                    raw_id
+                                    if isinstance(raw_id, uuid.UUID)
+                                    else uuid.UUID(str(raw_id))
+                                )
+                                vers = svc.get_document_versions(doc_id)
+                            except (ValueError, TypeError):
+                                vers = []
+
+                        st.markdown("**Версии**")
+                        if not vers:
+                            st.caption("Версий не найдено.")
+                        else:
+                            vrows = []
+                            for v in vers:
+                                vrows.append(
+                                    {
+                                        "версия": v.get("version_number"),
+                                        "активна": "да" if v.get("is_active") else "нет",
+                                        "чанки": v.get("chunk_count"),
+                                        "hash": _short_file_hash(v.get("file_hash")),
+                                        "indexed_at": _format_dt_moscow_logs(v.get("indexed_at")),
+                                    }
+                                )
+                            st.dataframe(
+                                pd.DataFrame(vrows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                        with st.expander("Raw metadata", expanded=False):
+                            st.markdown('<div class="json-dark">', unsafe_allow_html=True)
+                            st.code(
+                                json.dumps(selected_row, ensure_ascii=False, default=str, indent=2),
+                                language="json",
+                            )
+                            st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_logs:
         st.write(
