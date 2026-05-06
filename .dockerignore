@@ -1,0 +1,14 @@
+.env
+.env.*
+__pycache__/
+*.pyc
+.git/
+.venv/
+venv/
+data/chroma_db/
+data/chroma_db_broken_backup/
+tmp_chroma_test/
+tmp_chroma_test_312/
+logs.db
+outputs/
+legacy/

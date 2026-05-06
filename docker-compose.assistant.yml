@@ -1,0 +1,46 @@
+services:
+  assistant-flow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: assistant-flow
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    volumes:
+      - ./data/documents:/app/data/documents
+      - ./outputs:/app/outputs
+    networks:
+      - assistant-net
+      - n8n_default
+
+  assistant-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: assistant-admin
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    volumes:
+      - ./data/documents:/app/data/documents
+      - ./outputs:/app/outputs
+    command:
+      - streamlit
+      - run
+      - admin_ui/app.py
+      - --server.address
+      - "0.0.0.0"
+      - --server.port
+      - "8501"
+    ports:
+      - "8501:8501"
+    networks:
+      - assistant-net
+      - n8n_default
+
+networks:
+  assistant-net:
+    external: true
+  n8n_default:
+    external: true

@@ -1,0 +1,92 @@
+# PostgreSQL: применение схемы Assistant Flow
+
+Документ описывает, как создать базу и применить `database/schema.sql` в соответствии с `database/db_contract.md`. Прикладной код ожидает строку подключения в переменной окружения **`DATABASE_URL`**.
+
+## Требования
+
+- PostgreSQL **14+** рекомендуется (в скрипте используются `gen_random_uuid()` и синтаксис триггеров `EXECUTE FUNCTION`; при необходимости уточните версию для вашей инсталляции).
+
+## 1. Создать роль и базу
+
+Пример через `psql` под суперпользователем:
+
+```sql
+CREATE USER assistant_flow WITH PASSWORD 'your_secure_password';
+CREATE DATABASE assistant_flow OWNER assistant_flow;
+GRANT ALL PRIVILEGES ON DATABASE assistant_flow TO assistant_flow;
+```
+
+Подключитесь к **новой** базе и выдайте права на схему `public` (если нужно):
+
+```sql
+\c assistant_flow
+GRANT ALL ON SCHEMA public TO assistant_flow;
+```
+
+## 2. Применение миграций и schema.sql
+
+Файл **`database/schema.sql`** описывает **итоговую** схему БД (сейчас **v2**, в том числе изменения из `migrations/002_runtime_lifecycle.sql`).  
+Файлы в **`database/migrations/`** нужно применять **по порядку номеров** на уже существующей базе, если она была создана по более старой схеме.
+
+### 2a. Новая БД (с нуля)
+
+Достаточно один раз применить итоговую схему:
+
+```bash
+psql "$DATABASE_URL" -f database/schema.sql
+```
+
+Либо с явным URI:
+
+```bash
+psql "postgresql://assistant_flow:your_secure_password@localhost:5432/assistant_flow" -f database/schema.sql
+```
+
+Или интерактивно:
+
+```bash
+psql -U assistant_flow -d assistant_flow -h localhost -f database/schema.sql
+```
+
+Убедитесь, что команда завершилась без ошибок. Расширение `pgcrypto` должно быть доступно на сервере (`CREATE EXTENSION` в начале файла).
+
+### 2b. Уже существующая БД (апгрейд с v1)
+
+Не применяйте повторно полный `schema.sql` поверх заполненной v1, если не уверены в идемпотентности всех объектов: используйте миграции.
+
+Пример для миграции **002** (runtime / lifecycle):
+
+```bash
+psql "$DATABASE_URL" -f database/migrations/002_runtime_lifecycle.sql
+```
+
+После успешного прогона миграций структура должна совпадать с актуальным **`database/schema.sql`** (сверка по `db_contract.md`).
+
+**Важно:**
+
+- миграции в `database/migrations/` применяются **последовательно** (001, 002, …), без пропусков;
+- **`schema.sql`** — это **снимок целевой схемы**, а не замена цепочки миграций на проде: новые инсталляции поднимают БД через `schema.sql`; существующие — через накат миграций.
+
+## 3. Переменная окружения
+
+В `.env` (на основе `.env.example`) задайте:
+
+```env
+DATABASE_URL=postgresql://assistant_flow:your_secure_password@localhost:5432/assistant_flow
+```
+
+Формат совместим с драйвером **psycopg** (libpq URI). Для SSL и нестандартных портов добавьте параметры в URI по документации PostgreSQL.
+
+## 4. Проверка подключения (опционально)
+
+После установки зависимостей проекта из корня репозитория:
+
+```bash
+python -c "from repositories.connection import check_connection; print(check_connection())"
+```
+
+Должно вывести `True`, если `DATABASE_URL` корректен и схема доступна.
+
+## Дальнейшие изменения схемы
+
+Любые новые таблицы или поля — только через SQL-миграцию в `database/migrations/`, затем обновление итогового `database/schema.sql` и `database/db_contract.md`, как указано в контракте v2.
