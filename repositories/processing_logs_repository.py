@@ -295,6 +295,65 @@ class ProcessingLogsRepository:
             rows = cur.fetchall()
         return [dict(r) for r in rows]
 
+    def count_distinct_execution_ids(self, conn: Connection) -> int:
+        """Total distinct requests in processing_logs."""
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT execution_id)::bigint
+                FROM processing_logs
+                """,
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def list_recent_execution_ids(
+        self,
+        conn: Connection,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Recent requests (execution_id) sorted by latest event time."""
+        lim = max(1, min(int(limit), 500))
+        off = max(0, int(offset))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT execution_id, MAX(created_at) AS last_at
+                FROM processing_logs
+                GROUP BY execution_id
+                ORDER BY last_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (lim, off),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+    def list_events_for_execution_ids(
+        self,
+        conn: Connection,
+        *,
+        execution_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """All rows for selected execution_ids."""
+        ids = [str(x).strip() for x in execution_ids if str(x).strip()]
+        if not ids:
+            return []
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT execution_id, stage, status, details, created_at
+                FROM processing_logs
+                WHERE execution_id = ANY(%s::text[])
+                ORDER BY created_at ASC
+                """,
+                (ids,),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
     def count_stage_last_hours(
         self,
         conn: Connection,

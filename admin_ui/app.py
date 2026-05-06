@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import sys
 import uuid
@@ -317,6 +318,84 @@ def _rag_inline_metrics_html(ev: dict[str, Any]) -> str:
         )
     parts.append("</div>")
     return "".join(parts)
+
+
+def get_paginated_slice(
+    items: list[Any],
+    page: int,
+    page_size: int,
+) -> tuple[list[Any], int, int]:
+    """Return slice, total_items, total_pages."""
+    total_items = len(items)
+    total_pages = max(1, math.ceil(total_items / max(1, page_size)))
+    page_norm = max(0, min(int(page), total_pages - 1))
+    start = page_norm * page_size
+    end = start + page_size
+    return items[start:end], total_items, total_pages
+
+
+def reset_invalid_selection(
+    items: list[Any],
+    selected_state_key: str,
+    id_getter: Any,
+) -> None:
+    selected = str(st.session_state.get(selected_state_key, "")).strip()
+    if not selected:
+        return
+    if not any(str(id_getter(it)) == selected for it in items):
+        st.session_state.pop(selected_state_key, None)
+
+
+def render_pagination_controls(
+    state_prefix: str,
+    *,
+    total_items: int,
+    has_next: bool,
+    page_size_label: str = "На странице",
+) -> tuple[int, int]:
+    """Unified compact pagination bar with session_state."""
+    page_key = f"{state_prefix}_page"
+    size_key = f"{state_prefix}_page_size"
+    if size_key not in st.session_state:
+        st.session_state[size_key] = 50
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 0
+
+    prev_size = int(st.session_state[size_key])
+    c1, c2, c3, c4 = st.columns((1.2, 1, 1, 2.2))
+    with c1:
+        page_size = int(
+            st.selectbox(
+                page_size_label,
+                options=(20, 50, 100),
+                key=size_key,
+                label_visibility="collapsed",
+            )
+        )
+    if page_size != prev_size:
+        st.session_state[page_key] = 0
+
+    page = max(0, int(st.session_state[page_key]))
+    known_pages = max(1, math.ceil(total_items / max(1, page_size)))
+    if page >= known_pages and not has_next:
+        page = known_pages - 1
+        st.session_state[page_key] = page
+    with c2:
+        if st.button("← Предыдущая", key=f"{state_prefix}_prev", disabled=page <= 0):
+            st.session_state[page_key] = max(0, page - 1)
+            st.rerun()
+    with c3:
+        if st.button("Следующая →", key=f"{state_prefix}_next", disabled=not has_next):
+            st.session_state[page_key] = page + 1
+            st.rerun()
+    with c4:
+        pages_text = (
+            f"Страница {page + 1} из {known_pages}"
+            if not has_next
+            else f"Страница {page + 1} из ≥ {max(known_pages, page + 2)}"
+        )
+        st.caption(pages_text)
+    return int(st.session_state[page_key]), page_size
 
 
 def _first_non_empty(details: dict[str, Any], keys: tuple[str, ...]) -> str:
@@ -1480,20 +1559,15 @@ def main() -> None:
             )
         else:
             t_f1, t_f2 = st.columns(2)
-            text_limit = int(
-                t_f1.selectbox(
-                    "Сколько показать",
-                    options=(20, 50, 100),
-                    index=1,
-                    key="text_recent_limit",
-                )
-            )
             status_filter_opt = t_f2.selectbox(
                 "Статус",
                 options=("Все", "success", "error"),
                 index=0,
                 key="text_recent_status_filter",
             )
+            text_page = int(st.session_state.get("text_page", 0))
+            text_page_size_seed = int(st.session_state.get("text_page_size", 50))
+            text_limit = min(500, max(20, (text_page + 1) * text_page_size_seed + 1))
             text_rows = svc.get_recent_text_events(limit=text_limit)
             text_requests = _build_text_requests_from_rows(text_rows)
             if status_filter_opt != "Все":
@@ -1510,11 +1584,18 @@ def main() -> None:
                 selected_text_eid = str(
                     st.session_state.get("selected_text_execution_id", "")
                 )
+                has_next_text = len(text_requests) > (text_page + 1) * text_page_size_seed
+                text_page, text_page_size = render_pagination_controls(
+                    "text", total_items=len(text_requests), has_next=has_next_text
+                )
+                page_items, _, _ = get_paginated_slice(
+                    text_requests, text_page, text_page_size
+                )
                 list_col, detail_col = st.columns((0.35, 0.65))
                 with list_col:
                     st.markdown("**Список запросов**")
                     st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
-                    for idx, req in enumerate(text_requests):
+                    for idx, req in enumerate(page_items):
                         dt_label = _format_dt_moscow_logs(req.get("last_at"))
                         status_raw = str(req.get("status") or "")
                         status_label = _status_label(status_raw)
@@ -1551,13 +1632,21 @@ def main() -> None:
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with detail_col:
+                    reset_invalid_selection(
+                        page_items,
+                        "selected_text_execution_id",
+                        lambda it: str(it.get("execution_id") or ""),
+                    )
+                    selected_text_eid = str(
+                        st.session_state.get("selected_text_execution_id", "")
+                    )
                     if not selected_text_eid:
                         st.info("Выберите Text-запрос слева")
                     else:
                         selected_req = next(
                             (
                                 req
-                                for req in text_requests
+                                for req in page_items
                                 if str(req.get("execution_id") or "") == selected_text_eid
                             ),
                             None,
@@ -1611,14 +1700,9 @@ def main() -> None:
                 index=0,
                 key="rag_recent_fallback_filter",
             )
-            limit_recent = int(
-                rf2.selectbox(
-                    "Сколько показать",
-                    options=(10, 20, 50),
-                    index=2,
-                    key="rag_recent_limit",
-                )
-            )
+            rag_page = int(st.session_state.get("rag_page", 0))
+            rag_page_size_seed = int(st.session_state.get("rag_page_size", 50))
+            limit_recent = min(500, max(20, (rag_page + 1) * rag_page_size_seed + 1))
             fallback_filter = None if selected_fallback == "Все" else selected_fallback
             recent_rag = svc.get_recent_rag_events(
                 limit=limit_recent,
@@ -1628,6 +1712,11 @@ def main() -> None:
                 st.session_state.pop("selected_rag_execution_id", None)
                 st.info("RAG-события по выбранному фильтру не найдены.")
             else:
+                has_next_rag = len(recent_rag) > (rag_page + 1) * rag_page_size_seed
+                rag_page, rag_page_size = render_pagination_controls(
+                    "rag", total_items=len(recent_rag), has_next=has_next_rag
+                )
+                page_items, _, _ = get_paginated_slice(recent_rag, rag_page, rag_page_size)
                 selected_eid = str(
                     st.session_state.get("selected_rag_execution_id", "")
                 )
@@ -1635,7 +1724,7 @@ def main() -> None:
                 with list_col:
                     st.markdown("**Список запросов**")
                     st.markdown('<div class="rag-list-pane">', unsafe_allow_html=True)
-                    for idx, ev in enumerate(recent_rag):
+                    for idx, ev in enumerate(page_items):
                         dt_label = _format_dt_moscow_logs(ev.get("created_at"))
                         fb = str(ev.get("fallback_reason") or "none")
                         qp = str(ev.get("query_preview") or "—")
@@ -1672,13 +1761,21 @@ def main() -> None:
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with detail_col:
+                    reset_invalid_selection(
+                        page_items,
+                        "selected_rag_execution_id",
+                        lambda it: str(it.get("execution_id") or ""),
+                    )
+                    selected_eid = str(
+                        st.session_state.get("selected_rag_execution_id", "")
+                    )
                     if not selected_eid:
                         st.info("Выберите RAG-запрос слева")
                     else:
                         selected_ev = next(
                             (
                                 ev
-                                for ev in recent_rag
+                                for ev in page_items
                                 if str(ev.get("execution_id") or "") == selected_eid
                             ),
                             None,
@@ -1731,8 +1828,14 @@ def main() -> None:
         elif not doc_rows:
             st.info("В таблице `documents` пока нет записей или не удалось загрузить данные.")
         else:
+            docs_page, docs_page_size = render_pagination_controls(
+                "docs", total_items=len(doc_rows), has_next=False
+            )
+            docs_page_items, _, _ = get_paginated_slice(
+                doc_rows, docs_page, docs_page_size
+            )
             table_data: list[dict[str, Any]] = []
-            for dr in doc_rows:
+            for dr in docs_page_items:
                 table_data.append(
                     {
                         "filename": dr.get("filename") or "—",
@@ -1758,7 +1861,7 @@ def main() -> None:
             ]
             st.dataframe(df_docs, use_container_width=True, hide_index=True)
 
-            for dr in doc_rows:
+            for dr in docs_page_items:
                 raw_id = dr.get("document_id")
                 if raw_id is None:
                     continue
@@ -1818,19 +1921,30 @@ def main() -> None:
             "Журнал обработки: записи сгруппированы по запросу (`execution_id`). "
             "Внутри группы — цепочка событий по времени."
         )
-        limit = st.selectbox(
-            "Сколько записей журнала загрузить",
-            options=(20, 50, 100),
-            index=1,
-            key="logs_limit",
-        )
-        rows = svc.get_recent_logs(limit=int(limit))
-        if not rows:
+        total_exec = int(svc.get_logs_execution_ids_total())
+        if total_exec <= 0:
             st.info(
                 "Записей нет. Нужны подключение к базе и таблица `processing_logs`."
             )
         else:
+            logs_page = int(st.session_state.get("logs_page", 0))
+            logs_page_size_seed = int(st.session_state.get("logs_page_size", 50))
+            logs_page, logs_page_size = render_pagination_controls(
+                "logs",
+                total_items=int(total_exec),
+                has_next=(logs_page + 1) * logs_page_size_seed < int(total_exec),
+                page_size_label="Сколько запросов показать",
+            )
+            exec_page, total_exec = svc.get_logs_execution_ids_page(
+                page=logs_page,
+                page_size=logs_page_size,
+            )
+            execution_ids = [str(x.get("execution_id") or "") for x in exec_page]
+            rows = svc.get_logs_events_for_execution_ids(execution_ids)
             groups = group_logs_by_execution_id(rows)
+            order_map = {eid: i for i, eid in enumerate(execution_ids)}
+            groups.sort(key=lambda g: order_map.get(g[0], 10**9))
+            st.caption(f"Показано запросов: {len(groups)} из {int(total_exec)}")
             for eid, start_ts, events in groups:
                 title = (
                     f"Запрос от {_format_dt_moscow_logs(start_ts)} · `{eid}`"

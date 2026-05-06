@@ -253,6 +253,59 @@ class AdminService:
         except Exception:
             return []
 
+    def get_logs_execution_ids_page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page of execution_ids + total distinct execution_ids."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return [], 0
+        pg = max(0, int(page))
+        size = max(1, min(int(page_size), 500))
+        off = pg * size
+        try:
+            with get_connection() as conn:
+                total = self._proc_repo.count_distinct_execution_ids(conn)
+                items = self._proc_repo.list_recent_execution_ids(
+                    conn, limit=size, offset=off
+                )
+                conn.commit()
+            return items, int(total)
+        except Exception:
+            return [], 0
+
+    def get_logs_execution_ids_total(self) -> int:
+        """Total number of distinct execution_id in processing logs."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return 0
+        try:
+            with get_connection() as conn:
+                total = self._proc_repo.count_distinct_execution_ids(conn)
+                conn.commit()
+            return int(total)
+        except Exception:
+            return 0
+
+    def get_logs_events_for_execution_ids(
+        self,
+        execution_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """All processing logs rows for selected execution_ids."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return []
+        try:
+            with get_connection() as conn:
+                rows = self._proc_repo.list_events_for_execution_ids(
+                    conn,
+                    execution_ids=execution_ids,
+                )
+                conn.commit()
+            return rows
+        except Exception:
+            return []
+
     def get_recent_rag_events(
         self,
         limit: int = 50,
