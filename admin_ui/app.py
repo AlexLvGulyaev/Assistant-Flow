@@ -28,8 +28,107 @@ import pandas as pd
 import streamlit as st
 
 from services.admin_service import AdminService
+from utils.config import load_config
 
 moscow_tz = zoneinfo.ZoneInfo("Europe/Moscow")
+
+# Документы: компактный превью текста (upload / сэмплы), не полный chunk в основном виде
+MAX_CHUNK_PREVIEW_CHARS = 350
+_RAW_METADATA_JSON_MAX = 12_000
+_DISK_SAMPLE_READ_MAX = 256 * 1024
+
+
+def _estimate_chunks(text: str, *, chunk_size: int, chunk_overlap: int) -> int:
+    """
+    Операционная оценка числа чангов (как sliding window RecursiveCharacterTextSplitter:
+    шаг ≈ chunk_size − chunk_overlap). Точное совпадение с LangChain не требуется.
+    """
+    if not text or not str(text).strip():
+        return 0
+    L = len(text)
+    if L <= max(1, chunk_size):
+        return 1
+    step = max(1, int(chunk_size) - int(chunk_overlap))
+    return max(1, math.ceil((L - int(chunk_overlap)) / step))
+
+
+def _doc_chunk_tier(chunk_count: int) -> str:
+    """normal | medium | large — по active/estimated chunk count."""
+    n = int(chunk_count)
+    if n <= 50:
+        return "normal"
+    if n <= 150:
+        return "medium"
+    return "large"
+
+
+def _doc_upload_tier_label(tier: str) -> str:
+    if tier == "normal":
+        return "Small document"
+    if tier == "medium":
+        return "Medium document"
+    return "Large document warning"
+
+
+def _format_bytes(num: int) -> str:
+    n = float(max(0, int(num)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024.0 or unit == "GB":
+            if unit == "B":
+                return f"{int(n)} {unit}"
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{int(num)} B"
+
+
+def _truncate_preview(text: str, max_len: int = MAX_CHUNK_PREVIEW_CHARS) -> str:
+    s = str(text)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
+def get_doc_chunk_badge(chunk_count: int) -> str:
+    """Компактный бейдж NORMAL / MEDIUM / LARGE (тот же язык, что route-badge)."""
+    tier = _doc_chunk_tier(int(chunk_count))
+    labels = {"normal": "NORMAL", "medium": "MEDIUM", "large": "LARGE"}
+    return (
+        f'<span class="doc-chunk-badge doc-chunk-badge--{tier}">'
+        f"{html.escape(labels[tier])}</span>"
+    )
+
+
+def _documents_stats_strip_html(doc_rows: list[dict[str, Any]]) -> str:
+    if not doc_rows:
+        return ""
+    n = len(doc_rows)
+    chunks = [int(r.get("active_chunk_count") or 0) for r in doc_rows]
+    total_ch = sum(chunks)
+    avg = round(total_ch / n, 1) if n else 0.0
+    largest = max(doc_rows, key=lambda r: int(r.get("active_chunk_count") or 0))
+    max_ch = int(largest.get("active_chunk_count") or 0)
+    max_name = str(largest.get("filename") or "—")
+    tiles = [
+        ("Документов", str(n)),
+        ("Чанков (active)", str(total_ch)),
+        ("Ср. чанков / док.", str(avg)),
+        ("Макс. чанков", str(max_ch)),
+        ("Крупнейший файл", max_name if len(max_name) <= 28 else max_name[:25] + "…"),
+    ]
+    parts = [
+        '<div class="doc-stats-strip">',
+        '<span class="doc-stats-strip-title">База знаний</span>',
+        '<div class="doc-stats-strip-tiles">',
+    ]
+    for lbl, val in tiles:
+        parts.append(
+            '<div class="doc-stat-tile">'
+            f'<span class="doc-stat-tile-val">{html.escape(str(val))}</span>'
+            f'<span class="doc-stat-tile-lbl">{html.escape(lbl)}</span>'
+            "</div>"
+        )
+    parts.append("</div></div>")
+    return "".join(parts)
 
 
 @st.cache_resource
@@ -1416,6 +1515,103 @@ def _inject_theme_css() -> None:
           border-color: var(--border);
           background: rgba(156, 163, 175, 0.08);
         }
+        .doc-chunk-badge {
+          display: inline-flex;
+          align-items: center;
+          border-radius: 999px;
+          padding: 1px 8px;
+          font-size: 0.62rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          border: 1px solid var(--border);
+          margin-left: 6px;
+          vertical-align: middle;
+        }
+        .doc-chunk-badge--normal {
+          color: var(--success) !important;
+          border-color: var(--success);
+          background: rgba(34, 197, 94, 0.12);
+        }
+        .doc-chunk-badge--medium {
+          color: var(--warning) !important;
+          border-color: var(--warning);
+          background: rgba(245, 158, 11, 0.12);
+        }
+        .doc-chunk-badge--large {
+          color: var(--error) !important;
+          border-color: var(--error);
+          background: rgba(239, 68, 68, 0.1);
+        }
+        .doc-stats-strip {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: stretch;
+          gap: 8px;
+          background: var(--bg-card);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 8px 10px;
+          margin: 0 0 10px 0;
+          box-sizing: border-box;
+        }
+        .doc-stats-strip-title {
+          flex: 0 0 auto;
+          align-self: center;
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--accent) !important;
+          margin-right: 6px;
+        }
+        .doc-stats-strip-tiles {
+          display: flex;
+          flex-wrap: wrap;
+          flex: 1 1 0;
+          gap: 6px;
+          min-width: 0;
+        }
+        .doc-stat-tile {
+          flex: 0 1 auto;
+          min-width: 72px;
+          max-width: 140px;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 4px 8px;
+          line-height: 1.15;
+        }
+        .doc-stat-tile-val {
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: var(--text-primary) !important;
+          display: block;
+          word-break: break-word;
+        }
+        .doc-stat-tile-lbl {
+          font-size: 0.55rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+          color: var(--text-secondary) !important;
+          margin-top: 2px;
+          display: block;
+        }
+        .doc-chunk-preview {
+          max-height: 220px;
+          overflow-y: auto;
+          font-size: 0.82rem;
+          line-height: 1.35;
+          color: var(--text-primary) !important;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 8px 10px;
+          margin: 4px 0 8px 0;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
         .text-list-pane .stButton > button {
           background: var(--bg-card) !important;
           color: var(--text-primary) !important;
@@ -1929,8 +2125,23 @@ def main() -> None:
         st.subheader("Документы")
         st.caption("Управление базой знаний: загрузка, поиск, версии и переиндексация.")
 
+        rag_cfg = load_config()
         doc_rows = svc.get_documents_with_versions()
         files = svc.list_documents()
+
+        if doc_rows:
+            st.markdown(_documents_stats_strip_html(doc_rows), unsafe_allow_html=True)
+
+        has_any_large_doc = any(
+            _doc_chunk_tier(int(r.get("active_chunk_count") or 0)) == "large"
+            for r in doc_rows
+        )
+        if has_any_large_doc:
+            st.warning(
+                "В системе обнаружены большие документы. "
+                "Переиндексация может занять длительное время и увеличить нагрузку на ChromaDB."
+            )
+
         all_statuses = sorted(
             {str(r.get("status") or "—").strip() for r in doc_rows if r is not None}
         )
@@ -1938,6 +2149,42 @@ def main() -> None:
         tb1, tb2, tb3, tb4 = st.columns((2.4, 1.1, 1.3, 1.2))
         with tb1:
             uploaded = st.file_uploader("Загрузить .txt", type=["txt"], key="docs_upload")
+            if uploaded is not None:
+                u_bytes = uploaded.getvalue()
+                u_text = u_bytes.decode("utf-8", errors="replace")
+                u_est = _estimate_chunks(
+                    u_text,
+                    chunk_size=rag_cfg.rag_chunk_size,
+                    chunk_overlap=rag_cfg.rag_chunk_overlap,
+                )
+                u_tier = _doc_chunk_tier(u_est)
+                u_lbl = _doc_upload_tier_label(u_tier)
+                st.caption(
+                    f"{u_lbl} · {_format_bytes(len(u_bytes))} · ~{u_est} чанков "
+                    f"(оценка; chunk_size={rag_cfg.rag_chunk_size}, overlap={rag_cfg.rag_chunk_overlap})"
+                )
+                st.markdown(
+                    f'<div class="route-badge-line">{get_doc_chunk_badge(u_est)}</div>',
+                    unsafe_allow_html=True,
+                )
+                if u_tier == "large":
+                    st.caption(
+                        "Переиндексация может занять заметное время и увеличить нагрузку на ChromaDB."
+                    )
+                st.markdown(
+                    '<p class="rag-section-label">Превью текста (обрезано)</p>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div class="doc-chunk-preview">{html.escape(_truncate_preview(u_text))}</div>',
+                    unsafe_allow_html=True,
+                )
+                with st.expander("Полный текст загружаемого файла", expanded=False):
+                    cap = 200_000
+                    if len(u_text) <= cap:
+                        st.text(u_text)
+                    else:
+                        st.text(u_text[:cap] + "\n… [обрезано для отображения в UI]")
             if uploaded is not None and st.button("Upload", key="save_upload"):
                 try:
                     dest = svc.save_uploaded_txt(uploaded.name, uploaded.getvalue())
@@ -1978,7 +2225,6 @@ def main() -> None:
         else:
             st.caption("Файлы в каталоге пока не найдены.")
 
-        doc_rows = svc.get_documents_with_versions()
         if not doc_rows and not (os.getenv("DATABASE_URL") or "").strip():
             st.caption(
                 "Таблица версий недоступна: задайте `DATABASE_URL` для просмотра метаданных."
@@ -2033,12 +2279,15 @@ def main() -> None:
                     fname = str(dr.get("filename") or "—")
                     st_label = str(dr.get("status") or "—")
                     active_ver = str(dr.get("active_version") or "—")
-                    chunks = str(dr.get("active_chunk_count") or 0)
+                    chunk_n = int(dr.get("active_chunk_count") or 0)
+                    chunks = str(chunk_n)
+                    chunk_badge = get_doc_chunk_badge(chunk_n)
                     st.markdown(
                         f'<div class="{item_cls}">'
                         '<div class="rag-list-item-head">'
                         f'<div class="rag-list-time">{html.escape(fname)}</div>'
                         f"{badge_html}</div>"
+                        f'<div class="route-badge-line">{chunk_badge}</div>'
                         f'<div class="rag-list-fallback">Статус: {html.escape(st_label)}</div>'
                         f'<div class="rag-list-query">Активная версия: {html.escape(active_ver)} · '
                         f'Чанков: {html.escape(chunks)}</div>'
@@ -2073,7 +2322,12 @@ def main() -> None:
                         st.info("Выбранный документ не найден в текущем фильтре.")
                     else:
                         fname = str(selected_row.get("filename") or "документ")
-                        st.markdown(f"**Открыт документ:** {html.escape(fname)}")
+                        active_chunks_n = int(selected_row.get("active_chunk_count") or 0)
+                        st.markdown(
+                            f"**Открыт документ:** {html.escape(fname)} "
+                            f"{get_doc_chunk_badge(active_chunks_n)}",
+                            unsafe_allow_html=True,
+                        )
                         st.markdown(
                             f"<small>document_id: <code>{html.escape(selected_doc)}</code></small>",
                             unsafe_allow_html=True,
@@ -2081,14 +2335,14 @@ def main() -> None:
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Статус", str(selected_row.get("status") or "—"))
                         m2.metric("Активная версия", selected_row.get("active_version") or "—")
-                        m3.metric("Чанков (active)", selected_row.get("active_chunk_count") or 0)
+                        m3.metric("Чанков (active)", active_chunks_n)
                         m4.metric(
                             "Индексирован",
                             _format_dt_moscow_logs(selected_row.get("last_indexed_at")),
                         )
 
                         raw_id = selected_row.get("document_id")
-                        vers: list[dict[str, Any]] = []
+                        doc_id: uuid.UUID | None = None
                         if raw_id is not None:
                             try:
                                 doc_id = (
@@ -2096,37 +2350,81 @@ def main() -> None:
                                     if isinstance(raw_id, uuid.UUID)
                                     else uuid.UUID(str(raw_id))
                                 )
-                                vers = svc.get_document_versions(doc_id)
                             except (ValueError, TypeError):
-                                vers = []
+                                doc_id = None
 
-                        st.markdown("**Версии**")
-                        if not vers:
-                            st.caption("Версий не найдено.")
-                        else:
-                            vrows = []
-                            for v in vers:
-                                vrows.append(
-                                    {
-                                        "версия": v.get("version_number"),
-                                        "активна": "да" if v.get("is_active") else "нет",
-                                        "чанки": v.get("chunk_count"),
-                                        "hash": _short_file_hash(v.get("file_hash")),
-                                        "indexed_at": _format_dt_moscow_logs(v.get("indexed_at")),
-                                    }
+                        with st.expander("Версии документа", expanded=False):
+                            if doc_id is None:
+                                st.caption("Некорректный document_id.")
+                            else:
+                                vers = svc.get_document_versions(doc_id)
+                                if not vers:
+                                    st.caption("Версий не найдено.")
+                                else:
+                                    vrows = []
+                                    for v in vers:
+                                        vrows.append(
+                                            {
+                                                "версия": v.get("version_number"),
+                                                "активна": "да" if v.get("is_active") else "нет",
+                                                "чанки": v.get("chunk_count"),
+                                                "hash": _short_file_hash(v.get("file_hash")),
+                                                "indexed_at": _format_dt_moscow_logs(
+                                                    v.get("indexed_at")
+                                                ),
+                                            }
+                                        )
+                                    st.dataframe(
+                                        pd.DataFrame(vrows),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                    )
+
+                        with st.expander("Сэмпл текста с диска (до 256 KiB)", expanded=False):
+                            fp = Path(svc.documents_directory) / fname
+                            if not fp.is_file():
+                                st.caption("Файл не найден в каталоге документов по имени.")
+                            else:
+                                raw_sample = fp.read_bytes()[:_DISK_SAMPLE_READ_MAX]
+                                sample_text = raw_sample.decode("utf-8", errors="replace")
+                                sample_est = _estimate_chunks(
+                                    sample_text,
+                                    chunk_size=rag_cfg.rag_chunk_size,
+                                    chunk_overlap=rag_cfg.rag_chunk_overlap,
                                 )
-                            st.dataframe(
-                                pd.DataFrame(vrows),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+                                st.caption(
+                                    f"Прочитано байт: {len(raw_sample)} · "
+                                    f"оценка чанков по сэмплу: ~{sample_est}"
+                                )
+                                st.markdown(
+                                    '<p class="rag-section-label">Превью сэмпла (обрезано)</p>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.markdown(
+                                    f'<div class="doc-chunk-preview">'
+                                    f"{html.escape(_truncate_preview(sample_text))}</div>",
+                                    unsafe_allow_html=True,
+                                )
+                                with st.expander("Полный сэмпл (в пределах лимита чтения)", expanded=False):
+                                    st.text(sample_text)
 
                         with st.expander("Raw metadata", expanded=False):
                             st.markdown('<div class="json-dark">', unsafe_allow_html=True)
-                            st.code(
-                                json.dumps(selected_row, ensure_ascii=False, default=str, indent=2),
-                                language="json",
+                            dump = json.dumps(
+                                selected_row, ensure_ascii=False, default=str, indent=2
                             )
+                            if len(dump) <= _RAW_METADATA_JSON_MAX:
+                                st.code(dump, language="json")
+                            else:
+                                st.code(
+                                    dump[:_RAW_METADATA_JSON_MAX] + "\n…",
+                                    language="json",
+                                )
+                                st.caption(
+                                    f"Сокращённый просмотр: {_RAW_METADATA_JSON_MAX} символов из {len(dump)}."
+                                )
+                                with st.expander("Полный JSON (может быть тяжёлым для UI)", expanded=False):
+                                    st.code(dump, language="json")
                             st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_logs:
