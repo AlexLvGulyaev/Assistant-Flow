@@ -189,6 +189,11 @@ def normalize_event_type(event_type: str | None) -> str:
 
 
 def _stage_to_action(stage: str | None) -> str:
+    raw = (stage or "").strip()
+    if raw == "text_answer_done":
+        return "Текстовый ответ построен"
+    if raw == "rag_answer_done":
+        return "RAG-ответ построен"
     norm = normalize_event_type(stage)
     if not norm:
         return "—"
@@ -343,6 +348,178 @@ def group_logs_by_execution_id(
 
     packed.sort(key=lambda x: _group_sort_key(x[2]), reverse=True)
     return packed
+
+
+LOGS_DETAILS_PREVIEW_MAX = 200
+LOGS_LIST_PREVIEW_MAX = 140
+LOGS_EXEC_ID_SHORT_LEN = 8
+
+
+def _short_execution_id(eid: str | None) -> str:
+    s = str(eid or "").strip()
+    if not s or s == "—":
+        return "—"
+    n = LOGS_EXEC_ID_SHORT_LEN
+    if len(s) <= n:
+        return s
+    return s[:n] + "…"
+
+
+def _logs_infer_route_from_events(events: list[dict[str, Any]]) -> str:
+    """Нормализованный route/mode/stage для бейджа (presentation only)."""
+    for ev in reversed(events):
+        details = ev.get("details")
+        dd: dict[str, Any] = details if isinstance(details, dict) else {}
+        r_raw = str(dd.get("route") or "").strip()
+        if r_raw:
+            norm = normalize_route(r_raw)
+            if norm != "unknown":
+                return norm
+        mode = str(dd.get("mode") or "").strip().lower()
+        if mode == "text":
+            return "text"
+        if mode == "rag":
+            return "rag"
+    for ev in reversed(events):
+        stg = str(ev.get("stage") or "")
+        if stg == "rag_answer_done":
+            return "rag"
+        if stg == "text_answer_done":
+            return "text"
+    return "unknown"
+
+
+def _logs_session_final_status(events: list[dict[str, Any]]) -> str:
+    for ev in reversed(events):
+        stg = str(ev.get("stage") or "")
+        if stg in (
+            "processing_done",
+            "processing_error",
+            "rag_answer_done",
+            "text_answer_done",
+        ):
+            return str(ev.get("status") or "—")
+    if events:
+        return str(events[-1].get("status") or "—")
+    return "—"
+
+
+def _logs_session_preview(events: list[dict[str, Any]]) -> str:
+    for ev in events:
+        details = ev.get("details")
+        dd: dict[str, Any] = details if isinstance(details, dict) else {}
+        p = _first_non_empty(
+            dd,
+            (
+                "user_text",
+                "message_text",
+                "query_preview",
+                "text",
+                "answer_preview",
+            ),
+        )
+        if p:
+            p = p.strip()
+            if len(p) > LOGS_LIST_PREVIEW_MAX:
+                return p[: LOGS_LIST_PREVIEW_MAX - 1] + "…"
+            return p
+    return ""
+
+
+def _logs_timeline_flow_ru(events: list[dict[str, Any]]) -> str:
+    parts = [_stage_to_action(ev.get("stage")) for ev in events]
+    return " → ".join(parts)
+
+
+def get_log_status_badge(status: str | None) -> str:
+    """Компактный бейдж статуса (тот же тон, что rag-status-card)."""
+    tone = _status_tone(status)
+    label = get_russian_status(status)
+    return (
+        f'<span class="log-status-badge log-status-badge--{tone}">'
+        f"{html.escape(label)}</span>"
+    )
+
+
+def _logs_build_session_rows(
+    groups: list[tuple[str, datetime | None, list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for eid, start_ts, events in groups:
+        last_times = [
+            r.get("created_at")
+            for r in events
+            if isinstance(r.get("created_at"), datetime)
+        ]
+        last_at = max(last_times) if last_times else None
+        out.append(
+            {
+                "execution_id": eid,
+                "start_ts": start_ts,
+                "last_at": last_at,
+                "events": events,
+            }
+        )
+    return out
+
+
+def _render_logs_timeline_detail(
+    session: dict[str, Any],
+    *,
+    show_session_header: bool = True,
+) -> None:
+    """Правая панель: опциональный заголовок + читаемая цепочка + карточки событий."""
+    eid = str(session.get("execution_id") or "—")
+    events: list[dict[str, Any]] = session.get("events") or []
+    if not isinstance(events, list):
+        events = []
+    last_at = session.get("last_at")
+    route_raw = _logs_infer_route_from_events(events)
+    status_s = _logs_session_final_status(events)
+    flow_ru = _logs_timeline_flow_ru(events)
+
+    if show_session_header:
+        st.markdown(
+            f"**Сессия:** {_format_dt_moscow_logs(last_at)} · "
+            f"{get_route_badge(route_raw)} {get_log_status_badge(status_s)}",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<small>execution_id: <code>{html.escape(eid)}</code></small>",
+            unsafe_allow_html=True,
+        )
+    if flow_ru and flow_ru.replace(" → ", "").strip():
+        st.markdown(
+            f'<div class="log-timeline-flow">{html.escape(flow_ru)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("**События**", unsafe_allow_html=True)
+    for idx, ev in enumerate(events, 1):
+        details = ev.get("details")
+        details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
+        t_s = _format_dt_moscow_logs(ev.get("created_at"))
+        action = _stage_to_action(str(ev.get("stage") or ""))
+        st_l = get_russian_status(str(ev.get("status") or ""))
+        preview = _details_to_description(details, max_len=LOGS_DETAILS_PREVIEW_MAX)
+        tone = _status_tone(str(ev.get("status") or ""))
+        st.markdown(
+            f'<div class="log-timeline-card log-timeline-card--{tone}">'
+            f'<div class="log-timeline-card-head">'
+            f'<span class="log-timeline-idx">{idx}</span>'
+            f'<span class="log-timeline-time">{html.escape(t_s)}</span>'
+            "</div>"
+            f'<div class="log-timeline-action">{html.escape(action)}</div>'
+            f'<div class="log-timeline-status">{html.escape(st_l)}</div>'
+            f'<div class="log-timeline-preview">{html.escape(preview)}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("Показать JSON", expanded=False):
+            st.markdown('<div class="json-dark">', unsafe_allow_html=True)
+            dump = json.dumps(details_dict, ensure_ascii=False, default=str, indent=2)
+            st.code(dump, language="json")
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _status_tone(raw: str | None) -> str:
@@ -553,6 +730,85 @@ def render_pagination_controls(
         )
         st.caption(pages_text)
     return int(st.session_state[page_key]), page_size
+
+
+# --- Unified split-layout selection feedback (P4.7.4b) ---
+_SPLIT_TOAST_KEYS: dict[str, str] = {
+    "text": "split_toast_text",
+    "rag": "split_toast_rag",
+    "docs": "split_toast_docs",
+    "logs": "split_toast_logs",
+}
+
+
+def show_split_selection_toast(tab_key: str) -> None:
+    sk = _SPLIT_TOAST_KEYS.get(tab_key)
+    if sk and st.session_state.pop(sk, False):
+        st.toast("Открыто справа")
+
+
+def flag_split_selection_toast(tab_key: str) -> None:
+    sk = _SPLIT_TOAST_KEYS.get(tab_key)
+    if sk:
+        st.session_state[sk] = True
+
+
+def render_split_pane_titles(*, list_title: str, detail_title: str) -> None:
+    """Заголовки над колонками списка и деталей (35/65)."""
+    t1, t2 = st.columns((0.35, 0.65))
+    with t1:
+        st.markdown(f"**{list_title}**")
+    with t2:
+        st.markdown(f"**{detail_title}**")
+
+
+def split_open_button_label(is_selected: bool) -> str:
+    return "Открыто" if is_selected else "Открыть"
+
+
+def render_split_selected_summary(
+    *,
+    short_id: str,
+    status_line: str,
+    route_or_type_html: str,
+    timestamp: str,
+    preview: str,
+    preview_max: int = 220,
+) -> None:
+    """
+    Компактная сводка выбранной сущности над деталями (правая панель).
+    ``route_or_type_html`` — готовый HTML (бейджи), остальное экранируется.
+    """
+    pv = (preview or "").strip()
+    if len(pv) > preview_max:
+        pv = pv[: preview_max - 1] + "…"
+    safe_preview = html.escape(pv) if pv else "—"
+    st.markdown(
+        '<div class="split-detail-summary">'
+        '<div class="split-detail-summary-title">Выбрано</div>'
+        '<div class="split-detail-summary-row">'
+        '<span class="split-detail-k">id</span> '
+        f'<span class="split-detail-v"><code>{html.escape(short_id)}</code></span>'
+        "</div>"
+        '<div class="split-detail-summary-row">'
+        '<span class="split-detail-k">статус</span> '
+        f'<span class="split-detail-v">{html.escape(status_line)}</span>'
+        "</div>"
+        '<div class="split-detail-summary-row split-detail-badges">'
+        '<span class="split-detail-k">маршрут / тип</span> '
+        f'<span class="split-detail-v">{route_or_type_html}</span>'
+        "</div>"
+        '<div class="split-detail-summary-row">'
+        '<span class="split-detail-k">время</span> '
+        f'<span class="split-detail-v">{html.escape(timestamp)}</span>'
+        "</div>"
+        '<div class="split-detail-summary-row split-detail-preview">'
+        '<span class="split-detail-k">превью</span> '
+        f'<span class="split-detail-v">{safe_preview}</span>'
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _first_non_empty(details: dict[str, Any], keys: tuple[str, ...]) -> str:
@@ -1612,6 +1868,170 @@ def _inject_theme_css() -> None:
           white-space: pre-wrap;
           word-break: break-word;
         }
+        .log-status-badge {
+          display: inline-flex;
+          align-items: center;
+          border-radius: 999px;
+          padding: 1px 8px;
+          font-size: 0.62rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          border: 1px solid var(--border);
+          margin-left: 6px;
+          vertical-align: middle;
+        }
+        .log-status-badge--success {
+          color: var(--success) !important;
+          border-color: var(--success);
+          background: rgba(34, 197, 94, 0.12);
+        }
+        .log-status-badge--error {
+          color: var(--error) !important;
+          border-color: var(--error);
+          background: rgba(239, 68, 68, 0.1);
+        }
+        .log-status-badge--warning {
+          color: var(--warning) !important;
+          border-color: var(--warning);
+          background: rgba(245, 158, 11, 0.12);
+        }
+        .log-status-badge--muted {
+          color: var(--text-secondary) !important;
+          border-color: var(--border);
+          background: rgba(156, 163, 175, 0.08);
+        }
+        .log-timeline-flow {
+          font-size: 0.78rem;
+          line-height: 1.45;
+          color: var(--text-secondary) !important;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 8px 10px;
+          margin: 6px 0 12px 0;
+          word-break: break-word;
+        }
+        .log-timeline-card {
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 8px 10px;
+          margin-bottom: 8px;
+          border-left: 3px solid var(--border);
+        }
+        .log-timeline-card--success {
+          border-left-color: var(--success);
+        }
+        .log-timeline-card--error {
+          border-left-color: var(--error);
+        }
+        .log-timeline-card--warning {
+          border-left-color: var(--warning);
+        }
+        .log-timeline-card--muted {
+          border-left-color: var(--muted);
+        }
+        .log-timeline-card-head {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+        .log-timeline-idx {
+          font-size: 0.65rem;
+          font-weight: 700;
+          color: var(--text-secondary) !important;
+          min-width: 1.2rem;
+        }
+        .log-timeline-time {
+          font-size: 0.72rem;
+          color: var(--text-secondary) !important;
+        }
+        .log-timeline-action {
+          font-size: 0.84rem;
+          font-weight: 600;
+          color: var(--text-primary) !important;
+          margin-bottom: 2px;
+        }
+        .log-timeline-status {
+          font-size: 0.72rem;
+          color: var(--muted) !important;
+          margin-bottom: 4px;
+        }
+        .log-timeline-preview {
+          font-size: 0.76rem;
+          line-height: 1.3;
+          color: var(--text-secondary) !important;
+          max-height: 4.2em;
+          overflow: hidden;
+        }
+        .logs-list-pane .stButton > button {
+          background: var(--bg-card) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border) !important;
+          border-radius: 7px !important;
+          min-height: 1.6rem !important;
+          padding: 0.1rem 0.55rem !important;
+          font-size: 0.78rem !important;
+          font-weight: 600 !important;
+          box-shadow: none !important;
+        }
+        .logs-list-pane .stButton > button:hover {
+          border-color: var(--accent) !important;
+          color: var(--accent) !important;
+          filter: none !important;
+        }
+        code.log-eid-short {
+          font-size: 0.72rem !important;
+          color: var(--text-secondary) !important;
+          background: transparent !important;
+          padding: 0 !important;
+          border: none !important;
+        }
+        .split-detail-summary {
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 8px 10px 10px 10px;
+          margin: 0 0 10px 0;
+          box-sizing: border-box;
+        }
+        .split-detail-summary-title {
+          font-size: 0.62rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--accent) !important;
+          margin-bottom: 6px;
+        }
+        .split-detail-summary-row {
+          font-size: 0.78rem;
+          line-height: 1.35;
+          margin-bottom: 4px;
+          color: var(--text-primary) !important;
+        }
+        .split-detail-k {
+          color: var(--text-secondary) !important;
+          font-weight: 600;
+          margin-right: 6px;
+        }
+        .split-detail-v {
+          color: var(--text-primary) !important;
+          word-break: break-word;
+        }
+        .split-detail-badges .split-detail-v {
+          display: inline-flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 4px;
+        }
+        .split-detail-preview .split-detail-v {
+          display: block;
+          max-height: 3.6em;
+          overflow: hidden;
+          color: var(--text-secondary) !important;
+        }
         .text-list-pane .stButton > button {
           background: var(--bg-card) !important;
           color: var(--text-primary) !important;
@@ -1908,9 +2328,13 @@ def main() -> None:
                 page_items, _, _ = get_paginated_slice(
                     text_requests, text_page, text_page_size
                 )
+                show_split_selection_toast("text")
+                render_split_pane_titles(
+                    list_title="Список Text-запросов",
+                    detail_title="Детали выбранного запроса",
+                )
                 list_col, detail_col = st.columns((0.35, 0.65))
                 with list_col:
-                    st.markdown("**Список запросов**")
                     st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
                     for idx, req in enumerate(page_items):
                         dt_label = _format_dt_moscow_logs(req.get("last_at"))
@@ -1942,11 +2366,12 @@ def main() -> None:
                             unsafe_allow_html=True,
                         )
                         if st.button(
-                            "→",
+                            split_open_button_label(is_selected),
                             key=f"text_open_{idx}_{eid}",
-                            help="Открыть детали запроса",
+                            help="Открыть детали справа",
                         ):
                             st.session_state["selected_text_execution_id"] = eid
+                            flag_split_selection_toast("text")
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1979,12 +2404,14 @@ def main() -> None:
                         else:
                             opened_dt = _format_dt_moscow_logs(selected_req.get("last_at"))
                             opened_status = _status_label(str(selected_req.get("status") or ""))
-                            st.markdown(
-                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_status)}"
-                            )
-                            st.markdown(
-                                f"<small>execution_id: <code>{html.escape(selected_text_eid)}</code></small>",
-                                unsafe_allow_html=True,
+                            render_split_selected_summary(
+                                short_id=_short_execution_id(selected_text_eid),
+                                status_line=opened_status,
+                                route_or_type_html=get_route_badge(
+                                    str(selected_req.get("route") or "text")
+                                ),
+                                timestamp=opened_dt,
+                                preview=str(selected_req.get("preview") or ""),
                             )
                             _render_text_request_detail(selected_req)
 
@@ -2036,12 +2463,16 @@ def main() -> None:
                     "rag", total_items=len(recent_rag), has_next=has_next_rag
                 )
                 page_items, _, _ = get_paginated_slice(recent_rag, rag_page, rag_page_size)
+                show_split_selection_toast("rag")
+                render_split_pane_titles(
+                    list_title="Список RAG-запросов",
+                    detail_title="Детали выбранного запроса",
+                )
                 selected_eid = str(
                     st.session_state.get("selected_rag_execution_id", "")
                 )
                 list_col, detail_col = st.columns((0.35, 0.65))
                 with list_col:
-                    st.markdown("**Список запросов**")
                     st.markdown('<div class="rag-list-pane">', unsafe_allow_html=True)
                     for idx, ev in enumerate(page_items):
                         dt_label = _format_dt_moscow_logs(ev.get("created_at"))
@@ -2074,11 +2505,12 @@ def main() -> None:
                             unsafe_allow_html=True,
                         )
                         if st.button(
-                            "→",
+                            split_open_button_label(is_selected),
                             key=f"rag_open_{idx}_{eid}",
-                            help="Открыть детали запроса",
+                            help="Открыть детали справа",
                         ):
                             st.session_state["selected_rag_execution_id"] = eid
+                            flag_split_selection_toast("rag")
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2112,12 +2544,15 @@ def main() -> None:
                             opened_dt = _format_dt_moscow_logs(selected_ev.get("created_at"))
                             opened_fb = str(selected_ev.get("fallback_reason") or "none")
                             opened_fb_ru, _ = _rag_fallback_outcome(opened_fb)
-                            st.markdown(
-                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_fb_ru)}"
-                            )
-                            st.markdown(
-                                f"<small>execution_id: <code>{html.escape(selected_eid)}</code></small>",
-                                unsafe_allow_html=True,
+                            st_rag = _status_label(str(selected_ev.get("status") or ""))
+                            render_split_selected_summary(
+                                short_id=_short_execution_id(selected_eid),
+                                status_line=st_rag,
+                                route_or_type_html=f'{get_route_badge("rag")} '
+                                f'<span class="log-status-badge log-status-badge--muted">'
+                                f"{html.escape(opened_fb_ru)}</span>",
+                                timestamp=opened_dt,
+                                preview=str(selected_ev.get("query_preview") or ""),
                             )
                             _render_rag_event_detail(selected_ev)
 
@@ -2258,10 +2693,14 @@ def main() -> None:
             docs_page_items, _, _ = get_paginated_slice(
                 filtered_docs, docs_page, docs_page_size
             )
+            show_split_selection_toast("docs")
+            render_split_pane_titles(
+                list_title="Список документов",
+                detail_title="Детали выбранного документа",
+            )
             list_col, detail_col = st.columns((0.35, 0.65))
             selected_doc = str(st.session_state.get("selected_document", ""))
             with list_col:
-                st.markdown("**Список документов**")
                 st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
                 for idx, dr in enumerate(docs_page_items):
                     doc_key = str(dr.get("document_id") or "")
@@ -2294,8 +2733,13 @@ def main() -> None:
                         "</div>",
                         unsafe_allow_html=True,
                     )
-                    if st.button("→", key=f"doc_open_{idx}_{doc_key}"):
+                    if st.button(
+                        split_open_button_label(is_selected),
+                        key=f"doc_open_{idx}_{doc_key}",
+                        help="Открыть детали справа",
+                    ):
                         st.session_state["selected_document"] = doc_key
+                        flag_split_selection_toast("docs")
                         st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2323,14 +2767,18 @@ def main() -> None:
                     else:
                         fname = str(selected_row.get("filename") or "документ")
                         active_chunks_n = int(selected_row.get("active_chunk_count") or 0)
-                        st.markdown(
-                            f"**Открыт документ:** {html.escape(fname)} "
-                            f"{get_doc_chunk_badge(active_chunks_n)}",
-                            unsafe_allow_html=True,
-                        )
-                        st.markdown(
-                            f"<small>document_id: <code>{html.escape(selected_doc)}</code></small>",
-                            unsafe_allow_html=True,
+                        render_split_selected_summary(
+                            short_id=_short_execution_id(selected_doc),
+                            status_line=str(selected_row.get("status") or "—"),
+                            route_or_type_html=(
+                                '<span class="route-badge route-badge--muted">'
+                                "Документ</span> "
+                                f"{get_doc_chunk_badge(active_chunks_n)}"
+                            ),
+                            timestamp=_format_dt_moscow_logs(
+                                selected_row.get("last_indexed_at")
+                            ),
+                            preview=fname,
                         )
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Статус", str(selected_row.get("status") or "—"))
@@ -2428,15 +2876,14 @@ def main() -> None:
                             st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_logs:
-        st.write(
-            "Журнал обработки: записи сгруппированы по запросу (`execution_id`). "
-            "Внутри группы — цепочка событий по времени."
+        st.subheader("Логи")
+        st.caption(
+            "Журнал обработки: одна строка списка = сессия (`execution_id`). "
+            "Справа — timeline событий по времени (MSK)."
         )
         total_exec = int(svc.get_logs_execution_ids_total())
         if total_exec <= 0:
-            st.info(
-                "Записей нет. Нужны подключение к базе и таблица `processing_logs`."
-            )
+            st.info("Событий журнала пока нет.")
         else:
             logs_page = int(st.session_state.get("logs_page", 0))
             logs_page_size_seed = int(st.session_state.get("logs_page_size", 50))
@@ -2455,20 +2902,111 @@ def main() -> None:
             groups = group_logs_by_execution_id(rows)
             order_map = {eid: i for i, eid in enumerate(execution_ids)}
             groups.sort(key=lambda g: order_map.get(g[0], 10**9))
-            st.caption(f"Показано запросов: {len(groups)} из {int(total_exec)}")
-            for eid, start_ts, events in groups:
-                title = (
-                    f"Запрос от {_format_dt_moscow_logs(start_ts)} · `{eid}`"
-                    if start_ts is not None
-                    else f"Запрос · `{eid}`"
+            page_sessions = _logs_build_session_rows(groups)
+            st.caption(f"Показано запросов: {len(page_sessions)} из {int(total_exec)}")
+
+            show_split_selection_toast("logs")
+            render_split_pane_titles(
+                list_title="Список сессий (execution_id)",
+                detail_title="Детали выбранной сессии",
+            )
+            list_col, detail_col = st.columns((0.35, 0.65))
+            selected_logs_eid = str(
+                st.session_state.get("selected_logs_execution_id", "")
+            )
+            with list_col:
+                st.markdown('<div class="logs-list-pane">', unsafe_allow_html=True)
+                for idx, sess in enumerate(page_sessions):
+                    eid = str(sess.get("execution_id") or "")
+                    last_at = sess.get("last_at")
+                    events = sess.get("events") or []
+                    if not isinstance(events, list):
+                        events = []
+                    route_n = _logs_infer_route_from_events(events)
+                    status_s = _logs_session_final_status(events)
+                    preview = _logs_session_preview(events) or "—"
+                    is_selected = bool(selected_logs_eid) and eid == selected_logs_eid
+                    item_cls = (
+                        "rag-list-item rag-list-item-selected"
+                        if is_selected
+                        else "rag-list-item"
+                    )
+                    badge_sel = (
+                        '<span class="rag-selected-badge">выбрано</span>'
+                        if is_selected
+                        else ""
+                    )
+                    eid_short = _short_execution_id(eid)
+                    dt_label = _format_dt_moscow_logs(last_at)
+                    st.markdown(
+                        f'<div class="{item_cls}">'
+                        '<div class="rag-list-item-head">'
+                        f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
+                        f"{badge_sel}</div>"
+                        f'<div class="route-badge-line">'
+                        f'<code class="log-eid-short">{html.escape(eid_short)}</code> '
+                        f"{get_route_badge(route_n)} {get_log_status_badge(status_s)}"
+                        "</div>"
+                        f'<div class="rag-list-query">{html.escape(preview)}</div>'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        split_open_button_label(is_selected),
+                        key=f"logs_open_{idx}_{eid}",
+                        help="Открыть детали справа",
+                    ):
+                        st.session_state["selected_logs_execution_id"] = eid
+                        flag_split_selection_toast("logs")
+                        st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with detail_col:
+                reset_invalid_selection(
+                    page_sessions,
+                    "selected_logs_execution_id",
+                    lambda s: str(s.get("execution_id") or ""),
                 )
-                with st.expander(title, expanded=False):
-                    st.caption("Цепочка событий по времени:")
-                    st.markdown("↓")
-                    display_rows = [_event_display_row(r) for r in events]
-                    df = pd.DataFrame(display_rows)
-                    df = df[["время", "действие", "статус", "описание"]]
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                selected_logs_eid = str(
+                    st.session_state.get("selected_logs_execution_id", "")
+                )
+                if not selected_logs_eid:
+                    st.info("Выберите запрос слева.")
+                else:
+                    selected_sess = next(
+                        (
+                            s
+                            for s in page_sessions
+                            if str(s.get("execution_id") or "") == selected_logs_eid
+                        ),
+                        None,
+                    )
+                    if selected_sess is None:
+                        st.session_state.pop("selected_logs_execution_id", None)
+                        st.info("Выберите запрос слева.")
+                    else:
+                        evs = selected_sess.get("events") or []
+                        if not isinstance(evs, list):
+                            evs = []
+                        route_n = _logs_infer_route_from_events(evs)
+                        status_s = _logs_session_final_status(evs)
+                        pv = _logs_session_preview(evs) or "—"
+                        render_split_selected_summary(
+                            short_id=_short_execution_id(selected_logs_eid),
+                            status_line=get_russian_status(status_s),
+                            route_or_type_html=(
+                                f"{get_route_badge(route_n)} "
+                                f"{get_log_status_badge(status_s)}"
+                            ),
+                            timestamp=_format_dt_moscow_logs(
+                                selected_sess.get("last_at")
+                            ),
+                            preview=pv,
+                        )
+                        _render_logs_timeline_detail(
+                            selected_sess,
+                            show_session_header=False,
+                        )
 
 
 main()
