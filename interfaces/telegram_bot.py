@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import traceback
 import uuid
 from pathlib import Path
@@ -115,6 +116,19 @@ def _safe_answer_text_for_log(text: str, max_len: int = 3000) -> str:
     lower = t.lower()
     if "sk-" in lower or "api_key" in lower or "openai_api_key" in lower:
         return "[answer redacted: possible secret pattern]"
+    if len(t) <= max_len:
+        return t
+    return t[:max_len] + "..."
+
+
+def _safe_query_preview_for_log(text: str, max_len: int = 200) -> str:
+    """Compact safe preview for user prompt in processing_logs."""
+    t = " ".join((text or "").strip().split())
+    if not t:
+        return ""
+    lower = t.lower()
+    if "sk-" in lower or "api_key" in lower or "openai_api_key" in lower:
+        return "[preview redacted: possible secret pattern]"
     if len(t) <= max_len:
         return t
     return t[:max_len] + "..."
@@ -407,7 +421,11 @@ def create_bot() -> telebot.TeleBot:
                 intake_event_id=intake_id,
                 stage="intake_received",
                 status="success" if intake_id else "error",
-                details={"mode": "text"},
+                details={
+                    "mode": "text",
+                    "query_preview": _safe_query_preview_for_log(text, max_len=200),
+                    "user_text": _safe_answer_text_for_log(text, max_len=3000),
+                },
                 error_text=None if intake_id else "intake_events insert failed",
             )
 
@@ -418,12 +436,16 @@ def create_bot() -> telebot.TeleBot:
                     "Генерирую изображение, это может занять до 1 минуты ⏳",
                 )
 
+            start_ts = time.monotonic()
             result = orchestrator.process_text(
                 text,
                 execution_id=execution_id,
                 intake_event_id=intake_id,
                 lifecycle=lifecycle,
             )
+            usage = orchestrator.get_last_text_usage_snapshot()
+            model_snapshot = orchestrator.get_last_text_model_snapshot()
+            latency_ms = int((time.monotonic() - start_ts) * 1000)
             result_text = str(result)
             is_image_path = (
                 "outputs" in result_text.lower()
@@ -472,6 +494,40 @@ def create_bot() -> telebot.TeleBot:
             else:
                 formatted_result = format_for_telegram(result_text)
                 send_long_message(bot, message.chat.id, formatted_result)
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="text_answer_done",
+                    status="success",
+                    details={
+                        "route": "text_response",
+                        "answer_text": _safe_answer_text_for_log(
+                            formatted_result, max_len=3000
+                        ),
+                        "answer_preview": _safe_answer_text_for_log(
+                            formatted_result, max_len=300
+                        ),
+                        "query_preview": _safe_query_preview_for_log(text, max_len=200),
+                        "provider": "gigachat",
+                        "model": model_snapshot or config.gigachat_model,
+                        **(
+                            {"input_tokens": usage["input_tokens"]}
+                            if "input_tokens" in usage
+                            else {}
+                        ),
+                        **(
+                            {"output_tokens": usage["output_tokens"]}
+                            if "output_tokens" in usage
+                            else {}
+                        ),
+                        **(
+                            {"total_tokens": usage["total_tokens"]}
+                            if "total_tokens" in usage
+                            else {}
+                        ),
+                        "latency_ms": latency_ms,
+                    },
+                )
         except Exception:
             traceback.print_exc()
             if user_store.get_mode(message.from_user.id) == "rag":

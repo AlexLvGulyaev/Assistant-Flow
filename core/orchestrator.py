@@ -48,6 +48,14 @@ class PromptOrchestrator:
             return self._image_generation_service
         raise RuntimeError("ImageGenerationService is required for image generation")
 
+    def get_last_text_usage_snapshot(self) -> dict[str, int]:
+        """Last usage reported by the text provider, if available."""
+        return self._gigachat_provider.get_last_usage_snapshot()
+
+    def get_last_text_model_snapshot(self) -> str | None:
+        """Last model reported by the text provider, if available."""
+        return self._gigachat_provider.get_last_model_snapshot()
+
     def process_text(
         self,
         input_text: str,

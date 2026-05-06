@@ -289,6 +289,18 @@ class AdminService:
         except Exception:
             return []
 
+    def get_recent_text_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Full processing logs chains for recent text requests grouped by execution_id."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return []
+        try:
+            with get_connection() as conn:
+                rows = self._proc_repo.list_recent_text_events(conn, limit=limit)
+                conn.commit()
+            return rows
+        except Exception:
+            return []
+
     def get_documents_with_versions(self) -> list[dict[str, Any]]:
         """Rows from documents + version aggregates (for admin «Документы» table)."""
         if not (os.getenv("DATABASE_URL") or "").strip():

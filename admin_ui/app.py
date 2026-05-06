@@ -319,6 +319,119 @@ def _rag_inline_metrics_html(ev: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _first_non_empty(details: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for k in keys:
+        v = details.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s:
+            return s
+    return ""
+
+
+def _text_inline_metrics_html(details: dict[str, Any]) -> str:
+    provider = _first_non_empty(details, ("provider", "llm_provider")) or "—"
+    model = _first_non_empty(details, ("model", "model_name", "llm_model")) or "—"
+    in_tok = _first_non_empty(
+        details, ("input_tokens", "prompt_tokens", "tokens_input")
+    ) or "—"
+    out_tok = _first_non_empty(
+        details, ("output_tokens", "completion_tokens", "tokens_output")
+    ) or "—"
+    total_tok = _first_non_empty(details, ("total_tokens", "tokens_total")) or "—"
+    latency = _first_non_empty(details, ("latency_ms", "duration_ms", "elapsed_ms")) or "—"
+    items = (
+        ("provider", provider),
+        ("model", model),
+        ("input_tokens", in_tok),
+        ("output_tokens", out_tok),
+        ("total_tokens", total_tok),
+        ("latency_ms", latency),
+    )
+    parts = ['<div class="rag-inline-metrics">']
+    for lbl, val in items:
+        parts.append(
+            '<div class="rag-inline-metric">'
+            f'<div class="rag-inline-metric-val">{html.escape(str(val))}</div>'
+            f'<div class="rag-inline-metric-lbl">{html.escape(lbl)}</div>'
+            "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _build_text_requests_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        eid = str(r.get("execution_id") or "").strip()
+        if not eid:
+            continue
+        grouped.setdefault(eid, []).append(r)
+
+    out: list[dict[str, Any]] = []
+    for eid, events in grouped.items():
+        ordered = sorted(
+            events,
+            key=lambda x: x.get("created_at")
+            if isinstance(x.get("created_at"), datetime)
+            else datetime.min,
+        )
+        latest = ordered[-1] if ordered else {}
+        last_at = latest.get("created_at")
+
+        preview = ""
+        for ev in ordered:
+            details = ev.get("details")
+            details_dict = details if isinstance(details, dict) else {}
+            if str(ev.get("stage") or "") == "intake_received":
+                preview = _first_non_empty(
+                    details_dict,
+                    ("message_preview", "text", "query_preview"),
+                )
+                if preview:
+                    break
+        if not preview:
+            for ev in ordered:
+                details = ev.get("details")
+                details_dict = details if isinstance(details, dict) else {}
+                preview = _first_non_empty(
+                    details_dict,
+                    ("message_preview", "text", "query_preview"),
+                )
+                if preview:
+                    break
+        if not preview:
+            preview = "Текстовый запрос"
+
+        final_event = None
+        for ev in reversed(ordered):
+            if str(ev.get("stage") or "") == "processing_done":
+                final_event = ev
+                break
+        if final_event is None and ordered:
+            final_event = ordered[-1]
+        final_status = str((final_event or {}).get("status") or "—")
+
+        out.append(
+            {
+                "execution_id": eid,
+                "last_at": last_at,
+                "preview": preview,
+                "status": final_status,
+                "events": ordered,
+            }
+        )
+
+    out.sort(
+        key=lambda x: x.get("last_at")
+        if isinstance(x.get("last_at"), datetime)
+        else datetime.min,
+        reverse=True,
+    )
+    return out
+
+
 def _render_rag_event_detail(ev: dict[str, Any]) -> None:
     """Master-detail right pane for one selected RAG event."""
     details = ev.get("details")
@@ -493,6 +606,89 @@ def _render_rag_event_detail(ev: dict[str, Any]) -> None:
         f'<div class="rag-exec-footer">execution_id: {eid_footer}</div>',
         unsafe_allow_html=True,
     )
+
+
+def _render_text_event_detail(ev: dict[str, Any]) -> None:
+    details = ev.get("details")
+    details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
+    prompt = _first_non_empty(
+        details_dict, ("query_preview", "prompt", "user_prompt", "text", "input_text")
+    ) or "Запрос не сохранён для этого события."
+    answer = _first_non_empty(
+        details_dict,
+        ("answer_text", "answer", "response_text", "result_text", "output_text"),
+    ) or "Ответ пока не сохраняется для text_response"
+    status_text = _status_label(str(ev.get("status") or ""))
+    status_cls = _status_tone(str(ev.get("status") or ""))
+
+    p_col, a_col = st.columns(2)
+    with p_col:
+        st.markdown(
+            '<p class="rag-section-label">Что спросил пользователь</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="rag-top-card">'
+            f'<div class="rag-top-card-text">{html.escape(prompt)}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with a_col:
+        st.markdown(
+            '<p class="rag-section-label">Что ответила система</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="rag-top-card">'
+            f'<div class="rag-top-card-text">{html.escape(answer)}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<p class="rag-section-label">Итог обработки</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="rag-status-card rag-status-card--{status_cls}">'
+        f"{html.escape(status_text)}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown('<p class="rag-section-label">Ключевые метрики</p>', unsafe_allow_html=True)
+    st.markdown(_text_inline_metrics_html(details_dict), unsafe_allow_html=True)
+
+    st.markdown('<p class="rag-section-title">Технические детали</p>', unsafe_allow_html=True)
+    with st.expander("Показать JSON", expanded=False):
+        details_dump = json.dumps(details_dict, ensure_ascii=False, indent=2)
+        st.markdown('<div class="json-dark">', unsafe_allow_html=True)
+        st.code(details_dump, language="json")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    eid_footer = html.escape(str(ev.get("execution_id") or "—"))
+    st.markdown(
+        f'<div class="rag-exec-footer">execution_id: {eid_footer}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_text_request_detail(req: dict[str, Any]) -> None:
+    events = req.get("events")
+    event_list: list[dict[str, Any]] = events if isinstance(events, list) else []
+    final_ev = event_list[-1] if event_list else {}
+    _render_text_event_detail(final_ev)
+
+    st.markdown('<p class="rag-section-title">Цепочка событий</p>', unsafe_allow_html=True)
+    if not event_list:
+        st.caption("События не найдены.")
+        return
+    chain_rows = []
+    for ev in event_list:
+        chain_rows.append(
+            {
+                "время": _format_dt_moscow_logs(ev.get("created_at")),
+                "этап": _stage_to_action(str(ev.get("stage") or "")),
+                "status": _status_label(str(ev.get("status") or "")),
+                "details": _details_to_description(ev.get("details"), max_len=400),
+            }
+        )
+    st.dataframe(pd.DataFrame(chain_rows), use_container_width=True, hide_index=True)
 
 
 def _inject_theme_css() -> None:
@@ -1038,6 +1234,22 @@ def _inject_theme_css() -> None:
           max-height: 3.9em;
           overflow: hidden;
         }
+        .text-list-pane .stButton > button {
+          background: var(--bg-card) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border) !important;
+          border-radius: 7px !important;
+          min-height: 1.6rem !important;
+          padding: 0.1rem 0.55rem !important;
+          font-size: 0.78rem !important;
+          font-weight: 600 !important;
+          box-shadow: none !important;
+        }
+        .text-list-pane .stButton > button:hover {
+          border-color: var(--accent) !important;
+          color: var(--accent) !important;
+          filter: none !important;
+        }
         .rag-list-pane .stButton > button {
           background: var(--bg-card) !important;
           color: var(--text-primary) !important;
@@ -1267,20 +1479,106 @@ def main() -> None:
                 "и убедитесь, что таблица `processing_logs` заполняется."
             )
         else:
-            text_rows = svc.get_recent_route_events("text", limit=50)
-            if not text_rows:
+            t_f1, t_f2 = st.columns(2)
+            text_limit = int(
+                t_f1.selectbox(
+                    "Сколько показать",
+                    options=(20, 50, 100),
+                    index=1,
+                    key="text_recent_limit",
+                )
+            )
+            status_filter_opt = t_f2.selectbox(
+                "Статус",
+                options=("Все", "success", "error"),
+                index=0,
+                key="text_recent_status_filter",
+            )
+            text_rows = svc.get_recent_text_events(limit=text_limit)
+            text_requests = _build_text_requests_from_rows(text_rows)
+            if status_filter_opt != "Все":
+                text_requests = [
+                    r
+                    for r in text_requests
+                    if str(r.get("status") or "").strip().lower() == status_filter_opt
+                ]
+
+            if not text_requests:
+                st.session_state.pop("selected_text_execution_id", None)
                 st.info("Text-запросов за период пока нет.")
             else:
-                table_rows = [
-                    {
-                        "время": _format_dt_moscow_logs(r.get("created_at")),
-                        "execution_id": r.get("execution_id") or "—",
-                        "status": _status_label(str(r.get("status") or "")),
-                        "details": _details_to_description(r.get("details"), max_len=600),
-                    }
-                    for r in text_rows
-                ]
-                st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+                selected_text_eid = str(
+                    st.session_state.get("selected_text_execution_id", "")
+                )
+                list_col, detail_col = st.columns((0.35, 0.65))
+                with list_col:
+                    st.markdown("**Список запросов**")
+                    st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
+                    for idx, req in enumerate(text_requests):
+                        dt_label = _format_dt_moscow_logs(req.get("last_at"))
+                        status_raw = str(req.get("status") or "")
+                        status_label = _status_label(status_raw)
+                        preview = str(req.get("preview") or "Текстовый запрос")
+                        eid = str(req.get("execution_id") or "")
+                        is_selected = bool(selected_text_eid) and eid == selected_text_eid
+                        item_cls = (
+                            "rag-list-item rag-list-item-selected"
+                            if is_selected
+                            else "rag-list-item"
+                        )
+                        badge_html = (
+                            '<span class="rag-selected-badge">выбрано</span>'
+                            if is_selected
+                            else ""
+                        )
+                        st.markdown(
+                            f'<div class="{item_cls}">'
+                            '<div class="rag-list-item-head">'
+                            f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
+                            f"{badge_html}</div>"
+                            f'<div class="rag-list-fallback">{html.escape(status_label)}</div>'
+                            f'<div class="rag-list-query">{html.escape(preview)}</div>'
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            "→",
+                            key=f"text_open_{idx}_{eid}",
+                            help="Открыть детали запроса",
+                        ):
+                            st.session_state["selected_text_execution_id"] = eid
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with detail_col:
+                    if not selected_text_eid:
+                        st.info("Выберите Text-запрос слева")
+                    else:
+                        selected_req = next(
+                            (
+                                req
+                                for req in text_requests
+                                if str(req.get("execution_id") or "") == selected_text_eid
+                            ),
+                            None,
+                        )
+                        if selected_req is None:
+                            st.session_state.pop("selected_text_execution_id", None)
+                            st.info(
+                                "Выбранный запрос не найден в текущем фильтре. "
+                                "Выберите Text-запрос слева."
+                            )
+                        else:
+                            opened_dt = _format_dt_moscow_logs(selected_req.get("last_at"))
+                            opened_status = _status_label(str(selected_req.get("status") or ""))
+                            st.markdown(
+                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_status)}"
+                            )
+                            st.markdown(
+                                f"<small>execution_id: <code>{html.escape(selected_text_eid)}</code></small>",
+                                unsafe_allow_html=True,
+                            )
+                            _render_text_request_detail(selected_req)
 
     with tab_rag:
         if not (os.getenv("DATABASE_URL") or "").strip():

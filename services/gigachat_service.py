@@ -13,6 +13,8 @@ class GigaChatService:
     def __init__(self, config: AppConfig, request_logger: RequestLogger) -> None:
         self._config = config
         self._request_logger = request_logger
+        self._last_usage: dict[str, int] = {}
+        self._last_model: str | None = None
 
     def _build_auth_header(self) -> str:
         auth_value = self._config.gigachat_auth_key.strip()
@@ -121,6 +123,26 @@ class GigaChatService:
             response.raise_for_status()
 
             data = response.json()
+            self._last_model = str(data.get("model") or self._config.gigachat_model)
+            usage_raw = data.get("usage")
+            usage_out: dict[str, int] = {}
+            if isinstance(usage_raw, dict):
+                mapping = {
+                    "prompt_tokens": "input_tokens",
+                    "input_tokens": "input_tokens",
+                    "completion_tokens": "output_tokens",
+                    "output_tokens": "output_tokens",
+                    "total_tokens": "total_tokens",
+                }
+                for src_k, dst_k in mapping.items():
+                    raw_v = usage_raw.get(src_k)
+                    if raw_v is None:
+                        continue
+                    try:
+                        usage_out[dst_k] = int(raw_v)
+                    except (TypeError, ValueError):
+                        continue
+            self._last_usage = usage_out
             choices = data.get("choices", [])
             if not choices:
                 raise RuntimeError("GigaChat response has no choices")
@@ -148,3 +170,9 @@ class GigaChatService:
                 status_code=status_code,
                 error_text=error_text,
             )
+
+    def get_last_usage_snapshot(self) -> dict[str, int]:
+        return dict(self._last_usage)
+
+    def get_last_model_snapshot(self) -> str | None:
+        return self._last_model

@@ -253,6 +253,48 @@ class ProcessingLogsRepository:
             rows = cur.fetchall()
         return [dict(r) for r in rows]
 
+    def list_recent_text_events(
+        self,
+        conn: Connection,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Full processing_logs chains for recent text requests by execution_id.
+
+        Text request detection:
+        - details.route in ('text', 'text_response'), OR
+        - details.mode = 'text'
+        """
+        lim = max(1, min(int(limit), 500))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                WITH selected_exec AS (
+                    SELECT execution_id, MAX(created_at) AS last_at
+                    FROM processing_logs
+                    WHERE (details->>'route') IN ('text', 'text_response')
+                       OR (details->>'mode') = 'text'
+                    GROUP BY execution_id
+                    ORDER BY last_at DESC
+                    LIMIT %s
+                )
+                SELECT
+                    p.execution_id,
+                    p.stage,
+                    p.status,
+                    p.details,
+                    p.created_at
+                FROM processing_logs p
+                JOIN selected_exec s
+                  ON s.execution_id = p.execution_id
+                ORDER BY s.last_at DESC, p.created_at ASC
+                """,
+                (lim,),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
     def count_stage_last_hours(
         self,
         conn: Connection,
