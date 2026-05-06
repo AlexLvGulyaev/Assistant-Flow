@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .git/
 .venv/
+.venv312/
 venv/
 data/chroma_db/
 data/chroma_db_broken_backup/

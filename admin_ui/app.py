@@ -37,8 +37,15 @@ def _admin_service() -> AdminService:
     return AdminService()
 
 
-# Человекочитаемые названия этапов (processing_logs.stage)
-_STAGE_ACTION_RU: dict[str, str] = {
+# Человекочитаемые названия этапов/типов событий (processing_logs.stage/event_type)
+_EVENT_TYPE_ALIASES: dict[str, str] = {
+    "text_answer_done": "processing_done",
+    "rag_answer_done": "processing_done",
+    "image_answer_done": "processing_done",
+    "rag_response": "processing_done",
+}
+
+_EVENT_TYPE_RU: dict[str, str] = {
     "intake_received": "Получено сообщение",
     "route_selected": "Определён тип запроса",
     "processing_done": "Обработка завершена",
@@ -50,17 +57,43 @@ _STAGE_ACTION_RU: dict[str, str] = {
     "admin_reindex_error": "Ошибка переиндексации",
 }
 
+_ROUTE_ALIASES: dict[str, str] = {
+    "text_response": "text",
+    "text_answer_done": "text",
+    "text_query": "text",
+    "rag_response": "rag",
+    "rag_answer_done": "rag",
+    "image": "image_generation",
+    "image_response": "image_generation",
+}
+
 _ROUTE_LABEL_RU: dict[str, str] = {
     "rag": "RAG",
     "text": "Текст",
     "image_generation": "Генерация изображений",
+    "unknown": "Прочее",
 }
 
 
+def normalize_route(route: str | None) -> str:
+    raw = (route or "").strip().lower()
+    if not raw:
+        return "unknown"
+    return _ROUTE_ALIASES.get(raw, raw)
+
+
+def normalize_event_type(event_type: str | None) -> str:
+    raw = (event_type or "").strip().lower()
+    if not raw:
+        return ""
+    return _EVENT_TYPE_ALIASES.get(raw, raw)
+
+
 def _stage_to_action(stage: str | None) -> str:
-    if not stage:
+    norm = normalize_event_type(stage)
+    if not norm:
         return "—"
-    return _STAGE_ACTION_RU.get(stage, stage)
+    return _EVENT_TYPE_RU.get(norm, norm)
 
 
 _STATUS_RU: dict[str, str] = {
@@ -72,10 +105,35 @@ _STATUS_RU: dict[str, str] = {
 }
 
 
-def _status_label(raw: str | None) -> str:
+def get_russian_status(raw: str | None) -> str:
     if not raw:
         return "—"
     return _STATUS_RU.get(raw.strip().lower(), raw)
+
+
+def _status_label(raw: str | None) -> str:
+    return get_russian_status(raw)
+
+
+def _route_label(route: str | None) -> str:
+    norm = normalize_route(route)
+    return _ROUTE_LABEL_RU.get(norm, norm if norm else "—")
+
+
+def get_route_badge(route: str | None) -> str:
+    norm = normalize_route(route)
+    label = _route_label(norm)
+    tone = "muted"
+    if norm == "rag":
+        tone = "success"
+    elif norm == "text":
+        tone = "info"
+    elif norm == "image_generation":
+        tone = "warning"
+    return (
+        f'<span class="route-badge route-badge--{tone}">'
+        f"{html.escape(label)}</span>"
+    )
 
 
 def _details_to_description(details: Any, *, max_len: int = 400) -> str:
@@ -491,6 +549,14 @@ def _build_text_requests_from_rows(rows: list[dict[str, Any]]) -> list[dict[str,
         if final_event is None and ordered:
             final_event = ordered[-1]
         final_status = str((final_event or {}).get("status") or "—")
+        route_norm = "text"
+        for ev in reversed(ordered):
+            details = ev.get("details")
+            details_dict = details if isinstance(details, dict) else {}
+            route_candidate = normalize_route(str(details_dict.get("route") or ""))
+            if route_candidate != "unknown":
+                route_norm = route_candidate
+                break
 
         out.append(
             {
@@ -498,6 +564,7 @@ def _build_text_requests_from_rows(rows: list[dict[str, Any]]) -> list[dict[str,
                 "last_at": last_at,
                 "preview": preview,
                 "status": final_status,
+                "route": route_norm,
                 "events": ordered,
             }
         )
@@ -1313,6 +1380,42 @@ def _inject_theme_css() -> None:
           max-height: 3.9em;
           overflow: hidden;
         }
+        .route-badge-line {
+          margin: 0 0 5px 0;
+        }
+        .route-badge {
+          display: inline-flex;
+          align-items: center;
+          border-radius: 999px;
+          padding: 1px 8px;
+          font-size: 0.62rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          border: 1px solid var(--border);
+          color: var(--text-secondary) !important;
+          background: rgba(156, 163, 175, 0.12);
+        }
+        .route-badge--success {
+          color: var(--success) !important;
+          border-color: var(--success);
+          background: rgba(34, 197, 94, 0.12);
+        }
+        .route-badge--info {
+          color: #38BDF8 !important;
+          border-color: #38BDF8;
+          background: rgba(56, 189, 248, 0.12);
+        }
+        .route-badge--warning {
+          color: var(--warning) !important;
+          border-color: var(--warning);
+          background: rgba(245, 158, 11, 0.12);
+        }
+        .route-badge--muted {
+          color: var(--text-secondary) !important;
+          border-color: var(--border);
+          background: rgba(156, 163, 175, 0.08);
+        }
         .text-list-pane .stButton > button {
           background: var(--bg-card) !important;
           color: var(--text-primary) !important;
@@ -1470,7 +1573,8 @@ def main() -> None:
             insights.last_event_at is not None or insights.last_event_stage
         ):
             action = _stage_to_action(insights.last_event_stage)
-            ts = _format_dt(insights.last_event_at)
+            ts_raw = _format_dt_moscow_logs(insights.last_event_at)
+            ts = ts_raw[:16] if len(ts_raw) >= 16 else ts_raw
             st.write(f"**{ts}** — {action}")
         else:
             st.caption("Событий пока нет или журнал недоступен.")
@@ -1518,12 +1622,21 @@ def main() -> None:
             st.markdown("**События по этапам**")
             by_stage = dashboard_stats.get("by_stage") or {}
             if by_stage:
+                normalized_stage_counts: dict[str, int] = {}
+                for raw_stage, count in by_stage.items():
+                    norm_stage = normalize_event_type(str(raw_stage))
+                    key = norm_stage or str(raw_stage)
+                    normalized_stage_counts[key] = normalized_stage_counts.get(key, 0) + int(
+                        count or 0
+                    )
                 rows_st = [
                     {
                         "этап": _stage_to_action(k),
                         "количество": v,
                     }
-                    for k, v in sorted(by_stage.items(), key=lambda x: (-x[1], x[0]))
+                    for k, v in sorted(
+                        normalized_stage_counts.items(), key=lambda x: (-x[1], x[0])
+                    )
                 ]
                 df_st = pd.DataFrame(rows_st)
                 st.dataframe(df_st, use_container_width=True, hide_index=True)
@@ -1535,12 +1648,21 @@ def main() -> None:
                 "(этапы `route_selected` / `processing_done`, поле `route` в `details`)"
             )
             by_route = dashboard_stats.get("by_route") or {}
-            route_total = sum(int(by_route.get(k, 0)) for k in ("rag", "text", "image_generation"))
+            normalized_route_counts: dict[str, int] = {}
+            for raw_route, count in by_route.items():
+                norm_route = normalize_route(str(raw_route))
+                normalized_route_counts[norm_route] = normalized_route_counts.get(norm_route, 0) + int(
+                    count or 0
+                )
+            route_total = sum(
+                int(normalized_route_counts.get(k, 0))
+                for k in ("rag", "text", "image_generation")
+            )
             if route_total > 0:
                 rows_r = [
                     {
-                        "маршрут": _ROUTE_LABEL_RU.get(k, k),
-                        "количество": int(by_route.get(k, 0)),
+                        "маршрут": _route_label(k),
+                        "количество": int(normalized_route_counts.get(k, 0)),
                     }
                     for k in ("rag", "text", "image_generation")
                 ]
@@ -1599,6 +1721,7 @@ def main() -> None:
                         dt_label = _format_dt_moscow_logs(req.get("last_at"))
                         status_raw = str(req.get("status") or "")
                         status_label = _status_label(status_raw)
+                        route_badge = get_route_badge(str(req.get("route") or "text"))
                         preview = str(req.get("preview") or "Текстовый запрос")
                         eid = str(req.get("execution_id") or "")
                         is_selected = bool(selected_text_eid) and eid == selected_text_eid
@@ -1617,6 +1740,7 @@ def main() -> None:
                             '<div class="rag-list-item-head">'
                             f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
                             f"{badge_html}</div>"
+                            f'<div class="route-badge-line">{route_badge}</div>'
                             f'<div class="rag-list-fallback">{html.escape(status_label)}</div>'
                             f'<div class="rag-list-query">{html.escape(preview)}</div>'
                             "</div>",
@@ -1727,7 +1851,9 @@ def main() -> None:
                     for idx, ev in enumerate(page_items):
                         dt_label = _format_dt_moscow_logs(ev.get("created_at"))
                         fb = str(ev.get("fallback_reason") or "none")
+                        fb_ru, _ = _rag_fallback_outcome(fb)
                         qp = str(ev.get("query_preview") or "—")
+                        route_badge = get_route_badge("rag")
                         eid = str(ev.get("execution_id") or "")
                         is_selected = bool(selected_eid) and eid == selected_eid
                         item_cls = (
@@ -1746,7 +1872,8 @@ def main() -> None:
                             f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
                             f"{badge_html}"
                             "</div>"
-                            f'<div class="rag-list-fallback">{html.escape(fb)}</div>'
+                            f'<div class="route-badge-line">{route_badge}</div>'
+                            f'<div class="rag-list-fallback">{html.escape(fb_ru)}</div>'
                             f'<div class="rag-list-query">{html.escape(qp)}</div>'
                             "</div>",
                             unsafe_allow_html=True,
@@ -1789,8 +1916,9 @@ def main() -> None:
                         else:
                             opened_dt = _format_dt_moscow_logs(selected_ev.get("created_at"))
                             opened_fb = str(selected_ev.get("fallback_reason") or "none")
+                            opened_fb_ru, _ = _rag_fallback_outcome(opened_fb)
                             st.markdown(
-                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_fb)}"
+                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_fb_ru)}"
                             )
                             st.markdown(
                                 f"<small>execution_id: <code>{html.escape(selected_eid)}</code></small>",

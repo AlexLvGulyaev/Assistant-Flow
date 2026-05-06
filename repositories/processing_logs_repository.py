@@ -66,19 +66,45 @@ class ProcessingLogsRepository:
 
     def count_routes_since(self, conn: Connection, *, hours: int = 24) -> dict[str, int]:
         """
-        Count rows with ``stage`` in ``route_selected`` / ``processing_done`` only,
-        where ``details`` JSON has a known ``route`` (``rag``, ``text``,
-        ``image_generation``). Rows without ``route`` or with other values are omitted.
+        Count requests by normalized route in the time window.
+        One request = one ``execution_id`` (not raw event row).
+        Route inference accepts route/mode/stage aliases (text_response, text_answer_done,
+        rag_answer_done, etc.) and picks the latest known route per execution_id.
         """
         h = _sanitize_hours(hours)
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT (details->>'route') AS route_bucket, COUNT(*)::int
-                FROM processing_logs
-                WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
-                  AND stage IN ('route_selected', 'processing_done')
-                  AND (details->>'route') IN ('rag', 'text', 'image_generation')
+                WITH normalized AS (
+                    SELECT
+                        execution_id,
+                        created_at,
+                        CASE
+                            WHEN (details->>'route') IN ('rag', 'rag_response')
+                                 OR stage = 'rag_answer_done'
+                                 OR (details->>'mode') = 'rag'
+                            THEN 'rag'
+                            WHEN (details->>'route') IN ('text', 'text_response')
+                                 OR stage = 'text_answer_done'
+                                 OR (details->>'mode') = 'text'
+                            THEN 'text'
+                            WHEN (details->>'route') IN ('image_generation', 'image', 'image_response')
+                            THEN 'image_generation'
+                            ELSE NULL
+                        END AS route_bucket
+                    FROM processing_logs
+                    WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
+                ),
+                last_route_per_request AS (
+                    SELECT DISTINCT ON (execution_id)
+                        execution_id,
+                        route_bucket
+                    FROM normalized
+                    WHERE route_bucket IS NOT NULL
+                    ORDER BY execution_id, created_at DESC
+                )
+                SELECT route_bucket, COUNT(*)::int
+                FROM last_route_per_request
                 GROUP BY route_bucket
                 ORDER BY route_bucket
                 """,
