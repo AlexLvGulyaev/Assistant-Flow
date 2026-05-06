@@ -319,6 +319,182 @@ def _rag_inline_metrics_html(ev: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _render_rag_event_detail(ev: dict[str, Any]) -> None:
+    """Master-detail right pane for one selected RAG event."""
+    details = ev.get("details")
+    details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
+    fb_reason = str(
+        details_dict.get("fallback_reason")
+        or ev.get("fallback_reason")
+        or "none",
+    )
+    qp = str(
+        details_dict.get("query_preview")
+        or ev.get("query_preview")
+        or "—",
+    )
+
+    answer_text = str(
+        details_dict.get("answer_text")
+        or details_dict.get("answer_preview")
+        or details_dict.get("answer")
+        or details_dict.get("response_text")
+        or ""
+    ).strip()
+    q_col, a_col = st.columns(2)
+    with q_col:
+        st.markdown(
+            '<p class="rag-section-label">Что спросил пользователь</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="rag-top-card">'
+            f'<div class="rag-top-card-text">{html.escape(qp)}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with a_col:
+        st.markdown(
+            '<p class="rag-section-label">Что ответила система</p>',
+            unsafe_allow_html=True,
+        )
+        answer_view = (
+            answer_text
+            if answer_text
+            else "Ответ не сохранён для этого события."
+        )
+        st.markdown(
+            '<div class="rag-top-card">'
+            f'<div class="rag-top-card-text">{html.escape(answer_view)}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    outcome_msg, outcome_variant = _rag_fallback_outcome(fb_reason)
+    st.markdown(
+        '<p class="rag-section-label">Итог обработки</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="rag-status-card rag-status-card--{outcome_variant}">'
+        f"{html.escape(outcome_msg)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<p class="rag-section-label">Ключевые метрики</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        _rag_inline_metrics_html(ev),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="rag-section-title">Источники ответа</div>',
+        unsafe_allow_html=True,
+    )
+    raw_chunks = details_dict.get("retrieved_chunks")
+    retrieved_chunks: list[dict[str, Any]] = []
+    if isinstance(raw_chunks, list):
+        retrieved_chunks = [c for c in raw_chunks if isinstance(c, dict)]
+    used_chunks = [c for c in retrieved_chunks if c.get("passed_filter")]
+    dropped_chunks = [c for c in retrieved_chunks if not c.get("passed_filter")]
+
+    if not retrieved_chunks:
+        st.caption("Фрагменты не сохранены для этого события.")
+    else:
+        st.markdown(
+            '<p class="rag-section-label">Использованы в ответе</p>',
+            unsafe_allow_html=True,
+        )
+        if not used_chunks:
+            st.caption("Нет фрагментов, прошедших порог релевантности.")
+        else:
+            for idx, ch in enumerate(used_chunks, 1):
+                src = str(ch.get("source") or "unknown")
+                score_s = _rag_chunk_score_str(ch.get("score"))
+                title_ch = f"✅ {src} · score={score_s}"
+                preview = str(ch.get("text_preview") or "—")
+                with st.expander(title_ch, expanded=False):
+                    meta_col, text_col = st.columns((0.38, 0.62))
+                    with meta_col:
+                        st.markdown(
+                            '<div class="rag-frag-meta-card">'
+                            f'<div class="rag-frag-meta-line"><b>source:</b> {html.escape(src)}</div>'
+                            f'<div class="rag-frag-meta-line"><b>score:</b> {html.escape(score_s)}</div>'
+                            '<div class="rag-frag-meta-line"><b>статус:</b> '
+                            '<span class="chunk-badge chunk-badge-success">использован</span></div>'
+                            '<div class="rag-frag-meta-line"><b>passed_filter:</b> true</div>'
+                            f'<div class="rag-frag-meta-line"><b>rank:</b> {idx}</div>'
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with text_col:
+                        st.markdown(
+                            '<div class="rag-frag-text-card">'
+                            f"<p>{html.escape(preview)}</p>"
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+        st.markdown(
+            '<p class="rag-section-label">Отфильтрованы</p>',
+            unsafe_allow_html=True,
+        )
+        if not dropped_chunks:
+            st.caption("Отфильтрованных фрагментов нет.")
+        else:
+            for idx, ch in enumerate(dropped_chunks, 1):
+                src = str(ch.get("source") or "unknown")
+                score_s = _rag_chunk_score_str(ch.get("score"))
+                title_ch = f"⚪ {src} · score={score_s}"
+                preview = str(ch.get("text_preview") or "—")
+                with st.expander(title_ch, expanded=False):
+                    meta_col, text_col = st.columns((0.38, 0.62))
+                    with meta_col:
+                        st.markdown(
+                            '<div class="rag-frag-meta-card">'
+                            f'<div class="rag-frag-meta-line"><b>source:</b> {html.escape(src)}</div>'
+                            f'<div class="rag-frag-meta-line"><b>score:</b> {html.escape(score_s)}</div>'
+                            '<div class="rag-frag-meta-line"><b>статус:</b> '
+                            '<span class="chunk-badge chunk-badge-muted">отфильтрован</span></div>'
+                            '<div class="rag-frag-meta-line"><b>passed_filter:</b> false</div>'
+                            f'<div class="rag-frag-meta-line"><b>rank:</b> {idx}</div>'
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with text_col:
+                        st.markdown(
+                            '<div class="rag-frag-text-card">'
+                            f"<p>{html.escape(preview)}</p>"
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+
+    st.markdown(
+        '<p class="rag-section-title">Технические детали</p>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("Показать JSON", expanded=False):
+        details_dump = json.dumps(
+            details_dict,
+            ensure_ascii=False,
+            indent=2,
+        )
+        st.markdown(
+            '<div class="json-dark">',
+            unsafe_allow_html=True,
+        )
+        st.code(details_dump, language="json")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    eid_footer = html.escape(str(ev.get("execution_id") or "—"))
+    st.markdown(
+        f'<div class="rag-exec-footer">execution_id: {eid_footer}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _inject_theme_css() -> None:
     st.markdown(
         """
@@ -812,6 +988,72 @@ def _inject_theme_css() -> None:
           padding: 2px 0;
           flex: 1 1 auto;
         }
+        .rag-list-item {
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 8px 10px;
+          margin-bottom: 8px;
+        }
+        .rag-list-item-selected {
+          border-color: var(--success) !important;
+          background: rgba(34, 197, 94, 0.08) !important;
+        }
+        .rag-list-item-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 3px;
+        }
+        .rag-selected-badge {
+          font-size: 0.62rem;
+          font-weight: 700;
+          color: var(--success) !important;
+          border: 1px solid var(--success);
+          background: rgba(34, 197, 94, 0.14);
+          border-radius: 999px;
+          padding: 1px 7px;
+          line-height: 1.2;
+          white-space: nowrap;
+        }
+        .rag-list-time {
+          font-size: 0.76rem;
+          color: var(--text-secondary) !important;
+          margin: 0;
+        }
+        .rag-list-fallback {
+          font-size: 0.74rem;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          margin-bottom: 5px;
+          color: var(--accent) !important;
+          font-weight: 700;
+        }
+        .rag-list-query {
+          font-size: 0.86rem;
+          line-height: 1.32;
+          color: var(--text-primary) !important;
+          margin-bottom: 8px;
+          max-height: 3.9em;
+          overflow: hidden;
+        }
+        .rag-list-pane .stButton > button {
+          background: var(--bg-card) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border) !important;
+          border-radius: 7px !important;
+          min-height: 1.6rem !important;
+          padding: 0.1rem 0.55rem !important;
+          font-size: 0.78rem !important;
+          font-weight: 600 !important;
+          box-shadow: none !important;
+        }
+        .rag-list-pane .stButton > button:hover {
+          border-color: var(--accent) !important;
+          color: var(--accent) !important;
+          filter: none !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1085,196 +1327,81 @@ def main() -> None:
                 fallback_reason=fallback_filter,
             )
             if not recent_rag:
+                st.session_state.pop("selected_rag_execution_id", None)
                 st.info("RAG-события по выбранному фильтру не найдены.")
             else:
-                for ev in recent_rag:
-                    dt_label = _format_dt_moscow_logs(ev.get("created_at"))
-                    fb = str(ev.get("fallback_reason") or "none")
-                    query_preview = str(ev.get("query_preview") or "—")
-                    title = f"{dt_label} · {fb} · {query_preview}"
-                    with st.expander(title, expanded=False):
-                        details = ev.get("details")
-                        details_dict: dict[str, Any] = (
-                            details if isinstance(details, dict) else {}
+                selected_eid = str(
+                    st.session_state.get("selected_rag_execution_id", "")
+                )
+                list_col, detail_col = st.columns((0.35, 0.65))
+                with list_col:
+                    st.markdown("**Список запросов**")
+                    st.markdown('<div class="rag-list-pane">', unsafe_allow_html=True)
+                    for idx, ev in enumerate(recent_rag):
+                        dt_label = _format_dt_moscow_logs(ev.get("created_at"))
+                        fb = str(ev.get("fallback_reason") or "none")
+                        qp = str(ev.get("query_preview") or "—")
+                        eid = str(ev.get("execution_id") or "")
+                        is_selected = bool(selected_eid) and eid == selected_eid
+                        item_cls = (
+                            "rag-list-item rag-list-item-selected"
+                            if is_selected
+                            else "rag-list-item"
                         )
-                        fb_reason = str(
-                            details_dict.get("fallback_reason")
-                            or ev.get("fallback_reason")
-                            or "none",
-                        )
-                        qp = str(
-                            details_dict.get("query_preview")
-                            or ev.get("query_preview")
-                            or "—",
-                        )
-
-                        answer_text = str(
-                            details_dict.get("answer_text")
-                            or details_dict.get("answer_preview")
-                            or details_dict.get("answer")
-                            or details_dict.get("response_text")
-                            or ""
-                        ).strip()
-                        q_col, a_col = st.columns(2)
-                        with q_col:
-                            st.markdown(
-                                '<p class="rag-section-label">Что спросил пользователь</p>',
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(
-                                '<div class="rag-top-card">'
-                                f'<div class="rag-top-card-text">{html.escape(qp)}</div>'
-                                "</div>",
-                                unsafe_allow_html=True,
-                            )
-                        with a_col:
-                            st.markdown(
-                                '<p class="rag-section-label">Что ответила система</p>',
-                                unsafe_allow_html=True,
-                            )
-                            answer_view = (
-                                answer_text
-                                if answer_text
-                                else "Ответ не сохранён для этого события."
-                            )
-                            st.markdown(
-                                '<div class="rag-top-card">'
-                                f'<div class="rag-top-card-text">{html.escape(answer_view)}</div>'
-                                "</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                        outcome_msg, outcome_variant = _rag_fallback_outcome(fb_reason)
-                        st.markdown(
-                            '<p class="rag-section-label">Итог обработки</p>',
-                            unsafe_allow_html=True,
+                        badge_html = (
+                            '<span class="rag-selected-badge">выбрано</span>'
+                            if is_selected
+                            else ""
                         )
                         st.markdown(
-                            f'<div class="rag-status-card rag-status-card--{outcome_variant}">'
-                            f"{html.escape(outcome_msg)}</div>",
+                            f'<div class="{item_cls}">'
+                            '<div class="rag-list-item-head">'
+                            f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
+                            f"{badge_html}"
+                            "</div>"
+                            f'<div class="rag-list-fallback">{html.escape(fb)}</div>'
+                            f'<div class="rag-list-query">{html.escape(qp)}</div>'
+                            "</div>",
                             unsafe_allow_html=True,
                         )
+                        if st.button(
+                            "→",
+                            key=f"rag_open_{idx}_{eid}",
+                            help="Открыть детали запроса",
+                        ):
+                            st.session_state["selected_rag_execution_id"] = eid
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-                        st.markdown(
-                            '<p class="rag-section-label">Ключевые метрики</p>',
-                            unsafe_allow_html=True,
+                with detail_col:
+                    if not selected_eid:
+                        st.info("Выберите RAG-запрос слева")
+                    else:
+                        selected_ev = next(
+                            (
+                                ev
+                                for ev in recent_rag
+                                if str(ev.get("execution_id") or "") == selected_eid
+                            ),
+                            None,
                         )
-                        st.markdown(
-                            _rag_inline_metrics_html(ev),
-                            unsafe_allow_html=True,
-                        )
-
-                        st.markdown(
-                            '<div class="rag-section-title">Источники ответа</div>',
-                            unsafe_allow_html=True,
-                        )
-                        raw_chunks = details_dict.get("retrieved_chunks")
-                        retrieved_chunks: list[dict[str, Any]] = []
-                        if isinstance(raw_chunks, list):
-                            retrieved_chunks = [
-                                c for c in raw_chunks if isinstance(c, dict)
-                            ]
-                        used_chunks = [
-                            c for c in retrieved_chunks if c.get("passed_filter")
-                        ]
-                        dropped_chunks = [
-                            c for c in retrieved_chunks if not c.get("passed_filter")
-                        ]
-
-                        if not retrieved_chunks:
-                            st.caption("Фрагменты не сохранены для этого события.")
+                        if selected_ev is None:
+                            st.session_state.pop("selected_rag_execution_id", None)
+                            st.info(
+                                "Выбранный запрос не найден в текущем фильтре. "
+                                "Выберите RAG-запрос слева."
+                            )
                         else:
+                            opened_dt = _format_dt_moscow_logs(selected_ev.get("created_at"))
+                            opened_fb = str(selected_ev.get("fallback_reason") or "none")
                             st.markdown(
-                                '<p class="rag-section-label">Использованы в ответе</p>',
-                                unsafe_allow_html=True,
-                            )
-                            if not used_chunks:
-                                st.caption(
-                                    "Нет фрагментов, прошедших порог релевантности."
-                                )
-                            else:
-                                for idx, ch in enumerate(used_chunks, 1):
-                                    src = str(ch.get("source") or "unknown")
-                                    score_s = _rag_chunk_score_str(ch.get("score"))
-                                    title_ch = f"✅ {src} · score={score_s}"
-                                    preview = str(ch.get("text_preview") or "—")
-                                    with st.expander(title_ch, expanded=False):
-                                        meta_col, text_col = st.columns((0.38, 0.62))
-                                        with meta_col:
-                                            st.markdown(
-                                                '<div class="rag-frag-meta-card">'
-                                                f'<div class="rag-frag-meta-line"><b>source:</b> {html.escape(src)}</div>'
-                                                f'<div class="rag-frag-meta-line"><b>score:</b> {html.escape(score_s)}</div>'
-                                                '<div class="rag-frag-meta-line"><b>статус:</b> '
-                                                '<span class="chunk-badge chunk-badge-success">использован</span></div>'
-                                                '<div class="rag-frag-meta-line"><b>passed_filter:</b> true</div>'
-                                                f'<div class="rag-frag-meta-line"><b>rank:</b> {idx}</div>'
-                                                "</div>",
-                                                unsafe_allow_html=True,
-                                            )
-                                        with text_col:
-                                            st.markdown(
-                                                '<div class="rag-frag-text-card">'
-                                                f"<p>{html.escape(preview)}</p>"
-                                                "</div>",
-                                                unsafe_allow_html=True,
-                                            )
-                            st.markdown(
-                                '<p class="rag-section-label">Отфильтрованы</p>',
-                                unsafe_allow_html=True,
-                            )
-                            if not dropped_chunks:
-                                st.caption("Отфильтрованных фрагментов нет.")
-                            else:
-                                for idx, ch in enumerate(dropped_chunks, 1):
-                                    src = str(ch.get("source") or "unknown")
-                                    score_s = _rag_chunk_score_str(ch.get("score"))
-                                    title_ch = f"⚪ {src} · score={score_s}"
-                                    preview = str(ch.get("text_preview") or "—")
-                                    with st.expander(title_ch, expanded=False):
-                                        meta_col, text_col = st.columns((0.38, 0.62))
-                                        with meta_col:
-                                            st.markdown(
-                                                '<div class="rag-frag-meta-card">'
-                                                f'<div class="rag-frag-meta-line"><b>source:</b> {html.escape(src)}</div>'
-                                                f'<div class="rag-frag-meta-line"><b>score:</b> {html.escape(score_s)}</div>'
-                                                '<div class="rag-frag-meta-line"><b>статус:</b> '
-                                                '<span class="chunk-badge chunk-badge-muted">отфильтрован</span></div>'
-                                                '<div class="rag-frag-meta-line"><b>passed_filter:</b> false</div>'
-                                                f'<div class="rag-frag-meta-line"><b>rank:</b> {idx}</div>'
-                                                "</div>",
-                                                unsafe_allow_html=True,
-                                            )
-                                        with text_col:
-                                            st.markdown(
-                                                '<div class="rag-frag-text-card">'
-                                                f"<p>{html.escape(preview)}</p>"
-                                                "</div>",
-                                                unsafe_allow_html=True,
-                                            )
-
-                        st.markdown(
-                            '<p class="rag-section-title">Технические детали</p>',
-                            unsafe_allow_html=True,
-                        )
-                        with st.expander("Показать JSON", expanded=False):
-                            details_dump = json.dumps(
-                                details_dict,
-                                ensure_ascii=False,
-                                indent=2,
+                                f"**Открыт запрос:** {html.escape(opened_dt)} · {html.escape(opened_fb)}"
                             )
                             st.markdown(
-                                '<div class="json-dark">',
+                                f"<small>execution_id: <code>{html.escape(selected_eid)}</code></small>",
                                 unsafe_allow_html=True,
                             )
-                            st.code(details_dump, language="json")
-                            st.markdown("</div>", unsafe_allow_html=True)
-
-                        eid_footer = html.escape(str(ev.get("execution_id") or "—"))
-                        st.markdown(
-                            f'<div class="rag-exec-footer">execution_id: {eid_footer}</div>',
-                            unsafe_allow_html=True,
-                        )
+                            _render_rag_event_detail(selected_ev)
 
     with tab_docs:
         st.write(
