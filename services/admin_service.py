@@ -320,6 +320,126 @@ class AdminService:
         except Exception:
             return []
 
+    def list_async_jobs(
+        self,
+        *,
+        limit: int = 50,
+        status: str | None = None,
+        job_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Read-only async_jobs list for Admin UI visibility (P5.3c).
+        Safe fallback: returns [] if DB/table is unavailable.
+        """
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return []
+        lim = max(1, min(int(limit), 200))
+        st = (status or "").strip().lower()
+        jt = (job_type or "").strip()
+        try:
+            with get_connection() as conn, conn.cursor() as cur:
+                if st and jt:
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            job_type,
+                            status,
+                            attempts,
+                            max_attempts,
+                            payload_json,
+                            result_json,
+                            error_json,
+                            created_at,
+                            started_at,
+                            finished_at,
+                            updated_at
+                        FROM async_jobs
+                        WHERE status = %s
+                          AND job_type = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (st, jt, lim),
+                    )
+                elif st:
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            job_type,
+                            status,
+                            attempts,
+                            max_attempts,
+                            payload_json,
+                            result_json,
+                            error_json,
+                            created_at,
+                            started_at,
+                            finished_at,
+                            updated_at
+                        FROM async_jobs
+                        WHERE status = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (st, lim),
+                    )
+                elif jt:
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            job_type,
+                            status,
+                            attempts,
+                            max_attempts,
+                            payload_json,
+                            result_json,
+                            error_json,
+                            created_at,
+                            started_at,
+                            finished_at,
+                            updated_at
+                        FROM async_jobs
+                        WHERE job_type = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (jt, lim),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            job_type,
+                            status,
+                            attempts,
+                            max_attempts,
+                            payload_json,
+                            result_json,
+                            error_json,
+                            created_at,
+                            started_at,
+                            finished_at,
+                            updated_at
+                        FROM async_jobs
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (lim,),
+                    )
+                rows_raw = cur.fetchall()
+                cols = [c.name for c in cur.description] if cur.description else []
+                conn.commit()
+            out: list[dict[str, Any]] = []
+            for r in rows_raw:
+                out.append({cols[i]: r[i] for i in range(len(cols))})
+            return out
+        except Exception:
+            return []
+
     def get_logs_execution_ids_page(
         self,
         *,

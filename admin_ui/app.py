@@ -4270,6 +4270,95 @@ def _render_tab_overview(
 
 
 
+def _render_async_jobs_block(svc: AdminService) -> None:
+    st.markdown(panel_section_title_html("Async Jobs"), unsafe_allow_html=True)
+    st.caption("Read-only обзор `async_jobs` (без автозапуска worker).")
+
+    all_jobs_for_filters = svc.list_async_jobs(limit=200, status=None, job_type=None)
+    statuses = sorted(
+        {
+            str(j.get("status") or "").strip()
+            for j in all_jobs_for_filters
+            if str(j.get("status") or "").strip()
+        }
+    )
+    job_types = sorted(
+        {
+            str(j.get("job_type") or "").strip()
+            for j in all_jobs_for_filters
+            if str(j.get("job_type") or "").strip()
+        }
+    )
+
+    f1, f2, f3 = st.columns((0.3, 0.3, 0.4))
+    with f1:
+        status_filter = st.selectbox(
+            "Status",
+            options=["all", *statuses],
+            index=0,
+            key="async_jobs_status_filter",
+        )
+    with f2:
+        job_type_filter = st.selectbox(
+            "Job type",
+            options=["all", *job_types],
+            index=0,
+            key="async_jobs_type_filter",
+        )
+    with f3:
+        limit_n = int(
+            st.number_input(
+                "Limit",
+                min_value=10,
+                max_value=200,
+                value=50,
+                step=10,
+                key="async_jobs_limit",
+            )
+        )
+
+    jobs = svc.list_async_jobs(
+        limit=limit_n,
+        status=None if status_filter == "all" else status_filter,
+        job_type=None if job_type_filter == "all" else job_type_filter,
+    )
+    if not jobs:
+        render_empty_state("Async jobs не найдены по текущим фильтрам.")
+        return
+
+    rows = []
+    for j in jobs:
+        attempts = int(j.get("attempts") or 0)
+        max_attempts = int(j.get("max_attempts") or 0)
+        rows.append(
+            {
+                "job_id": str(j.get("id") or ""),
+                "job_type": str(j.get("job_type") or "—"),
+                "status": str(j.get("status") or "—"),
+                "attempts": f"{attempts}/{max_attempts}",
+                "created_at": _format_dt_moscow_logs(j.get("created_at")),
+                "started_at": _format_dt_moscow_logs(j.get("started_at")),
+                "finished_at": _format_dt_moscow_logs(j.get("finished_at")),
+                "updated_at": _format_dt_moscow_logs(j.get("updated_at")),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    job_options = [str(j.get("id") or "") for j in jobs if str(j.get("id") or "")]
+    selected_job_id = st.selectbox(
+        "Inspect job JSON",
+        options=job_options,
+        index=0,
+        key="async_jobs_selected_id",
+    )
+    selected = next((j for j in jobs if str(j.get("id") or "") == selected_job_id), None)
+    if selected is None:
+        return
+    render_metadata_expander("payload_json", selected.get("payload_json") or {})
+    render_metadata_expander("result_json", selected.get("result_json") or {})
+    render_metadata_expander("error_json", selected.get("error_json") or {})
+
+
 def main() -> None:
     st.set_page_config(page_title="Assistant Flow — Админ-панель", layout="wide")
     _inject_theme_css()
@@ -5358,6 +5447,8 @@ def main() -> None:
             "Операторская консоль аудита: слева — журнал execution-сессий, справа — трассировка "
             "событий (MSK). Технические raw details — только в свёртках."
         )
+        _render_async_jobs_block(svc)
+        st.markdown("<hr/>", unsafe_allow_html=True)
         total_exec = int(svc.get_logs_execution_ids_total())
         if total_exec <= 0:
             render_empty_state("Событий журнала пока нет.")
