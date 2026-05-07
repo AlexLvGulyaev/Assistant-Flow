@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import mimetypes
 
 from repositories.connection import get_connection
 from repositories.document_repository import DocumentRepository
 from repositories.processing_logs_repository import ProcessingLogsRepository
 from services.admin_knowledge_indexer import AdminKnowledgeIndexer
+from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
 from services.runtime_lifecycle_service import RuntimeLifecycleService
@@ -63,6 +66,7 @@ class AdminService:
         self._config = config or load_config()
         self._documents_dir = _resolve_dir(self._config.rag_documents_dir)
         self._chroma_dir = _resolve_dir(self._config.chroma_persist_dir)
+        self._asset_repository = create_asset_repository(self._config)
         self._doc_repo = DocumentRepository()
         self._proc_repo = ProcessingLogsRepository()
         self._lifecycle = RuntimeLifecycleService()
@@ -110,16 +114,52 @@ class AdminService:
             raise ValueError("Only .txt files are supported in MVP.")
         if not safe or safe in (".", ".."):
             raise ValueError("Invalid file name.")
-        self._documents_dir.mkdir(parents=True, exist_ok=True)
-        dest = self._documents_dir / safe
-        dest.write_bytes(data)
+        if not isinstance(data, (bytes, bytearray)) or len(data) == 0:
+            raise ValueError("Uploaded file is empty.")
+        content_type = mimetypes.guess_type(safe)[0] or "text/plain"
+        asset_ref = self._asset_repository.save_bytes(
+            bytes(data),
+            namespace="documents",
+            filename=safe,
+            content_type=content_type,
+        )
+        src = self._asset_repository.resolve_path(asset_ref)
+        if not src.exists() or not src.is_file():
+            raise RuntimeError(
+                f"AssetRepository saved file is not accessible: {src}"
+            )
+
+        # Always copy to active RAG compatibility directory from config.
+        rag_documents_dir = _resolve_dir(self._config.rag_documents_dir)
+        rag_documents_dir.mkdir(parents=True, exist_ok=True)
+        dest = rag_documents_dir / safe
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        if not dest.exists() or not dest.is_file():
+            raise RuntimeError(
+                f"Compatibility copy failed for uploaded document: {dest}"
+            )
         execution_id = str(uuid.uuid4())
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
             stage="admin_document_uploaded",
             status="success",
-            details={"filename": safe, "source": "admin_ui"},
+            details={
+                "filename": safe,
+                "source": "admin_ui",
+                "asset_ref": asset_ref.relative_path,
+                "asset_storage_path": str(src),
+                "asset_storage_exists": src.exists(),
+                "content_type": asset_ref.content_type,
+                "size": asset_ref.size_bytes,
+                "size_bytes": asset_ref.size_bytes,
+                "sha256": asset_ref.sha256,
+                # Compatibility copy used by current RAG indexer and document preview.
+                "compatibility_path": str(dest),
+                "compatibility_exists": dest.exists(),
+                "rag_documents_dir": str(rag_documents_dir),
+            },
         )
         return dest
 

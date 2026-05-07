@@ -50,8 +50,8 @@ services:
     volumes:
       - ./data/documents:/app/data/documents
       - ./outputs:/app/outputs
-      # Admin UI reads AssetRepository files for previews.
-      - ./storage:/app/storage:ro
+      # Admin UI reads generated asset previews and writes uploaded documents through AssetRepository.
+      - ./storage:/app/storage
     command:
       - streamlit
       - run
