@@ -25,10 +25,24 @@ class AsyncReindexRunOutcome:
     details: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class AsyncReindexBatchOutcome:
+    requested_max_jobs: int
+    applied_max_jobs: int
+    executed_jobs: int
+    claimed: int
+    succeeded: int
+    failed: int
+    retry_scheduled: int
+    total_duration_ms: int
+    errors: list[str]
+
+
 class AsyncReindexWorker:
     """Single-step worker skeleton for `rag_reindex` jobs."""
 
     JOB_TYPE = "rag_reindex"
+    BATCH_MAX_HARD_CAP = 5
 
     def __init__(
         self,
@@ -146,3 +160,57 @@ class AsyncReindexWorker:
                 status=failed.status,
                 details=err_payload,
             )
+
+    def run_batch(self, max_jobs: int = 3) -> AsyncReindexBatchOutcome:
+        """
+        Controlled runner: execute up to N jobs explicitly, no daemon mode.
+        Hard-capped to protect operator from accidental long batch runs.
+        """
+        req = int(max_jobs) if isinstance(max_jobs, int) else 3
+        lim = max(1, min(req, self.BATCH_MAX_HARD_CAP))
+        started = time.monotonic()
+        claimed = 0
+        succeeded = 0
+        failed = 0
+        retry_scheduled = 0
+        errors: list[str] = []
+
+        for _ in range(lim):
+            outcome = self.run_single_job()
+            if not outcome.claimed:
+                break
+            claimed += 1
+            st = (outcome.status or "").strip().lower()
+            if st == "succeeded":
+                succeeded += 1
+            elif st == "retry_scheduled":
+                retry_scheduled += 1
+            elif st == "failed":
+                failed += 1
+            err_msg = str(
+                outcome.details.get("error_message")
+                or outcome.details.get("error_type")
+                or ""
+            ).strip()
+            if err_msg:
+                errors.append(f"{outcome.job_id}: {err_msg}")
+
+        total_duration_ms = int((time.monotonic() - started) * 1000)
+        print(
+            "[assistant-flow] async_reindex: batch done "
+            f"requested={req} limited={lim} claimed={claimed} "
+            f"succeeded={succeeded} failed={failed} retry_scheduled={retry_scheduled} "
+            f"duration_ms={total_duration_ms}",
+            flush=True,
+        )
+        return AsyncReindexBatchOutcome(
+            requested_max_jobs=req,
+            applied_max_jobs=lim,
+            executed_jobs=claimed,
+            claimed=claimed,
+            succeeded=succeeded,
+            failed=failed,
+            retry_scheduled=retry_scheduled,
+            total_duration_ms=total_duration_ms,
+            errors=errors[:10],
+        )

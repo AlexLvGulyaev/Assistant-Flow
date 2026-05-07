@@ -139,7 +139,6 @@ class AsyncJobService:
     ) -> AsyncJob:
         jid = self._normalize_job_id(job_id)
         err = self._json_param(error_json)
-        next_status: AsyncJobStatus = "retry_scheduled" if retry else "failed"
         with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -153,13 +152,77 @@ class AsyncJobService:
                  WHERE id = %s
                  RETURNING *
                 """,
-                (next_status, err, next_status, jid),
+                (
+                    (
+                        "retry_scheduled"
+                        if retry
+                        else "failed"
+                    ),
+                    err,
+                    (
+                        "failed"
+                        if (not retry)
+                        else "retry_scheduled"
+                    ),
+                    jid,
+                ),
             )
             row = cur.fetchone()
             if row is None:
                 raise KeyError(f"job not found: {jid}")
+            if retry and int(row.get("attempts") or 0) >= int(row.get("max_attempts") or 0):
+                cur.execute(
+                    """
+                    UPDATE async_jobs
+                       SET status = 'failed',
+                           finished_at = NOW()
+                     WHERE id = %s
+                    RETURNING *
+                    """,
+                    (jid,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise KeyError(f"job not found during retry finalization: {jid}")
             conn.commit()
         return self._row_to_job(row)
+
+    def retry_job(self, job_id: uuid.UUID | str) -> AsyncJob:
+        """
+        Manual retry orchestration: move eligible job back to queued.
+        Allowed statuses: failed, retry_scheduled.
+        """
+        jid = self._normalize_job_id(job_id)
+        with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM async_jobs WHERE id = %s FOR UPDATE", (jid,))
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError(f"job not found: {jid}")
+            cur_status = str(row.get("status") or "").strip().lower()
+            attempts = int(row.get("attempts") or 0)
+            max_attempts = int(row.get("max_attempts") or 0)
+            if cur_status not in {"failed", "retry_scheduled"}:
+                raise ValueError(
+                    f"retry not allowed for status={cur_status or 'unknown'}"
+                )
+            if attempts >= max_attempts:
+                raise ValueError(
+                    f"retry exhausted: attempts={attempts} max_attempts={max_attempts}"
+                )
+            cur.execute(
+                """
+                UPDATE async_jobs
+                   SET status = 'queued'
+                 WHERE id = %s
+                RETURNING *
+                """,
+                (jid,),
+            )
+            out = cur.fetchone()
+            if out is None:
+                raise KeyError(f"job not found during retry update: {jid}")
+            conn.commit()
+        return self._row_to_job(out)
 
     def claim_next_job(self, *, job_type: str | None = None) -> AsyncJob | None:
         """

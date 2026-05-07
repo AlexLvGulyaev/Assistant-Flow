@@ -308,6 +308,10 @@ class AdminService:
             max_attempts=max_attempts,
         )
 
+    def retry_async_job(self, job_id: uuid.UUID | str) -> AsyncJob:
+        """Manual safe retry: eligible failed/retry_scheduled -> queued."""
+        return self._async_jobs.retry_job(job_id)
+
     def get_recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Last rows from processing_logs (requires DATABASE_URL and schema v2)."""
         if not (os.getenv("DATABASE_URL") or "").strip():
