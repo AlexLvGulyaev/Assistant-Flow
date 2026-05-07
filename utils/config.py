@@ -63,6 +63,10 @@ class AppConfig:
     audio_storage_namespace: str = "audio"
     stt_model: str = "whisper-1"
     audio_max_bytes: int = 20 * 1024 * 1024
+    tts_model: str = "tts-1"
+    tts_voice: str = "alloy"
+    tts_output_format: str = "mp3"
+    tts_max_chars: int = 3000
 
     @property
     def token_url(self) -> str:
@@ -165,4 +169,8 @@ def load_config() -> AppConfig:
         ),
         stt_model=(os.getenv("STT_MODEL", "whisper-1").strip() or "whisper-1"),
         audio_max_bytes=_int_env("AUDIO_MAX_BYTES", 20 * 1024 * 1024),
+        tts_model=(os.getenv("TTS_MODEL", "tts-1").strip() or "tts-1"),
+        tts_voice=(os.getenv("TTS_VOICE", "alloy").strip() or "alloy"),
+        tts_output_format=(os.getenv("TTS_OUTPUT_FORMAT", "mp3").strip().lower() or "mp3"),
+        tts_max_chars=_int_env("TTS_MAX_CHARS", 3000),
     )

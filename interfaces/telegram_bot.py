@@ -11,10 +11,16 @@ import telebot
 from core.orchestrator import PromptOrchestrator, build_output_image_records
 from providers.gigachat_provider import GigaChatProvider
 from providers.openai_stt_provider import OpenAISTTProvider
+from providers.openai_tts_provider import OpenAITTSProvider
 from providers.openai_chat_provider import OpenAIChatProvider
 from providers.rag_embeddings import build_openai_embeddings
 from providers.stt_provider import DisabledSTTProvider, STTProvider
-from services.audio_pipeline_service import AudioPipelineService, AudioTranscriptionResult
+from providers.tts_provider import DisabledTTSProvider, TTSProvider
+from services.audio_pipeline_service import (
+    AudioPipelineService,
+    AudioSynthesisResult,
+    AudioTranscriptionResult,
+)
 from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
 from services.asset_repository_factory import create_asset_repository
@@ -244,6 +250,20 @@ def build_stt_provider(config: AppConfig) -> tuple[STTProvider, str | None]:
     return DisabledSTTProvider(), f"unsupported stt provider: {raw}"
 
 
+def build_tts_provider(config: AppConfig) -> tuple[TTSProvider, str | None]:
+    if not config.audio_enabled:
+        return DisabledTTSProvider(), "audio pipeline is disabled by AUDIO_ENABLED=false"
+    raw = (config.tts_provider or "").strip().lower()
+    if raw in ("", "disabled", "none", "off"):
+        return DisabledTTSProvider(), None
+    if raw in ("openai", "openai_direct"):
+        try:
+            return OpenAITTSProvider(config), None
+        except Exception as exc:
+            return DisabledTTSProvider(), f"tts provider init failed: {type(exc).__name__}: {exc}"
+    return DisabledTTSProvider(), f"unsupported tts provider: {raw}"
+
+
 def create_bot() -> telebot.TeleBot:
     config = load_config()
     if not config.telegram_bot_token:
@@ -257,8 +277,11 @@ def create_bot() -> telebot.TeleBot:
         asset_repository=asset_repository,
     )
     stt_provider, stt_provider_init_error = build_stt_provider(config)
+    tts_provider, tts_provider_init_error = build_tts_provider(config)
     if stt_provider_init_error:
         print(f"[assistant-flow] startup degraded: {stt_provider_init_error}", flush=True)
+    if tts_provider_init_error:
+        print(f"[assistant-flow] startup degraded: {tts_provider_init_error}", flush=True)
     _chroma_path = _resolve_project_path(config, config.chroma_persist_dir)
     if config.chroma_use_http:
         print(
@@ -281,6 +304,13 @@ def create_bot() -> telebot.TeleBot:
             component="stt",
             reason="provider_init_failed",
             message=stt_provider_init_error,
+        )
+    if tts_provider_init_error:
+        _log_system_degraded(
+            lifecycle=lifecycle,
+            component="tts",
+            reason="provider_init_failed",
+            message=tts_provider_init_error,
         )
 
     rag_holder: dict[str, Any] = {"service": None, "last_error": None}
@@ -798,6 +828,137 @@ def create_bot() -> telebot.TeleBot:
                         "latency_ms": latency_ms,
                     },
                 )
+                tts_stage_base: dict[str, Any] = {
+                    **voice_base_details,
+                    "generated_text": _safe_answer_text_for_log(
+                        formatted_result, max_len=3000
+                    ),
+                    "provider": config.tts_provider,
+                    "model": config.tts_model,
+                    "voice": config.tts_voice,
+                    "format": config.tts_output_format,
+                }
+                if isinstance(tts_provider, DisabledTTSProvider):
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="tts_skipped",
+                        status="skipped",
+                        details={**tts_stage_base, "reason": "provider_disabled"},
+                    )
+                elif len(formatted_result) > max(1, int(config.tts_max_chars)):
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="tts_skipped",
+                        status="skipped",
+                        details={
+                            **tts_stage_base,
+                            "reason": "text_too_long",
+                            "text_chars": len(formatted_result),
+                            "tts_max_chars": int(config.tts_max_chars),
+                        },
+                    )
+                else:
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="tts_started",
+                        status="started",
+                        details=tts_stage_base,
+                    )
+                    tts_result = tts_provider.synthesize(
+                        formatted_result,
+                        voice=config.tts_voice,
+                        metadata={
+                            "execution_id": execution_id,
+                            "telegram_chat_id": message.chat.id,
+                            "telegram_user_id": message.from_user.id,
+                        },
+                    )
+                    if (
+                        tts_result.ok
+                        and isinstance(tts_result.audio_bytes, (bytes, bytearray))
+                        and len(tts_result.audio_bytes) > 0
+                    ):
+                        out_filename = f"tts_response.{config.tts_output_format}"
+                        out_asset = audio_pipeline.save_output_audio(
+                            bytes(tts_result.audio_bytes),
+                            filename=out_filename,
+                            content_type=tts_result.content_type or "audio/mpeg",
+                        )
+                        out_path = audio_pipeline.resolve_audio_asset_path(
+                            asset_ref=out_asset.asset_ref
+                        )
+                        tts_norm = AudioSynthesisResult(
+                            ok=True,
+                            provider=tts_result.provider,
+                            model=tts_result.model,
+                            generated_text=formatted_result,
+                            audio_bytes=tts_result.audio_bytes,
+                            content_type=tts_result.content_type,
+                            latency_ms=tts_result.latency_ms,
+                        )
+                        tts_details = audio_pipeline.build_audio_event_details(
+                            input_asset=input_asset,
+                            output_asset=out_asset,
+                            synthesis=tts_norm,
+                            metadata={
+                                **voice_base_details,
+                                "output_type": "voice",
+                                "voice": config.tts_voice,
+                                "format": config.tts_output_format,
+                                "generated_text": _safe_answer_text_for_log(
+                                    formatted_result, max_len=3000
+                                ),
+                                "mime_type": out_asset.content_type,
+                                "filename": out_asset.filename,
+                                "size_bytes": out_asset.size_bytes,
+                                "provider": tts_result.provider,
+                                "model": tts_result.model,
+                            },
+                        )
+                        tts_details["output_asset_ref"] = out_asset.asset_ref
+                        tts_details["output_audio_path"] = (
+                            str(out_path) if out_path else None
+                        )
+                        tts_details["latency_ms"] = tts_result.latency_ms
+                        try:
+                            if out_path is None:
+                                raise FileNotFoundError("tts output asset path missing")
+                            with out_path.open("rb") as vf:
+                                bot.send_voice(message.chat.id, vf)
+                            lifecycle.log_processing_event(
+                                execution_id=execution_id,
+                                intake_event_id=intake_id,
+                                stage="tts_completed",
+                                status="success",
+                                details=tts_details,
+                            )
+                        except Exception as send_exc:
+                            lifecycle.log_processing_event(
+                                execution_id=execution_id,
+                                intake_event_id=intake_id,
+                                stage="tts_error",
+                                status="error",
+                                details=tts_details,
+                                error_text=str(send_exc),
+                            )
+                    else:
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="tts_error",
+                            status="error",
+                            details={
+                                **tts_stage_base,
+                                "provider": tts_result.provider,
+                                "model": tts_result.model,
+                                "latency_ms": tts_result.latency_ms,
+                                "error": tts_result.error,
+                            },
+                            error_text=tts_result.error,
+                        )
 
             lifecycle.log_processing_event(
                 execution_id=execution_id,
