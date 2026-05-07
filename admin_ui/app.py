@@ -136,6 +136,140 @@ def _admin_service() -> AdminService:
     return AdminService()
 
 
+# =============================================================================
+# Operational UI primitives (HTML helpers + Streamlit; single-file layer)
+# =============================================================================
+
+OPS_SPLIT_COLUMNS_RATIO = (0.35, 0.65)
+
+
+def split_list_detail_columns() -> Any:
+    """Единая сетка список / детали для операторских вкладок."""
+    return st.columns(OPS_SPLIT_COLUMNS_RATIO)
+
+
+def ops_dashboard_card_html(
+    title: str,
+    inner_html: str,
+    *,
+    footnote_html: str | None = None,
+    extra_classes: str = "",
+) -> str:
+    """Компактная карточка обзора/сводки: заголовок + тело + опциональный footnote."""
+    base = "ops-dashboard-card"
+    if extra_classes.strip():
+        cls = f"{base} {extra_classes.strip()}"
+    else:
+        cls = base
+    parts = [
+        f'<div class="{cls}">',
+        f'<div class="ops-dashboard-card-title">{html.escape(title)}</div>',
+        inner_html,
+    ]
+    if footnote_html:
+        parts.append(footnote_html)
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def ops_trace_header_html(
+    *,
+    title: str,
+    execution_id: str,
+    badges_inner_html: str,
+    kv_pairs: list[tuple[str, str]],
+) -> str:
+    """
+    Заголовок трассы (logs-trace-header). kv_pairs: (label, value_html);
+    label экранируется, value_html — доверенная разметка (уже с escape).
+    """
+    kv_body = "".join(
+        f"<span>{html.escape(lab)}</span><span>{val}</span>" for lab, val in kv_pairs
+    )
+    return (
+        '<div class="logs-trace-header">'
+        f'<div class="logs-trace-header-title">{html.escape(title)}</div>'
+        '<div class="logs-trace-header-row logs-trace-header-eid">'
+        "<span>execution_id</span>"
+        f'<code>{html.escape(execution_id)}</code>'
+        "</div>"
+        '<div class="logs-trace-header-badges">'
+        f"{badges_inner_html}"
+        "</div>"
+        f'<div class="logs-trace-header-kv">{kv_body}</div>'
+        "</div>"
+    )
+
+
+def ops_timeline_section_title_html(section_title: str) -> str:
+    return (
+        f'<div class="logs-trace-timeline-title">{html.escape(section_title)}</div>'
+    )
+
+
+def panel_section_title_html(title: str) -> str:
+    """Секционный заголовок (тот же визуал, что image-section-title)."""
+    return f'<div class="panel-section-title">{html.escape(title)}</div>'
+
+
+def render_empty_state(message: str) -> None:
+    """Единый компактный пустой / недоступный state (операторский, без st.info)."""
+    st.markdown(
+        f'<div class="panel-empty"><p>{html.escape(message)}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_json_preview(
+    data: Any,
+    *,
+    max_chars: int = _RAW_METADATA_JSON_MAX,
+    language: str = "json",
+) -> None:
+    """Технический JSON в едином json-dark + code."""
+    try:
+        dump = json.dumps(data, ensure_ascii=False, default=str, indent=2)
+    except TypeError:
+        dump = str(data)
+    if len(dump) > max_chars:
+        dump = dump[: max_chars - 1] + "…"
+    st.markdown('<div class="json-dark">', unsafe_allow_html=True)
+    st.code(dump, language=language)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_metadata_expander(
+    title: str,
+    data: Any,
+    *,
+    expanded: bool = False,
+) -> None:
+    """Сырой metadata / details в стандартном expander."""
+    with st.expander(title, expanded=expanded):
+        render_json_preview(data)
+
+
+def render_compact_meta_row(
+    label: str,
+    value: str,
+    *,
+    value_is_html: bool = False,
+) -> None:
+    """Одна строка метаданных (markdown; value по умолчанию экранируется)."""
+    safe_label = html.escape(label)
+    if value_is_html:
+        inner = value
+    else:
+        inner = html.escape(value)
+    st.markdown(
+        f'<div class="panel-meta-row">'
+        f'<span class="panel-meta-k">{safe_label}</span> '
+        f'<span class="panel-meta-v">{inner}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 # Человекочитаемые названия этапов/типов событий (processing_logs.stage/event_type)
 _EVENT_TYPE_ALIASES: dict[str, str] = {
     "text_answer_done": "processing_done",
@@ -1455,31 +1589,28 @@ def _render_image_generation_summary_html(
         html.escape(" · ".join(total_usage_parts)) if total_usage_parts else "—"
     )
     st.markdown(
-        '<div class="logs-trace-header">'
-        '<div class="logs-trace-header-title">Сводка генерации</div>'
-        '<div class="logs-trace-header-row logs-trace-header-eid">'
-        "<span>execution_id</span>"
-        f'<code>{html.escape(execution_id)}</code>'
-        "</div>"
-        '<div class="logs-trace-header-badges">'
-        f'{get_route_badge("image_generation")} {get_log_status_badge(status_s)}'
-        "</div>"
-        '<div class="logs-trace-header-kv">'
-        f"<span>Событий</span><span>{n_ev}</span>"
-        f"<span>Файлов (обнаружено)</span><span>{n_files}</span>"
-        f"<span>Оценка генераций</span><span>{n_hint}</span>"
-        f"<span>Provider / model (последн.)</span><span>{pm_line}</span>"
-        f"<span>Этап текста (latency)</span><span>{text_lat_s}</span>"
-        f"<span>Этап изображения (latency)</span><span>{img_lat_s}</span>"
-        f"<span>Latency (шаг, max)</span><span>{html.escape(lat_s)}</span>"
-        f"<span>Длительность (стена)</span>"
-        f"<span>{html.escape(_logs_format_duration_ms(wall))}</span>"
-        f"<span>Токены текста (GigaChat)</span><span>{text_tok_s}</span>"
-        f"<span>Токены / usage (image API)</span><span>{img_tok_s}</span>"
-        f"<span>Провайдер изображения</span><span>{img_usage_s}</span>"
-        f"<span>Сводно usage</span><span>{total_usage_s}</span>"
-        "</div>"
-        "</div>",
+        ops_trace_header_html(
+            title="Сводка генерации",
+            execution_id=execution_id,
+            badges_inner_html=f'{get_route_badge("image_generation")} {get_log_status_badge(status_s)}',
+            kv_pairs=[
+                ("Событий", html.escape(str(n_ev))),
+                ("Файлов (обнаружено)", html.escape(str(n_files))),
+                ("Оценка генераций", html.escape(str(n_hint))),
+                ("Provider / model (последн.)", pm_line),
+                ("Этап текста (latency)", text_lat_s),
+                ("Этап изображения (latency)", img_lat_s),
+                ("Latency (шаг, max)", html.escape(lat_s)),
+                (
+                    "Длительность (стена)",
+                    html.escape(_logs_format_duration_ms(wall)),
+                ),
+                ("Токены текста (GigaChat)", text_tok_s),
+                ("Токены / usage (image API)", img_tok_s),
+                ("Провайдер изображения", img_usage_s),
+                ("Сводно usage", total_usage_s),
+            ],
+        ),
         unsafe_allow_html=True,
     )
 
@@ -1520,10 +1651,7 @@ def _render_trace_flow_timeline(
     section_title: str = "События (trace flow)",
 ) -> None:
     """Компактный вертикальный trace (тот же стиль, что вкладка «Логи»)."""
-    st.markdown(
-        f'<div class="logs-trace-timeline-title">{html.escape(section_title)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ops_timeline_section_title_html(section_title), unsafe_allow_html=True)
     for idx, ev in enumerate(events, 1):
         details = ev.get("details")
         details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
@@ -1548,11 +1676,7 @@ def _render_trace_flow_timeline(
             "</div>",
             unsafe_allow_html=True,
         )
-        with st.expander("Показать raw details", expanded=False):
-            st.markdown('<div class="json-dark">', unsafe_allow_html=True)
-            dump = json.dumps(details_dict, ensure_ascii=False, default=str, indent=2)
-            st.code(dump, language="json")
-            st.markdown("</div>", unsafe_allow_html=True)
+        render_metadata_expander("Показать raw details", details_dict, expanded=False)
 
 
 def get_log_status_badge(status: str | None) -> str:
@@ -1602,22 +1726,23 @@ def _render_logs_trace_header(session: dict[str, Any]) -> None:
     flow_ru = _logs_timeline_flow_ru(events)
     pm_line = html.escape(pm) if pm else "—"
     st.markdown(
-        '<div class="logs-trace-header">'
-        '<div class="logs-trace-header-title">Трасса execution-сессии</div>'
-        '<div class="logs-trace-header-row logs-trace-header-eid">'
-        "<span>execution_id</span>"
-        f'<code>{html.escape(eid)}</code>'
-        "</div>"
-        '<div class="logs-trace-header-badges">'
-        f"{get_route_badge(route_raw)} {get_log_status_badge(status_s)}"
-        "</div>"
-        '<div class="logs-trace-header-kv">'
-        f"<span>Последняя активность (MSK)</span><span>{html.escape(_format_dt_moscow_logs(last_at))}</span>"
-        f"<span>Событий в трассе</span><span>{n_ev}</span>"
-        f"<span>Длительность (стена)</span><span>{html.escape(_logs_format_duration_ms(dur_ms))}</span>"
-        f"<span>Provider / model</span><span>{pm_line}</span>"
-        "</div>"
-        "</div>",
+        ops_trace_header_html(
+            title="Трасса execution-сессии",
+            execution_id=eid,
+            badges_inner_html=f"{get_route_badge(route_raw)} {get_log_status_badge(status_s)}",
+            kv_pairs=[
+                (
+                    "Последняя активность (MSK)",
+                    html.escape(_format_dt_moscow_logs(last_at)),
+                ),
+                ("Событий в трассе", html.escape(str(n_ev))),
+                (
+                    "Длительность (стена)",
+                    html.escape(_logs_format_duration_ms(dur_ms)),
+                ),
+                ("Provider / model", pm_line),
+            ],
+        ),
         unsafe_allow_html=True,
     )
     if flow_ru and flow_ru.replace(" → ", "").strip():
@@ -1877,7 +2002,7 @@ def flag_split_selection_toast(tab_key: str) -> None:
 
 def render_split_pane_titles(*, list_title: str, detail_title: str) -> None:
     """Заголовки над колонками списка и деталей (35/65)."""
-    t1, t2 = st.columns((0.35, 0.65))
+    t1, t2 = st.columns(OPS_SPLIT_COLUMNS_RATIO)
     with t1:
         st.markdown(f"**{list_title}**")
     with t2:
@@ -2211,18 +2336,7 @@ def _render_rag_event_detail(ev: dict[str, Any]) -> None:
         '<p class="rag-section-title">Технические детали</p>',
         unsafe_allow_html=True,
     )
-    with st.expander("Показать JSON", expanded=False):
-        details_dump = json.dumps(
-            details_dict,
-            ensure_ascii=False,
-            indent=2,
-        )
-        st.markdown(
-            '<div class="json-dark">',
-            unsafe_allow_html=True,
-        )
-        st.code(details_dump, language="json")
-        st.markdown("</div>", unsafe_allow_html=True)
+    render_metadata_expander("Показать JSON", details_dict, expanded=False)
 
     eid_footer = html.escape(str(ev.get("execution_id") or "—"))
     st.markdown(
@@ -2278,11 +2392,7 @@ def _render_text_event_detail(ev: dict[str, Any]) -> None:
     st.markdown(_text_inline_metrics_html(details_dict), unsafe_allow_html=True)
 
     st.markdown('<p class="rag-section-title">Технические детали</p>', unsafe_allow_html=True)
-    with st.expander("Показать JSON", expanded=False):
-        details_dump = json.dumps(details_dict, ensure_ascii=False, indent=2)
-        st.markdown('<div class="json-dark">', unsafe_allow_html=True)
-        st.code(details_dump, language="json")
-        st.markdown("</div>", unsafe_allow_html=True)
+    render_metadata_expander("Показать JSON", details_dict, expanded=False)
 
     eid_footer = html.escape(str(ev.get("execution_id") or "—"))
     st.markdown(
@@ -2980,6 +3090,7 @@ def _inject_theme_css() -> None:
           display: block;
         }
 
+        /* --- ops: dashboard cards, KV, metrics (operational summary) --- */
         .ops-dashboard-wrap {
           margin: 0 0 10px 0;
         }
@@ -3314,6 +3425,7 @@ def _inject_theme_css() -> None:
           overflow: hidden;
         }
 
+        /* --- timeline: trace header + vertical steps --- */
         .logs-trace-header {
           background: var(--bg-elevated);
           border: 1px solid var(--border);
@@ -3487,6 +3599,8 @@ def _inject_theme_css() -> None:
           color: var(--text-muted) !important;
           font-size: 0.64rem;
         }
+        /* panel-*: общие секции / пустые состояния (операторский стиль) */
+        .panel-section-title,
         .image-section-title {
           font-size: 0.68rem;
           font-weight: 700;
@@ -3494,6 +3608,33 @@ def _inject_theme_css() -> None:
           text-transform: uppercase;
           color: var(--accent) !important;
           margin: 10px 0 4px 0;
+        }
+        .panel-empty {
+          font-size: 0.8rem;
+          line-height: 1.35;
+          color: var(--text-muted) !important;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 9px;
+          padding: 8px 11px;
+          margin: 4px 0 8px 0;
+        }
+        .panel-empty p {
+          margin: 0;
+        }
+        .panel-meta-row {
+          font-size: 0.78rem;
+          line-height: 1.35;
+          margin: 2px 0 4px 0;
+          color: var(--text-primary) !important;
+        }
+        .panel-meta-k {
+          color: var(--text-secondary) !important;
+          font-weight: 600;
+          margin-right: 6px;
+        }
+        .panel-meta-v {
+          word-break: break-word;
         }
 
         .logs-session-card .rag-list-item-head .rag-list-time {
@@ -3620,6 +3761,373 @@ def _inject_theme_css() -> None:
     )
 
 
+def _render_summary_technical_tables_expander(
+    *,
+    by_status: dict[str, Any],
+    by_stage: dict[str, Any],
+    by_route: dict[str, Any],
+) -> None:
+    """Секция Summary: сырые таблицы агрегатов в едином expander."""
+    with st.expander("Показать технические таблицы", expanded=False):
+        st.caption(
+            "Сырые агрегаты из `processing_logs` (как в прежней сводке)."
+        )
+        st.markdown("**События по статусам**")
+        if by_status:
+            rows_s = [
+                {"статус": _status_label(k), "количество": v}
+                for k, v in sorted(
+                    by_status.items(), key=lambda x: (-x[1], str(x[0]))
+                )
+            ]
+            st.dataframe(
+                pd.DataFrame(rows_s), use_container_width=True, hide_index=True
+            )
+        else:
+            st.caption("Нет данных по статусам.")
+
+        st.markdown("**События по этапам (все stage)**")
+        if by_stage:
+            rows_st_raw = [
+                {
+                    "этап (raw)": str(k),
+                    "подпись": _stage_to_action(str(k)),
+                    "количество": int(v or 0),
+                }
+                for k, v in sorted(
+                    by_stage.items(), key=lambda x: (-int(x[1] or 0), str(x[0]))
+                )
+            ]
+            st.dataframe(
+                pd.DataFrame(rows_st_raw),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("Нет данных по этапам.")
+
+        st.markdown("**Маршруты (raw, dashboard)**")
+        normalized_route_counts: dict[str, int] = {}
+        for raw_route, count in by_route.items():
+            norm_route = normalize_route(str(raw_route))
+            normalized_route_counts[norm_route] = normalized_route_counts.get(
+                norm_route, 0
+            ) + int(count or 0)
+        route_total = sum(
+            int(normalized_route_counts.get(k, 0))
+            for k in ("rag", "text", "image_generation")
+        )
+        if route_total > 0:
+            rows_r = [
+                {
+                    "маршрут": _route_label(k),
+                    "уникальных execution_id (24 ч)": int(
+                        normalized_route_counts.get(k, 0)
+                    ),
+                }
+                for k in ("text", "rag", "image_generation")
+            ]
+            st.dataframe(
+                pd.DataFrame(rows_r), use_container_width=True, hide_index=True
+            )
+        else:
+            render_empty_state("Нет данных по маршрутам за выбранный период.")
+
+
+def _render_tab_overview(
+    svc: AdminService,
+    dashboard_stats: dict[str, Any],
+) -> None:
+    status = svc.get_knowledge_base_status()
+    fs_txt_count = svc.get_documents_filesystem_count()
+    overview_recent = svc.get_recent_logs(OVERVIEW_TELEMETRY_LOG_CAP)
+    overview_docs = svc.get_documents_with_versions()
+    telemetry = _overview_telemetry_from_rows(overview_recent)
+    by_route = dashboard_stats.get("by_route") or {}
+    text_n = int(by_route.get("text", 0))
+    rag_n = int(by_route.get("rag", 0))
+    img_n = int(by_route.get("image_generation", 0))
+    total_req_24h = text_n + rag_n + img_n
+
+    db_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
+    err_24h = (
+        int(dashboard_stats.get("error_events", 0)) if db_url_set else None
+    )
+    if err_24h is None:
+        err_line = "нет данных"
+    else:
+        err_line = str(err_24h)
+
+    last_succ = _overview_find_last_success_row(overview_recent)
+    if last_succ:
+        ls_time = _format_dt_moscow_overview(last_succ.get("created_at"))
+        ls_action = _stage_to_action(
+            last_succ.get("stage"), last_succ.get("details")
+        )
+        last_success_inner = (
+            f"{html.escape(ls_time)} — {html.escape(ls_action)} "
+            f'{_overview_log_status_badge_html("success")}'
+        )
+    elif overview_recent:
+        last_success_inner = html.escape(
+            f"нет успешных среди последних {len(overview_recent)} записей"
+        )
+    elif db_url_set:
+        last_success_inner = html.escape("журнал пуст или недоступен")
+    else:
+        last_success_inner = html.escape("нет данных")
+
+    lat_ms = telemetry.get("avg_latency_ms")
+    if lat_ms is not None:
+        lat_line = html.escape(
+            f"{lat_ms} мс (среднее по latency/duration в выборке журнала)"
+        )
+    else:
+        lat_line = html.escape("нет данных")
+
+    tok = telemetry.get("tokens_total")
+    tok_line = html.escape(str(tok)) if tok is not None else html.escape("нет данных")
+
+    tpm = telemetry.get("top_provider_model")
+    tpm_line = html.escape(tpm) if tpm else html.escape("нет данных")
+
+    if status.postgres_available:
+        pg_val = (
+            f'{html.escape("подключение доступно")} '
+            '<span class="route-badge route-badge--success">OK</span>'
+        )
+    else:
+        pg_val = (
+            f'{html.escape("нет данных / недоступен")} '
+            '<span class="route-badge route-badge--muted">—</span>'
+        )
+
+    chroma_count = str(int(status.collection_count))
+    chroma_val = (
+        f"{html.escape(chroma_count + ' чанков в коллекции')} "
+        '<span class="route-badge route-badge--muted">НЕТ HEALTH</span>'
+    )
+
+    doc_mismatch = (
+        status.postgres_available
+        and status.postgres_documents is not None
+        and status.postgres_documents != fs_txt_count
+    )
+    chunk_mismatch = (
+        status.postgres_available
+        and status.postgres_chunks_sum is not None
+        and status.postgres_chunks_sum != status.collection_count
+    )
+    if not status.postgres_available:
+        sync_label = "не сравнивается"
+        sync_badge = '<span class="route-badge route-badge--muted">—</span>'
+    elif doc_mismatch or chunk_mismatch:
+        sync_label = "расхождение"
+        sync_badge = '<span class="route-badge route-badge--warning">WARN</span>'
+    else:
+        sync_label = "OK"
+        sync_badge = '<span class="route-badge route-badge--success">OK</span>'
+
+    last_idx_dt: datetime | None = None
+    for r in overview_docs:
+        t = r.get("last_indexed_at")
+        if isinstance(t, datetime):
+            if last_idx_dt is None or t > last_idx_dt:
+                last_idx_dt = t
+    last_idx_str = (
+        _format_dt_moscow_overview(last_idx_dt) if last_idx_dt else "—"
+    )
+
+    if overview_docs:
+        largest = max(
+            overview_docs,
+            key=lambda r: int(r.get("active_chunk_count") or 0),
+        )
+        max_ch = int(largest.get("active_chunk_count") or 0)
+        max_name = str(largest.get("filename") or "—")
+        largest_str = f"{max_name} · {max_ch} чанков"
+    else:
+        largest_str = "—"
+
+    last_adm = _overview_find_last_admin_row(overview_recent)
+    if last_adm:
+        adm_disp = (
+            f"{_format_dt_moscow_overview(last_adm.get('created_at'))} — "
+            f"{_stage_to_action(last_adm.get('stage'))}"
+        )
+    elif overview_recent:
+        adm_disp = "нет admin_* в выборке журнала"
+    else:
+        adm_disp = "нет данных"
+
+    card_a = ops_dashboard_card_html(
+        "A. Состояние системы",
+        _overview_ops_kv_mixed(
+            [
+                _overview_ops_kv_item(
+                    "Telegram / бот",
+                    html.escape("не проверяется")
+                    + ' <span class="route-badge route-badge--muted">N/A</span>',
+                ),
+                _overview_ops_kv_item(
+                    "Assistant Flow / админ UI",
+                    html.escape("сессия Streamlit активна")
+                    + ' <span class="route-badge route-badge--info">UI</span>',
+                ),
+                _overview_ops_kv_item("PostgreSQL", pg_val),
+                _overview_ops_kv_item("Chroma", chroma_val),
+                _overview_ops_kv_item(
+                    "Последнее успешное событие (журнал)", last_success_inner
+                ),
+                _overview_ops_kv_item(
+                    "Ошибки за 24 ч (статус error)",
+                    html.escape(err_line),
+                ),
+                _overview_ops_kv_item("Средняя latency (выборка)", lat_line),
+            ]
+        ),
+        footnote_html=_render_panel_footnote_html(
+            "Chroma: только число записей в коллекции; сбои клиента могут дать 0 без "
+            "отдельного статуса. Telegram из UI не проверяется."
+        ),
+    )
+
+    activity_inner = _overview_metric_chips_html(
+        [
+            ("Text (норм.)", str(text_n)),
+            ("RAG (норм.)", str(rag_n)),
+            ("Image / gen", str(img_n)),
+            ("Всего запросов", str(total_req_24h)),
+        ]
+    ) + _overview_ops_kv_mixed(
+        [
+            _overview_ops_kv_item("Токены (из details)", tok_line),
+            _overview_ops_kv_item("Топ provider / model", tpm_line),
+        ]
+    )
+
+    card_b = ops_dashboard_card_html(
+        "B. AI-активность",
+        activity_inner,
+        footnote_html=_render_panel_footnote_html(
+            "Text/RAG/Image — уникальные <code>execution_id</code> за 24 ч с нормализацией "
+            "<code>route</code>/<code>mode</code>/<code>stage</code> (как в SQL "
+            "<code>count_routes_since</code>)."
+        ),
+    )
+
+    kb_rows_plain: list[tuple[str, str]] = [
+        (
+            "Документов в БД",
+            str(status.postgres_documents)
+            if status.postgres_available and status.postgres_documents is not None
+            else "—",
+        ),
+        ("Файлов в каталоге", str(fs_txt_count)),
+        (
+            "Активных чанков PostgreSQL",
+            str(status.postgres_chunks_sum)
+            if status.postgres_available and status.postgres_chunks_sum is not None
+            else "—",
+        ),
+        ("Чанков Chroma", chroma_count),
+        ("Синхронизация (БД / FS / Chroma)", sync_label),
+        ("Последняя индексация (метаданные)", last_idx_str),
+        ("Крупнейший документ", largest_str),
+    ]
+    card_c = ops_dashboard_card_html(
+        "C. База знаний",
+        _overview_ops_kv_html(kb_rows_plain)
+        + '<div class="ops-inline-badge-row">'
+        + sync_badge
+        + "</div>",
+        footnote_html=_render_panel_footnote_html(
+            "Метрики из <code>get_knowledge_base_status</code> и сводки документов; "
+            "при расхождении чанков PostgreSQL и Chroma нужна переиндексация."
+        ),
+    )
+
+    card_d = ops_dashboard_card_html(
+        "D. Администрирование / безопасность",
+        _overview_ops_kv_mixed(
+            [
+                _overview_ops_kv_item(
+                    "Admin auth",
+                    html.escape("не подключена")
+                    + ' <span class="route-badge route-badge--muted">OFF</span>',
+                ),
+                _overview_ops_kv_item(
+                    "Кнопка «Выход»",
+                    html.escape("зарезервирована")
+                    + ' <span class="route-badge route-badge--warning">RES</span>',
+                ),
+                _overview_ops_kv_item(
+                    "Последнее admin-действие",
+                    html.escape(adm_disp),
+                ),
+                _overview_ops_kv_item(
+                    "Публичная экспозиция",
+                    html.escape("Streamlit UI по умолчанию :8501"),
+                ),
+                _overview_ops_kv_item(
+                    "Security status",
+                    html.escape("требуется усиление (MVP)")
+                    + ' <span class="route-badge route-badge--warning">HARDEN</span>',
+                ),
+            ]
+        ),
+        footnote_html=_render_panel_footnote_html(
+            "Без реальной авторизации панель не считается защищённой."
+        ),
+    )
+
+    warn_blocks: list[str] = []
+    if doc_mismatch:
+        warn_blocks.append(
+            "<strong>Документы</strong>: число записей в PostgreSQL и .txt на диске "
+            "не совпадает."
+        )
+    if chunk_mismatch:
+        warn_blocks.append(
+            "<strong>Индекс</strong>: сумма чанков в PostgreSQL и Chroma различается — "
+            "нужна переиндексация."
+        )
+    warn_html = ""
+    if warn_blocks:
+        warn_html = (
+            '<div style="margin-top:10px;">'
+            + ops_dashboard_card_html(
+                "Предупреждение синхронизации",
+                "<ul style=\"margin:0;padding-left:1.1rem;\">"
+                + "".join(f"<li>{w}</li>" for w in warn_blocks)
+                + "</ul>",
+                extra_classes="ops-dashboard-card--warn",
+            )
+            + "</div>"
+        )
+
+    overview_html = (
+        '<div class="ops-dashboard-wrap">'
+        '<p class="ops-dashboard-intro">'
+        "Компактный операционный дашборд: здоровье сервисов (честные статусы), "
+        "активность AI, база знаний и ограничения безопасности админки."
+        "</p>"
+        '<div class="ops-dashboard-grid">'
+        f"{card_a}{card_b}{card_c}{card_d}"
+        "</div>"
+        f"{warn_html}"
+        "</div>"
+    )
+    st.markdown(overview_html, unsafe_allow_html=True)
+
+    if not status.postgres_available:
+        st.caption(
+            "PostgreSQL: задайте `DATABASE_URL` и схему из каталога `database/`, "
+            "чтобы видеть документы и чанки."
+        )
+
+
+
 def main() -> None:
     st.set_page_config(page_title="Assistant Flow — Админ-панель", layout="wide")
     _inject_theme_css()
@@ -3672,302 +4180,10 @@ def main() -> None:
         )
     )
 
-    status = svc.get_knowledge_base_status()
-    insights = svc.get_overview_insights()
-    fs_txt_count = svc.get_documents_filesystem_count()
     dashboard_stats = svc.get_dashboard_stats(hours=24)
 
     with tab_overview:
-        overview_recent = svc.get_recent_logs(OVERVIEW_TELEMETRY_LOG_CAP)
-        overview_docs = svc.get_documents_with_versions()
-        telemetry = _overview_telemetry_from_rows(overview_recent)
-        by_route = dashboard_stats.get("by_route") or {}
-        text_n = int(by_route.get("text", 0))
-        rag_n = int(by_route.get("rag", 0))
-        img_n = int(by_route.get("image_generation", 0))
-        total_req_24h = text_n + rag_n + img_n
-
-        db_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
-        err_24h = (
-            int(dashboard_stats.get("error_events", 0)) if db_url_set else None
-        )
-        if err_24h is None:
-            err_line = "нет данных"
-        else:
-            err_line = str(err_24h)
-
-        last_succ = _overview_find_last_success_row(overview_recent)
-        if last_succ:
-            ls_time = _format_dt_moscow_overview(last_succ.get("created_at"))
-            ls_action = _stage_to_action(
-                last_succ.get("stage"), last_succ.get("details")
-            )
-            last_success_inner = (
-                f"{html.escape(ls_time)} — {html.escape(ls_action)} "
-                f'{_overview_log_status_badge_html("success")}'
-            )
-        elif overview_recent:
-            last_success_inner = html.escape(
-                f"нет успешных среди последних {len(overview_recent)} записей"
-            )
-        elif db_url_set:
-            last_success_inner = html.escape("журнал пуст или недоступен")
-        else:
-            last_success_inner = html.escape("нет данных")
-
-        lat_ms = telemetry.get("avg_latency_ms")
-        if lat_ms is not None:
-            lat_line = html.escape(
-                f"{lat_ms} мс (среднее по latency/duration в выборке журнала)"
-            )
-        else:
-            lat_line = html.escape("нет данных")
-
-        tok = telemetry.get("tokens_total")
-        tok_line = html.escape(str(tok)) if tok is not None else html.escape("нет данных")
-
-        tpm = telemetry.get("top_provider_model")
-        tpm_line = html.escape(tpm) if tpm else html.escape("нет данных")
-
-        if status.postgres_available:
-            pg_val = (
-                f'{html.escape("подключение доступно")} '
-                '<span class="route-badge route-badge--success">OK</span>'
-            )
-        else:
-            pg_val = (
-                f'{html.escape("нет данных / недоступен")} '
-                '<span class="route-badge route-badge--muted">—</span>'
-            )
-
-        chroma_count = str(int(status.collection_count))
-        chroma_val = (
-            f"{html.escape(chroma_count + ' чанков в коллекции')} "
-            '<span class="route-badge route-badge--muted">НЕТ HEALTH</span>'
-        )
-
-        doc_mismatch = (
-            status.postgres_available
-            and status.postgres_documents is not None
-            and status.postgres_documents != fs_txt_count
-        )
-        chunk_mismatch = (
-            status.postgres_available
-            and status.postgres_chunks_sum is not None
-            and status.postgres_chunks_sum != status.collection_count
-        )
-        if not status.postgres_available:
-            sync_label = "не сравнивается"
-            sync_badge = '<span class="route-badge route-badge--muted">—</span>'
-        elif doc_mismatch or chunk_mismatch:
-            sync_label = "расхождение"
-            sync_badge = '<span class="route-badge route-badge--warning">WARN</span>'
-        else:
-            sync_label = "OK"
-            sync_badge = '<span class="route-badge route-badge--success">OK</span>'
-
-        last_idx_dt: datetime | None = None
-        for r in overview_docs:
-            t = r.get("last_indexed_at")
-            if isinstance(t, datetime):
-                if last_idx_dt is None or t > last_idx_dt:
-                    last_idx_dt = t
-        last_idx_str = (
-            _format_dt_moscow_overview(last_idx_dt) if last_idx_dt else "—"
-        )
-
-        if overview_docs:
-            largest = max(
-                overview_docs,
-                key=lambda r: int(r.get("active_chunk_count") or 0),
-            )
-            max_ch = int(largest.get("active_chunk_count") or 0)
-            max_name = str(largest.get("filename") or "—")
-            largest_str = f"{max_name} · {max_ch} чанков"
-        else:
-            largest_str = "—"
-
-        last_adm = _overview_find_last_admin_row(overview_recent)
-        if last_adm:
-            adm_disp = (
-                f"{_format_dt_moscow_overview(last_adm.get('created_at'))} — "
-                f"{_stage_to_action(last_adm.get('stage'))}"
-            )
-        elif overview_recent:
-            adm_disp = "нет admin_* в выборке журнала"
-        else:
-            adm_disp = "нет данных"
-
-        card_a = (
-            '<div class="ops-dashboard-card">'
-            '<div class="ops-dashboard-card-title">A. Состояние системы</div>'
-            + _overview_ops_kv_mixed(
-                [
-                    _overview_ops_kv_item(
-                        "Telegram / бот",
-                        html.escape("не проверяется")
-                        + ' <span class="route-badge route-badge--muted">N/A</span>',
-                    ),
-                    _overview_ops_kv_item(
-                        "Assistant Flow / админ UI",
-                        html.escape("сессия Streamlit активна")
-                        + ' <span class="route-badge route-badge--info">UI</span>',
-                    ),
-                    _overview_ops_kv_item("PostgreSQL", pg_val),
-                    _overview_ops_kv_item("Chroma", chroma_val),
-                    _overview_ops_kv_item(
-                        "Последнее успешное событие (журнал)", last_success_inner
-                    ),
-                    _overview_ops_kv_item(
-                        "Ошибки за 24 ч (статус error)",
-                        html.escape(err_line),
-                    ),
-                    _overview_ops_kv_item("Средняя latency (выборка)", lat_line),
-                ]
-            )
-            + _render_panel_footnote_html(
-                "Chroma: только число записей в коллекции; сбои клиента могут дать 0 без "
-                "отдельного статуса. Telegram из UI не проверяется."
-            )
-            + "</div>"
-        )
-
-        activity_inner = _overview_metric_chips_html(
-            [
-                ("Text (норм.)", str(text_n)),
-                ("RAG (норм.)", str(rag_n)),
-                ("Image / gen", str(img_n)),
-                ("Всего запросов", str(total_req_24h)),
-            ]
-        ) + _overview_ops_kv_mixed(
-            [
-                _overview_ops_kv_item("Токены (из details)", tok_line),
-                _overview_ops_kv_item("Топ provider / model", tpm_line),
-            ]
-        )
-
-        card_b = (
-            '<div class="ops-dashboard-card">'
-            '<div class="ops-dashboard-card-title">B. AI-активность</div>'
-            + activity_inner
-            + _render_panel_footnote_html(
-                "Text/RAG/Image — уникальные <code>execution_id</code> за 24 ч с нормализацией "
-                "<code>route</code>/<code>mode</code>/<code>stage</code> (как в SQL "
-                "<code>count_routes_since</code>)."
-            )
-            + "</div>"
-        )
-
-        kb_rows_plain: list[tuple[str, str]] = [
-            (
-                "Документов в БД",
-                str(status.postgres_documents)
-                if status.postgres_available and status.postgres_documents is not None
-                else "—",
-            ),
-            ("Файлов в каталоге", str(fs_txt_count)),
-            (
-                "Активных чанков PostgreSQL",
-                str(status.postgres_chunks_sum)
-                if status.postgres_available and status.postgres_chunks_sum is not None
-                else "—",
-            ),
-            ("Чанков Chroma", chroma_count),
-            ("Синхронизация (БД / FS / Chroma)", sync_label),
-            ("Последняя индексация (метаданные)", last_idx_str),
-            ("Крупнейший документ", largest_str),
-        ]
-        card_c = (
-            '<div class="ops-dashboard-card">'
-            '<div class="ops-dashboard-card-title">C. База знаний</div>'
-            + _overview_ops_kv_html(kb_rows_plain)
-            + '<div class="ops-inline-badge-row">'
-            + sync_badge
-            + "</div>"
-            + _render_panel_footnote_html(
-                "Метрики из <code>get_knowledge_base_status</code> и сводки документов; "
-                "при расхождении чанков PostgreSQL и Chroma нужна переиндексация."
-            )
-            + "</div>"
-        )
-
-        card_d = (
-            '<div class="ops-dashboard-card">'
-            '<div class="ops-dashboard-card-title">D. Администрирование / безопасность</div>'
-            + _overview_ops_kv_mixed(
-                [
-                    _overview_ops_kv_item(
-                        "Admin auth",
-                        html.escape("не подключена")
-                        + ' <span class="route-badge route-badge--muted">OFF</span>',
-                    ),
-                    _overview_ops_kv_item(
-                        "Кнопка «Выход»",
-                        html.escape("зарезервирована")
-                        + ' <span class="route-badge route-badge--warning">RES</span>',
-                    ),
-                    _overview_ops_kv_item(
-                        "Последнее admin-действие",
-                        html.escape(adm_disp),
-                    ),
-                    _overview_ops_kv_item(
-                        "Публичная экспозиция",
-                        html.escape("Streamlit UI по умолчанию :8501"),
-                    ),
-                    _overview_ops_kv_item(
-                        "Security status",
-                        html.escape("требуется усиление (MVP)")
-                        + ' <span class="route-badge route-badge--warning">HARDEN</span>',
-                    ),
-                ]
-            )
-            + _render_panel_footnote_html(
-                "Без реальной авторизации панель не считается защищённой."
-            )
-            + "</div>"
-        )
-
-        warn_blocks: list[str] = []
-        if doc_mismatch:
-            warn_blocks.append(
-                "<strong>Документы</strong>: число записей в PostgreSQL и .txt на диске "
-                "не совпадает."
-            )
-        if chunk_mismatch:
-            warn_blocks.append(
-                "<strong>Индекс</strong>: сумма чанков в PostgreSQL и Chroma различается — "
-                "нужна переиндексация."
-            )
-        warn_html = ""
-        if warn_blocks:
-            warn_html = (
-                '<div class="ops-dashboard-card ops-dashboard-card--warn" '
-                'style="margin-top:10px;">'
-                '<div class="ops-dashboard-card-title">Предупреждение синхронизации</div>'
-                "<ul style=\"margin:0;padding-left:1.1rem;\">"
-                + "".join(f"<li>{w}</li>" for w in warn_blocks)
-                + "</ul></div>"
-            )
-
-        overview_html = (
-            '<div class="ops-dashboard-wrap">'
-            '<p class="ops-dashboard-intro">'
-            "Компактный операционный дашборд: здоровье сервисов (честные статусы), "
-            "активность AI, база знаний и ограничения безопасности админки."
-            "</p>"
-            '<div class="ops-dashboard-grid">'
-            f"{card_a}{card_b}{card_c}{card_d}"
-            "</div>"
-            f"{warn_html}"
-            "</div>"
-        )
-        st.markdown(overview_html, unsafe_allow_html=True)
-
-        if not status.postgres_available:
-            st.caption(
-                "PostgreSQL: задайте `DATABASE_URL` и схему из каталога `database/`, "
-                "чтобы видеть документы и чанки."
-            )
+        _render_tab_overview(svc, dashboard_stats)
 
     with tab_summary:
         st.markdown(
@@ -3976,13 +4192,13 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         if not (os.getenv("DATABASE_URL") or "").strip():
-            st.info(
-                "Сводка недоступна: задайте переменную окружения `DATABASE_URL` "
-                "и убедитесь, что таблица `processing_logs` заполняется."
+            render_empty_state(
+                "Сводка недоступна: задайте переменную окружения DATABASE_URL "
+                "и убедитесь, что таблица processing_logs заполняется."
             )
         elif int(dashboard_stats.get("total_events") or 0) == 0:
-            st.info(
-                "За последние 24 часа в `processing_logs` нет записей. "
+            render_empty_state(
+                "За последние 24 часа в processing_logs нет записей. "
                 "После работы бота и админки здесь появятся метрики."
             )
         else:
@@ -4014,17 +4230,15 @@ def main() -> None:
                 ]
             )
 
-            card_a = (
-                '<div class="ops-dashboard-card">'
-                '<div class="ops-dashboard-card-title">A. Сводка активности</div>'
-                + activity_chips
-                + _render_panel_footnote_html(
+            card_a = ops_dashboard_card_html(
+                "A. Сводка активности",
+                activity_chips,
+                footnote_html=_render_panel_footnote_html(
                     "Агрегаты событий — из <code>get_dashboard_stats</code> (24 ч). "
                     "Уникальные <code>execution_id</code> — только по сессиям в выборке "
                     f"(до {SUMMARY_LOG_SAMPLE_CAP} последних строк журнала, отфильтровано по 24 ч); "
                     "полный DISTINCT по окну в UI без нового API недоступен."
-                )
-                + "</div>"
+                ),
             )
 
             route_body = _summary_route_rows_html(
@@ -4032,30 +4246,26 @@ def main() -> None:
                 sample_out=sample_out,
                 unknown_sample_n=unknown_sample_n,
             )
-            card_b = (
-                '<div class="ops-dashboard-card">'
-                '<div class="ops-dashboard-card-title">B. Маршруты</div>'
-                + route_body
-                + _render_panel_footnote_html(
+            card_b = ops_dashboard_card_html(
+                "B. Маршруты",
+                route_body,
+                footnote_html=_render_panel_footnote_html(
                     "Счётчики Text / RAG / Image — уникальные <code>execution_id</code> за 24 ч "
                     "с нормализацией route/mode/stage (как в SQL <code>count_routes_since</code>). "
                     "Доля — от суммы Text+RAG+Image+«прочее» в выборке. "
                     "Успех/ошибка по маршруту — по итогу сессии в этой выборке (см. "
                     "<code>_logs_infer_route_from_events</code> / "
                     "<code>_logs_session_final_status</code>)."
-                )
-                + "</div>"
+                ),
             )
 
-            card_c = (
-                '<div class="ops-dashboard-card">'
-                '<div class="ops-dashboard-card-title">C. Этапы / lifecycle</div>'
-                + _summary_lifecycle_list_html(by_stage)
-                + _render_panel_footnote_html(
+            card_c = ops_dashboard_card_html(
+                "C. Этапы / lifecycle",
+                _summary_lifecycle_list_html(by_stage),
+                footnote_html=_render_panel_footnote_html(
                     "Числа — сырые <code>stage</code> из журнала за 24 ч; подписи через "
                     "существующие хелперы нормализации."
-                )
-                + "</div>"
+                ),
             )
 
             top_pm = telem.get("top_provider_model")
@@ -4098,10 +4308,9 @@ def main() -> None:
                     "</span>"
                 )
 
-            card_d = (
-                '<div class="ops-dashboard-card">'
-                '<div class="ops-dashboard-card-title">D. Провайдеры и производительность</div>'
-                + _overview_ops_kv_mixed(
+            card_d = ops_dashboard_card_html(
+                "D. Провайдеры и производительность",
+                _overview_ops_kv_mixed(
                     [
                         _overview_ops_kv_item("Топ provider / model", tpm_line),
                         _overview_ops_kv_item("Токены (сумма по details)", tok_line),
@@ -4110,12 +4319,11 @@ def main() -> None:
                     ]
                 )
                 + '<span class="panel-footnote-heading">Строки журнала по провайдеру</span>'
-                + prov_html
-                + _render_panel_footnote_html(
+                + prov_html,
+                footnote_html=_render_panel_footnote_html(
                     "По строкам журнала за 24 ч в выборке (поля <code>details</code>). "
                     "Если в логах нет provider/tokens/latency — отображается «нет данных»."
-                )
-                + "</div>"
+                ),
             )
 
             summary_html = (
@@ -4126,78 +4334,19 @@ def main() -> None:
             )
             st.markdown(summary_html, unsafe_allow_html=True)
 
-            with st.expander("Показать технические таблицы", expanded=False):
-                st.caption(
-                    "Сырые агрегаты из `processing_logs` (как в прежней сводке)."
-                )
-                st.markdown("**События по статусам**")
-                if by_status:
-                    rows_s = [
-                        {"статус": _status_label(k), "количество": v}
-                        for k, v in sorted(
-                            by_status.items(), key=lambda x: (-x[1], str(x[0]))
-                        )
-                    ]
-                    st.dataframe(
-                        pd.DataFrame(rows_s), use_container_width=True, hide_index=True
-                    )
-                else:
-                    st.caption("Нет данных по статусам.")
-
-                st.markdown("**События по этапам (все stage)**")
-                if by_stage:
-                    rows_st_raw = [
-                        {
-                            "этап (raw)": str(k),
-                            "подпись": _stage_to_action(str(k)),
-                            "количество": int(v or 0),
-                        }
-                        for k, v in sorted(
-                            by_stage.items(), key=lambda x: (-int(x[1] or 0), str(x[0]))
-                        )
-                    ]
-                    st.dataframe(
-                        pd.DataFrame(rows_st_raw),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                else:
-                    st.caption("Нет данных по этапам.")
-
-                st.markdown("**Маршруты (raw, dashboard)**")
-                normalized_route_counts: dict[str, int] = {}
-                for raw_route, count in by_route.items():
-                    norm_route = normalize_route(str(raw_route))
-                    normalized_route_counts[norm_route] = normalized_route_counts.get(
-                        norm_route, 0
-                    ) + int(count or 0)
-                route_total = sum(
-                    int(normalized_route_counts.get(k, 0))
-                    for k in ("rag", "text", "image_generation")
-                )
-                if route_total > 0:
-                    rows_r = [
-                        {
-                            "маршрут": _route_label(k),
-                            "уникальных execution_id (24 ч)": int(
-                                normalized_route_counts.get(k, 0)
-                            ),
-                        }
-                        for k in ("text", "rag", "image_generation")
-                    ]
-                    st.dataframe(
-                        pd.DataFrame(rows_r), use_container_width=True, hide_index=True
-                    )
-                else:
-                    st.info("Нет данных по маршрутам за выбранный период.")
+            _render_summary_technical_tables_expander(
+                by_status=by_status,
+                by_stage=by_stage,
+                by_route=by_route,
+            )
 
     with tab_text:
         st.subheader("Text-запросы")
         st.caption("Обычные LLM-запросы без RAG-контекста.")
         if not (os.getenv("DATABASE_URL") or "").strip():
-            st.info(
-                "Раздел недоступен: задайте переменную окружения `DATABASE_URL` "
-                "и убедитесь, что таблица `processing_logs` заполняется."
+            render_empty_state(
+                "Раздел недоступен: задайте переменную окружения DATABASE_URL "
+                "и убедитесь, что таблица processing_logs заполняется."
             )
         else:
             t_f1, t_f2 = st.columns(2)
@@ -4221,7 +4370,7 @@ def main() -> None:
 
             if not text_requests:
                 st.session_state.pop("selected_text_execution_id", None)
-                st.info("Text-запросов за период пока нет.")
+                render_empty_state("Text-запросов за период пока нет.")
             else:
                 selected_text_eid = str(
                     st.session_state.get("selected_text_execution_id", "")
@@ -4238,7 +4387,7 @@ def main() -> None:
                     list_title="Список Text-запросов",
                     detail_title="Детали выбранного запроса",
                 )
-                list_col, detail_col = st.columns((0.35, 0.65))
+                list_col, detail_col = split_list_detail_columns()
                 with list_col:
                     st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
                     for idx, req in enumerate(page_items):
@@ -4290,7 +4439,7 @@ def main() -> None:
                         st.session_state.get("selected_text_execution_id", "")
                     )
                     if not selected_text_eid:
-                        st.info("Выберите Text-запрос слева")
+                        render_empty_state("Выберите Text-запрос слева.")
                     else:
                         selected_req = next(
                             (
@@ -4302,7 +4451,7 @@ def main() -> None:
                         )
                         if selected_req is None:
                             st.session_state.pop("selected_text_execution_id", None)
-                            st.info(
+                            render_empty_state(
                                 "Выбранный запрос не найден в текущем фильтре. "
                                 "Выберите Text-запрос слева."
                             )
@@ -4323,9 +4472,9 @@ def main() -> None:
     with tab_rag:
         if not (os.getenv("DATABASE_URL") or "").strip():
             st.subheader("RAG-запросы")
-            st.info(
-                "Раздел недоступен: задайте переменную окружения `DATABASE_URL` "
-                "и убедитесь, что таблица `processing_logs` заполняется."
+            render_empty_state(
+                "Раздел недоступен: задайте переменную окружения DATABASE_URL "
+                "и убедитесь, что таблица processing_logs заполняется."
             )
         else:
             rq = dashboard_stats.get("rag_quality") or {}
@@ -4361,7 +4510,7 @@ def main() -> None:
             )
             if not recent_rag:
                 st.session_state.pop("selected_rag_execution_id", None)
-                st.info("RAG-события по выбранному фильтру не найдены.")
+                render_empty_state("RAG-события по выбранному фильтру не найдены.")
             else:
                 has_next_rag = len(recent_rag) > (rag_page + 1) * rag_page_size_seed
                 rag_page, rag_page_size = render_pagination_controls(
@@ -4376,7 +4525,7 @@ def main() -> None:
                 selected_eid = str(
                     st.session_state.get("selected_rag_execution_id", "")
                 )
-                list_col, detail_col = st.columns((0.35, 0.65))
+                list_col, detail_col = split_list_detail_columns()
                 with list_col:
                     st.markdown('<div class="rag-list-pane">', unsafe_allow_html=True)
                     for idx, ev in enumerate(page_items):
@@ -4429,7 +4578,7 @@ def main() -> None:
                         st.session_state.get("selected_rag_execution_id", "")
                     )
                     if not selected_eid:
-                        st.info("Выберите RAG-запрос слева")
+                        render_empty_state("Выберите RAG-запрос слева.")
                     else:
                         selected_ev = next(
                             (
@@ -4441,7 +4590,7 @@ def main() -> None:
                         )
                         if selected_ev is None:
                             st.session_state.pop("selected_rag_execution_id", None)
-                            st.info(
+                            render_empty_state(
                                 "Выбранный запрос не найден в текущем фильтре. "
                                 "Выберите RAG-запрос слева."
                             )
@@ -4468,19 +4617,20 @@ def main() -> None:
             f"{IMAGE_LIST_LOG_CAP} строкам журнала; превью файла загружается только для выбранной сессии."
         )
         if not (os.getenv("DATABASE_URL") or "").strip():
-            st.info(
-                "Раздел недоступен: задайте переменную окружения `DATABASE_URL` "
-                "и убедитесь, что таблица `processing_logs` заполняется."
+            render_empty_state(
+                "Раздел недоступен: задайте переменную окружения DATABASE_URL "
+                "и убедитесь, что таблица processing_logs заполняется."
             )
         else:
             img_sample = svc.get_recent_logs(IMAGE_LIST_LOG_CAP)
             all_image_sessions = _image_build_sessions_from_rows(img_sample)
             if not all_image_sessions:
                 st.markdown(
-                    '<div class="ops-dashboard-card">'
-                    '<div class="logs-trace-header-title">Генерации изображений</div>'
-                    '<p class="panel-footnote" style="border:none;padding-top:0;margin:0;">'
-                    "Генерации изображений пока отсутствуют.</p></div>",
+                    ops_dashboard_card_html(
+                        "Генерации изображений",
+                        '<p class="panel-footnote" style="border:none;padding-top:0;margin:0;">'
+                        "Генерации изображений пока отсутствуют.</p>",
+                    ),
                     unsafe_allow_html=True,
                 )
             else:
@@ -4503,7 +4653,7 @@ def main() -> None:
                     list_title="Журнал генераций изображений",
                     detail_title="Трассировка выбранной генерации",
                 )
-                list_col, detail_col = st.columns((0.35, 0.65))
+                list_col, detail_col = split_list_detail_columns()
                 selected_img_eid = str(
                     st.session_state.get("selected_image_execution_id", "")
                 )
@@ -4580,7 +4730,7 @@ def main() -> None:
                         st.session_state.get("selected_image_execution_id", "")
                     )
                     if not selected_img_eid:
-                        st.info("Выберите генерацию слева.")
+                        render_empty_state("Выберите генерацию слева.")
                     else:
                         full_rows = svc.get_logs_events_for_execution_ids(
                             [selected_img_eid]
@@ -4610,7 +4760,7 @@ def main() -> None:
                                 assets=assets,
                             )
                             st.markdown(
-                                '<div class="image-section-title">A. Prompt</div>',
+                                panel_section_title_html("A. Prompt"),
                                 unsafe_allow_html=True,
                             )
                             _render_prompt_subsection(
@@ -4630,15 +4780,12 @@ def main() -> None:
                                 "Негативный prompt", prompts.get("negative")
                             )
                             st.markdown(
-                                '<div class="image-section-title">'
-                                "B. Сгенерированные ассеты</div>",
+                                panel_section_title_html("B. Сгенерированные ассеты"),
                                 unsafe_allow_html=True,
                             )
                             if not assets:
-                                st.markdown(
-                                    '<p class="panel-footnote" style="border:none;padding:0;">'
-                                    "В логах не найдено путей к файлам изображений.</p>",
-                                    unsafe_allow_html=True,
+                                render_empty_state(
+                                    "В логах не найдено путей к файлам изображений."
                                 )
                             for a in assets:
                                 raw_path = a.get("path")
@@ -4714,22 +4861,22 @@ def main() -> None:
                                         unsafe_allow_html=True,
                                     )
                             st.markdown(
-                                '<div class="image-section-title">'
-                                "C. Технические метаданные</div>",
+                                panel_section_title_html("C. Технические метаданные"),
                                 unsafe_allow_html=True,
                             )
-                            with st.expander("Показать агрегированные метаданные", expanded=False):
-                                st.json(
-                                    {
-                                        "execution_id": selected_img_eid,
-                                        "n_events": len(events),
-                                        "last_at_msk": _format_dt_moscow_logs(last_at),
-                                        "assets_detected": [a.get("path") for a in assets],
-                                        "final_status": _logs_session_final_status(events),
-                                    }
-                                )
+                            render_metadata_expander(
+                                "Показать агрегированные метаданные",
+                                {
+                                    "execution_id": selected_img_eid,
+                                    "n_events": len(events),
+                                    "last_at_msk": _format_dt_moscow_logs(last_at),
+                                    "assets_detected": [a.get("path") for a in assets],
+                                    "final_status": _logs_session_final_status(events),
+                                },
+                                expanded=False,
+                            )
                             st.markdown(
-                                '<div class="image-section-title">D. Timeline</div>',
+                                panel_section_title_html("D. Timeline"),
                                 unsafe_allow_html=True,
                             )
                             _render_trace_flow_timeline(
@@ -4845,7 +4992,9 @@ def main() -> None:
                 "Таблица версий недоступна: задайте `DATABASE_URL` для просмотра метаданных."
             )
         elif not doc_rows:
-            st.info("В таблице `documents` пока нет записей или не удалось загрузить данные.")
+            render_empty_state(
+                "В таблице documents пока нет записей или не удалось загрузить данные."
+            )
         else:
             query_norm = (search_query or "").strip().lower()
             filtered_docs = doc_rows
@@ -4864,7 +5013,7 @@ def main() -> None:
 
             if not filtered_docs:
                 st.session_state.pop("selected_document", None)
-                st.info("Документы по текущему фильтру не найдены.")
+                render_empty_state("Документы по текущему фильтру не найдены.")
                 filtered_docs = []
 
             docs_page, docs_page_size = render_pagination_controls(
@@ -4878,7 +5027,7 @@ def main() -> None:
                 list_title="Список документов",
                 detail_title="Детали выбранного документа",
             )
-            list_col, detail_col = st.columns((0.35, 0.65))
+            list_col, detail_col = split_list_detail_columns()
             selected_doc = str(st.session_state.get("selected_document", ""))
             with list_col:
                 st.markdown('<div class="text-list-pane">', unsafe_allow_html=True)
@@ -4931,7 +5080,7 @@ def main() -> None:
                 )
                 selected_doc = str(st.session_state.get("selected_document", ""))
                 if not selected_doc:
-                    st.info("Выберите документ слева")
+                    render_empty_state("Выберите документ слева.")
                 else:
                     selected_row = next(
                         (
@@ -4943,7 +5092,9 @@ def main() -> None:
                     )
                     if selected_row is None:
                         st.session_state.pop("selected_document", None)
-                        st.info("Выбранный документ не найден в текущем фильтре.")
+                        render_empty_state(
+                            "Выбранный документ не найден в текущем фильтре."
+                        )
                     else:
                         fname = str(selected_row.get("filename") or "документ")
                         active_chunks_n = int(selected_row.get("active_chunk_count") or 0)
@@ -5063,7 +5214,7 @@ def main() -> None:
         )
         total_exec = int(svc.get_logs_execution_ids_total())
         if total_exec <= 0:
-            st.info("Событий журнала пока нет.")
+            render_empty_state("Событий журнала пока нет.")
         else:
             logs_page = int(st.session_state.get("logs_page", 0))
             logs_page_size_seed = int(st.session_state.get("logs_page_size", 50))
@@ -5090,7 +5241,7 @@ def main() -> None:
                 list_title="Журнал execution-сессий",
                 detail_title="Трассировка выбранной execution-сессии",
             )
-            list_col, detail_col = st.columns((0.35, 0.65))
+            list_col, detail_col = split_list_detail_columns()
             selected_logs_eid = str(
                 st.session_state.get("selected_logs_execution_id", "")
             )
@@ -5167,7 +5318,7 @@ def main() -> None:
                     st.session_state.get("selected_logs_execution_id", "")
                 )
                 if not selected_logs_eid:
-                    st.info("Выберите execution-сессию слева.")
+                    render_empty_state("Выберите execution-сессию слева.")
                 else:
                     selected_sess = next(
                         (
@@ -5179,7 +5330,7 @@ def main() -> None:
                     )
                     if selected_sess is None:
                         st.session_state.pop("selected_logs_execution_id", None)
-                        st.info("Выберите execution-сессию слева.")
+                        render_empty_state("Выберите execution-сессию слева.")
                     else:
                         _render_logs_timeline_detail(
                             selected_sess,
