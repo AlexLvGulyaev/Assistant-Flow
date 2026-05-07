@@ -145,7 +145,7 @@ _EVENT_TYPE_ALIASES: dict[str, str] = {
 }
 
 _EVENT_TYPE_RU: dict[str, str] = {
-    "intake_received": "Получено сообщение",
+    "intake_received": "Получен запрос",
     "route_selected": "Определён тип запроса",
     "processing_done": "Обработка завершена",
     "processing_error": "Ошибка обработки",
@@ -154,6 +154,11 @@ _EVENT_TYPE_RU: dict[str, str] = {
     "admin_reindex_started": "Переиндексация запущена",
     "admin_reindex_done": "Переиндексация завершена",
     "admin_reindex_error": "Ошибка переиндексации",
+    "image_generation_started": "Генерация изображения запущена",
+    "image_text_enhancement_done": "Уточнение промпта (текст) завершено",
+    "image_prompt_refinement_done": "Подготовка image prompt завершена",
+    "image_provider_done": "Изображение получено от провайдера",
+    "image_assets_persisted": "Файлы изображения сохранены",
 }
 
 _ROUTE_ALIASES: dict[str, str] = {
@@ -188,12 +193,18 @@ def normalize_event_type(event_type: str | None) -> str:
     return _EVENT_TYPE_ALIASES.get(raw, raw)
 
 
-def _stage_to_action(stage: str | None) -> str:
+def _stage_to_action(stage: str | None, details: Any = None) -> str:
     raw = (stage or "").strip()
     if raw == "text_answer_done":
         return "Текстовый ответ построен"
     if raw == "rag_answer_done":
         return "RAG-ответ построен"
+    if raw == "processing_done":
+        dd = details if isinstance(details, dict) else {}
+        if normalize_route(str(dd.get("route") or "")) == "image_generation":
+            if dd.get("generation_completed"):
+                return "Генерация завершена"
+            return "Обработка завершена (изображение)"
     norm = normalize_event_type(stage)
     if not norm:
         return "—"
@@ -707,7 +718,7 @@ def _event_display_row(r: dict[str, Any]) -> dict[str, Any]:
     """Одна строка таблицы: время | действие | статус | описание."""
     return {
         "время": _format_dt_moscow_logs(r.get("created_at")),
-        "действие": _stage_to_action(r.get("stage")),
+        "действие": _stage_to_action(r.get("stage"), r.get("details")),
         "статус": _status_label(r.get("status")),
         "описание": _details_to_description(r.get("details")),
     }
@@ -755,8 +766,30 @@ def group_logs_by_execution_id(
 
 
 LOGS_DETAILS_PREVIEW_MAX = 200
+LOGS_TIMELINE_PREVIEW_MAX = 120
 LOGS_LIST_PREVIEW_MAX = 140
 LOGS_EXEC_ID_SHORT_LEN = 8
+IMAGE_LIST_LOG_CAP = 500
+_IMAGE_PROMPT_PREVIEW_MAX = 200
+_IMAGE_STAGE_MARKERS: frozenset[str] = frozenset(
+    {
+        "image_generation_started",
+        "image_generation_done",
+        "image_generation_error",
+        "image_answer_done",
+        "image_text_enhancement_done",
+        "image_prompt_refinement_done",
+        "image_provider_done",
+        "image_assets_persisted",
+    }
+)
+_IMAGE_FILE_SUFFIXES: tuple[str, ...] = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+)
 
 
 def _short_execution_id(eid: str | None) -> str:
@@ -784,6 +817,8 @@ def _logs_infer_route_from_events(events: list[dict[str, Any]]) -> str:
             return "text"
         if mode == "rag":
             return "rag"
+        if mode == "image":
+            return "image_generation"
     for ev in reversed(events):
         stg = str(ev.get("stage") or "")
         if stg == "rag_answer_done":
@@ -801,6 +836,7 @@ def _logs_session_final_status(events: list[dict[str, Any]]) -> str:
             "processing_error",
             "rag_answer_done",
             "text_answer_done",
+            "image_answer_done",
         ):
             return str(ev.get("status") or "—")
     if events:
@@ -831,8 +867,692 @@ def _logs_session_preview(events: list[dict[str, Any]]) -> str:
 
 
 def _logs_timeline_flow_ru(events: list[dict[str, Any]]) -> str:
-    parts = [_stage_to_action(ev.get("stage")) for ev in events]
+    parts = [
+        _stage_to_action(ev.get("stage"), ev.get("details")) for ev in events
+    ]
     return " → ".join(parts)
+
+
+def infer_event_severity(
+    stage: str | None,
+    status: str | None,
+    details: Any = None,
+) -> str:
+    """
+    Семантика события только для UI (цвет trace / border).
+    Возвращает: success | error | warning | muted.
+    """
+    stg = str(stage or "").strip().lower()
+    stat = str(status or "").strip().lower()
+    dd: dict[str, Any] = details if isinstance(details, dict) else {}
+    fb = str(dd.get("fallback_reason") or "").strip().lower()
+    if fb == "llm_error":
+        return "error"
+    if fb in ("low_relevance", "empty_retrieval", "empty_context"):
+        return "warning"
+
+    if stat == "error":
+        return "error"
+    if stg == "processing_error" or stg.endswith("_error"):
+        return "error"
+
+    if stg in (
+        "text_answer_done",
+        "rag_answer_done",
+        "image_answer_done",
+        "image_generation_done",
+        "image_text_enhancement_done",
+        "image_prompt_refinement_done",
+        "image_assets_persisted",
+        "processing_done",
+        "admin_reindex_done",
+        "admin_document_uploaded",
+    ):
+        if stat == "success":
+            return "success"
+    if stg in ("image_generation_started",):
+        return "warning"
+    if stg == "image_provider_done":
+        return "error" if stat == "error" else "success"
+    if stg in ("image_generation_error",):
+        return "error"
+    if stg == "admin_reindex_started":
+        return "warning"
+    if stat == "success":
+        return "success"
+    if stat in ("started", "skipped", "retry"):
+        return "warning"
+    return "muted"
+
+
+def _logs_session_wall_duration_ms(
+    events: list[dict[str, Any]],
+) -> int | None:
+    times = [
+        r.get("created_at")
+        for r in events
+        if isinstance(r.get("created_at"), datetime)
+    ]
+    if len(times) < 2:
+        return None
+    t0, t1 = min(times), max(times)
+    a = t0 if t0.tzinfo else t0.replace(tzinfo=timezone.utc)
+    b = t1 if t1.tzinfo else t1.replace(tzinfo=timezone.utc)
+    return int((b - a).total_seconds() * 1000)
+
+
+def _logs_format_duration_ms(ms: int | None) -> str:
+    if ms is None:
+        return "—"
+    if ms < 1000:
+        return f"{ms} мс"
+    return f"{round(ms / 1000.0, 2)} с"
+
+
+def _logs_session_provider_model(events: list[dict[str, Any]]) -> str | None:
+    for ev in reversed(events):
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        prov = str(d.get("provider") or d.get("llm_provider") or "").strip()
+        model = str(d.get("model") or d.get("llm_model") or "").strip()
+        if prov or model:
+            return f"{prov or '—'} / {model or '—'}"
+    return None
+
+
+def _logs_session_max_step_latency_ms(
+    events: list[dict[str, Any]],
+) -> int | None:
+    """Макс. latency из полей details по шагам (если есть)."""
+    best: float | None = None
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        lm = _overview_extract_latency_ms(d)
+        if lm is None:
+            continue
+        best = lm if best is None else max(best, lm)
+    return int(round(best)) if best is not None else None
+
+
+def _image_log_row_matches(row: dict[str, Any]) -> bool:
+    """Строка журнала относится к image-generation (нормализация без новых запросов к БД)."""
+    stg = str(row.get("stage") or "").strip().lower()
+    if stg in _IMAGE_STAGE_MARKERS:
+        return True
+    details = row.get("details")
+    if not isinstance(details, dict):
+        return False
+    mode = str(details.get("mode") or "").strip().lower()
+    if mode == "image":
+        return True
+    r_raw = str(details.get("route") or "").strip()
+    return normalize_route(r_raw) == "image_generation"
+
+
+def _image_build_sessions_from_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Сессии генерации: группировка по execution_id среди отфильтрованных строк."""
+    filtered = [r for r in rows if _image_log_row_matches(r)]
+    if not filtered:
+        return []
+    groups = group_logs_by_execution_id(filtered)
+    sessions: list[dict[str, Any]] = []
+    for eid, start_ts, events in groups:
+        last_times = [
+            r.get("created_at")
+            for r in events
+            if isinstance(r.get("created_at"), datetime)
+        ]
+        last_at = max(last_times) if last_times else None
+        sessions.append(
+            {
+                "execution_id": eid,
+                "start_ts": start_ts,
+                "last_at": last_at,
+                "sample_events": events,
+            }
+        )
+    sessions.sort(
+        key=lambda s: s.get("last_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return sessions
+
+
+def _image_prompt_preview_from_events(events: list[dict[str, Any]]) -> str:
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        p = _first_non_empty(
+            d,
+            (
+                "query_preview",
+                "user_text",
+                "message_text",
+                "original_prompt",
+                "prompt",
+                "text",
+                "image_prompt",
+            ),
+        )
+        if p and str(p).strip():
+            s = str(p).strip()
+            if len(s) > _IMAGE_PROMPT_PREVIEW_MAX:
+                return s[: _IMAGE_PROMPT_PREVIEW_MAX - 1] + "…"
+            return s
+    return ""
+
+
+def _image_extract_prompts_from_events(
+    events: list[dict[str, Any]],
+) -> dict[str, str | None]:
+    original: str | None = None
+    enhanced: str | None = None
+    image_prompt: str | None = None
+    negative: str | None = None
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        stg = str(ev.get("stage") or "").strip().lower()
+        if original is None:
+            for key in (
+                "user_text",
+                "message_text",
+                "query_preview",
+                "original_prompt",
+                "prompt",
+                "text",
+            ):
+                v = d.get(key)
+                if isinstance(v, str) and v.strip():
+                    original = v.strip()
+                    break
+        if stg == "image_text_enhancement_done":
+            v = d.get("enhanced_prompt")
+            if isinstance(v, str) and v.strip():
+                enhanced = v.strip()
+        elif stg == "image_prompt_refinement_done":
+            for key in ("image_prompt", "rewritten_prompt"):
+                v = d.get(key)
+                if isinstance(v, str) and v.strip():
+                    image_prompt = v.strip()
+                    break
+        else:
+            if enhanced is None:
+                v = d.get("enhanced_prompt")
+                if isinstance(v, str) and v.strip():
+                    enhanced = v.strip()
+            if image_prompt is None:
+                for key in ("image_prompt", "rewritten_prompt", "final_prompt"):
+                    v = d.get(key)
+                    if isinstance(v, str) and v.strip():
+                        image_prompt = v.strip()
+                        break
+        v = d.get("negative_prompt")
+        if isinstance(v, str) and v.strip():
+            negative = v.strip()
+    return {
+        "original": original,
+        "enhanced": enhanced,
+        "image_prompt": image_prompt,
+        "negative": negative,
+    }
+
+
+def _image_details_collect_paths(details: dict[str, Any]) -> list[str]:
+    raw: list[str] = []
+    for key in ("image_path", "output_path", "result_path", "file_path", "path"):
+        v = details.get(key)
+        if isinstance(v, str) and v.strip():
+            raw.append(v.strip())
+    fl = (
+        details.get("files")
+        or details.get("generated_files")
+        or details.get("output_images")
+        or details.get("image_paths")
+    )
+    if isinstance(fl, list):
+        for x in fl:
+            if isinstance(x, str) and x.strip():
+                raw.append(x.strip())
+            elif isinstance(x, dict):
+                p = x.get("path") or x.get("file") or x.get("filename")
+                if isinstance(p, str) and p.strip():
+                    raw.append(p.strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in raw:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _image_collect_assets_from_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    def _append_asset(rec: dict[str, Any]) -> None:
+        p = str(rec.get("path") or "").strip()
+        if not p:
+            return
+        pl = p.lower().replace("\\", "/")
+        if not (
+            any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES) or "/outputs/" in pl
+        ):
+            return
+        if p in seen_paths:
+            return
+        seen_paths.add(p)
+        assets.append(rec)
+
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        for key in ("output_images", "generated_files", "image_paths"):
+            fl = d.get(key)
+            if not isinstance(fl, list):
+                continue
+            for x in fl:
+                if isinstance(x, dict):
+                    p = x.get("path")
+                    if not (isinstance(p, str) and p.strip()):
+                        continue
+                    url_raw = x.get("provider_url") or x.get("url")
+                    url_s = str(url_raw).strip() if url_raw else ""
+                    _append_asset(
+                        {
+                            "path": p.strip(),
+                            "filename": x.get("filename"),
+                            "provider_url": url_s or None,
+                            "size": x.get("size"),
+                            "stage": ev.get("stage"),
+                            "created_at": ev.get("created_at"),
+                        }
+                    )
+                elif isinstance(x, str) and x.strip():
+                    _append_asset(
+                        {
+                            "path": x.strip(),
+                            "stage": ev.get("stage"),
+                            "created_at": ev.get("created_at"),
+                        }
+                    )
+        for p in _image_details_collect_paths(d):
+            if p in seen_paths:
+                continue
+            pl = p.lower().replace("\\", "/")
+            if any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES) or "/outputs/" in pl:
+                seen_paths.add(p)
+                assets.append(
+                    {
+                        "path": p,
+                        "stage": ev.get("stage"),
+                        "created_at": ev.get("created_at"),
+                    }
+                )
+    return assets
+
+
+def _image_generation_count_hint(events: list[dict[str, Any]], n_assets: int) -> int:
+    for ev in reversed(events):
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        for key in ("generation_count", "n_images", "images_count", "count"):
+            v = d.get(key)
+            if v is not None:
+                try:
+                    return max(int(v), n_assets)
+                except (TypeError, ValueError):
+                    pass
+    return n_assets
+
+
+def _safe_image_http_url(url: str | None) -> str | None:
+    if not url or not str(url).strip():
+        return None
+    u = str(url).strip()
+    low = u.lower()
+    if low.startswith("https://") or low.startswith("http://"):
+        return u
+    return None
+
+
+def _image_text_stage_token_totals(
+    events: list[dict[str, Any]],
+) -> tuple[int, int, int | None]:
+    tin = 0
+    tout = 0
+    totals: list[int] = []
+    for ev in events:
+        stg = str(ev.get("stage") or "").strip().lower()
+        if stg not in ("image_text_enhancement_done", "image_prompt_refinement_done"):
+            continue
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        if "input_tokens" in d:
+            try:
+                tin += int(float(d["input_tokens"]))
+            except (TypeError, ValueError):
+                pass
+        if "output_tokens" in d:
+            try:
+                tout += int(float(d["output_tokens"]))
+            except (TypeError, ValueError):
+                pass
+        if "total_tokens" in d:
+            try:
+                totals.append(int(float(d["total_tokens"])))
+            except (TypeError, ValueError):
+                pass
+    tsum: int | None = sum(totals) if totals else None
+    return tin, tout, tsum
+
+
+def _image_text_stage_latencies_ms(
+    events: list[dict[str, Any]],
+) -> tuple[int | None, int | None]:
+    enh: int | None = None
+    ref: int | None = None
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        stg = str(ev.get("stage") or "").strip().lower()
+        if stg == "image_text_enhancement_done":
+            v = d.get("enhancement_latency_ms")
+            if v is not None:
+                try:
+                    enh = int(float(v))
+                except (TypeError, ValueError):
+                    pass
+        elif stg == "image_prompt_refinement_done":
+            v = d.get("refinement_latency_ms")
+            if v is not None:
+                try:
+                    ref = int(float(v))
+                except (TypeError, ValueError):
+                    pass
+    return enh, ref
+
+
+def _image_provider_stage_usage(
+    events: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    for ev in events:
+        if str(ev.get("stage") or "").strip().lower() != "image_provider_done":
+            continue
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        out: dict[str, Any] = {
+            "provider": d.get("provider"),
+            "model": d.get("model"),
+            "duration_ms": d.get("duration_ms"),
+        }
+        for k in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "image_tokens",
+            "cost_usd",
+        ):
+            if k in d and d.get(k) is not None:
+                out[k] = d[k]
+        if isinstance(d.get("usage"), dict):
+            out["usage"] = d["usage"]
+        return out
+    return None
+
+
+def _format_token_usage_line(
+    tin: int, tout: int, ttot: int | None, *, empty: str = "н/д"
+) -> str:
+    if not tin and not tout and ttot is None:
+        return empty
+    if ttot is None:
+        ttot = tin + tout
+    return f"{tin} in · {tout} out · {ttot} Σ"
+
+
+def _format_image_provider_usage_line(u: dict[str, Any] | None) -> str:
+    if not u:
+        return "н/д"
+    parts: list[str] = []
+    prov = str(u.get("provider") or "").strip()
+    model = str(u.get("model") or "").strip()
+    if prov or model:
+        parts.append(f"{prov or '—'} / {model or '—'}")
+    dur = u.get("duration_ms")
+    if dur is not None:
+        try:
+            parts.append(f"{int(float(dur))} мс")
+        except (TypeError, ValueError):
+            pass
+    tok_bits: list[str] = []
+    for label, key in (
+        ("in", "input_tokens"),
+        ("out", "output_tokens"),
+        ("Σ", "total_tokens"),
+        ("img", "image_tokens"),
+    ):
+        if key not in u:
+            continue
+        try:
+            tok_bits.append(f"{label} {int(float(u[key]))}")
+        except (TypeError, ValueError):
+            continue
+    if u.get("cost_usd") is not None:
+        try:
+            tok_bits.append(f"${float(u['cost_usd']):.4f}")
+        except (TypeError, ValueError):
+            pass
+    if tok_bits:
+        parts.append(", ".join(tok_bits))
+    elif not parts:
+        return "н/д"
+    return " · ".join(parts)
+
+
+def _safe_resolved_asset_path(path_str: str | None) -> Path | None:
+    """Путь к файлу только под корнем проекта; иначе None. Без исключений наружу."""
+    if not path_str or not str(path_str).strip():
+        return None
+    try:
+        raw = str(path_str).strip()
+        p = Path(raw)
+        if not p.is_absolute():
+            p = (ROOT / p).resolve()
+        else:
+            p = p.resolve()
+        root = ROOT.resolve()
+        p.relative_to(root)
+        if p.is_file():
+            return p
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return None
+
+
+def _render_image_generation_summary_html(
+    *,
+    execution_id: str,
+    events: list[dict[str, Any]],
+    assets: list[dict[str, Any]],
+) -> None:
+    status_s = _logs_session_final_status(events)
+    pm = _logs_session_provider_model(events)
+    lat = _logs_session_max_step_latency_ms(events)
+    wall = _logs_session_wall_duration_ms(events)
+    n_ev = len(events)
+    n_files = len(assets)
+    n_hint = _image_generation_count_hint(events, n_files)
+    pm_line = html.escape(pm) if pm else "—"
+    lat_s = f"{lat} мс" if lat is not None else "—"
+    tin, tout, ttot_sum = _image_text_stage_token_totals(events)
+    text_tok_s = html.escape(
+        _format_token_usage_line(tin, tout, ttot_sum, empty="н/д")
+    )
+    img_usage = _image_provider_stage_usage(events)
+    img_usage_s = html.escape(_format_image_provider_usage_line(img_usage))
+    enh_ms, ref_ms = _image_text_stage_latencies_ms(events)
+    text_lat_parts: list[str] = []
+    if enh_ms is not None:
+        text_lat_parts.append(f"улучшение {enh_ms} мс")
+    if ref_ms is not None:
+        text_lat_parts.append(f"refine {ref_ms} мс")
+    text_lat_s = (
+        html.escape(" · ".join(text_lat_parts)) if text_lat_parts else "—"
+    )
+    img_dur = None
+    if img_usage and img_usage.get("duration_ms") is not None:
+        try:
+            img_dur = int(float(img_usage["duration_ms"]))
+        except (TypeError, ValueError):
+            img_dur = None
+    img_lat_s = html.escape(f"{img_dur} мс" if img_dur is not None else "—")
+    img_tok_line = "н/д"
+    if img_usage:
+        bits: list[str] = []
+        for label, key in (
+            ("in", "input_tokens"),
+            ("out", "output_tokens"),
+            ("Σ", "total_tokens"),
+            ("img", "image_tokens"),
+        ):
+            if key not in img_usage:
+                continue
+            try:
+                bits.append(f"{label} {int(float(img_usage[key]))}")
+            except (TypeError, ValueError):
+                continue
+        if bits:
+            img_tok_line = ", ".join(bits)
+    img_tok_s = html.escape(img_tok_line)
+    total_usage_parts: list[str] = []
+    if ttot_sum is not None:
+        total_usage_parts.append(f"текст Σ {ttot_sum}")
+    if img_usage:
+        for key in ("total_tokens", "image_tokens"):
+            if key not in img_usage:
+                continue
+            try:
+                total_usage_parts.append(f"изобр. {int(float(img_usage[key]))}")
+            except (TypeError, ValueError):
+                continue
+    total_usage_s = (
+        html.escape(" · ".join(total_usage_parts)) if total_usage_parts else "—"
+    )
+    st.markdown(
+        '<div class="logs-trace-header">'
+        '<div class="logs-trace-header-title">Сводка генерации</div>'
+        '<div class="logs-trace-header-row logs-trace-header-eid">'
+        "<span>execution_id</span>"
+        f'<code>{html.escape(execution_id)}</code>'
+        "</div>"
+        '<div class="logs-trace-header-badges">'
+        f'{get_route_badge("image_generation")} {get_log_status_badge(status_s)}'
+        "</div>"
+        '<div class="logs-trace-header-kv">'
+        f"<span>Событий</span><span>{n_ev}</span>"
+        f"<span>Файлов (обнаружено)</span><span>{n_files}</span>"
+        f"<span>Оценка генераций</span><span>{n_hint}</span>"
+        f"<span>Provider / model (последн.)</span><span>{pm_line}</span>"
+        f"<span>Этап текста (latency)</span><span>{text_lat_s}</span>"
+        f"<span>Этап изображения (latency)</span><span>{img_lat_s}</span>"
+        f"<span>Latency (шаг, max)</span><span>{html.escape(lat_s)}</span>"
+        f"<span>Длительность (стена)</span>"
+        f"<span>{html.escape(_logs_format_duration_ms(wall))}</span>"
+        f"<span>Токены текста (GigaChat)</span><span>{text_tok_s}</span>"
+        f"<span>Токены / usage (image API)</span><span>{img_tok_s}</span>"
+        f"<span>Провайдер изображения</span><span>{img_usage_s}</span>"
+        f"<span>Сводно usage</span><span>{total_usage_s}</span>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_prompt_subsection(
+    title: str,
+    text: str | None,
+    *,
+    preview_len: int = 320,
+    empty_label: str = "—",
+) -> None:
+    st.markdown(f"**{html.escape(title)}**", unsafe_allow_html=True)
+    if not text or not str(text).strip():
+        st.markdown(
+            f'<p class="panel-footnote muted-path">{html.escape(empty_label)}</p>',
+            unsafe_allow_html=True,
+        )
+        return
+    s = str(text).strip()
+    if len(s) <= preview_len:
+        st.markdown(
+            f'<div class="image-prompt-box">{html.escape(s)}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    short = s[: preview_len - 1] + "…"
+    st.markdown(
+        f'<div class="image-prompt-box">{html.escape(short)}</div>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("Полный текст", expanded=False):
+        st.text(s)
+
+
+def _render_trace_flow_timeline(
+    events: list[dict[str, Any]],
+    *,
+    section_title: str = "События (trace flow)",
+) -> None:
+    """Компактный вертикальный trace (тот же стиль, что вкладка «Логи»)."""
+    st.markdown(
+        f'<div class="logs-trace-timeline-title">{html.escape(section_title)}</div>',
+        unsafe_allow_html=True,
+    )
+    for idx, ev in enumerate(events, 1):
+        details = ev.get("details")
+        details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
+        t_s = _format_dt_moscow_logs(ev.get("created_at"))
+        action = _stage_to_action(str(ev.get("stage") or ""), details)
+        st_raw = str(ev.get("status") or "")
+        sev = infer_event_severity(str(ev.get("stage") or ""), st_raw, details)
+        preview = _details_to_description(details, max_len=LOGS_TIMELINE_PREVIEW_MAX)
+        badge_html = get_log_status_badge(st_raw)
+        st.markdown(
+            f'<div class="log-trace-step log-trace-step--{sev}">'
+            '<div class="log-trace-step-marker"></div>'
+            '<div class="log-trace-step-body">'
+            '<div class="log-trace-step-head">'
+            f'<span class="log-trace-step-idx">{idx}</span>'
+            f'<span class="log-trace-step-time">{html.escape(t_s)}</span>'
+            f'<span class="log-trace-step-badges">{badge_html}</span>'
+            "</div>"
+            f'<div class="log-trace-step-stage">{html.escape(action)}</div>'
+            f'<div class="log-trace-step-preview">{html.escape(preview)}</div>'
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("Показать raw details", expanded=False):
+            st.markdown('<div class="json-dark">', unsafe_allow_html=True)
+            dump = json.dumps(details_dict, ensure_ascii=False, default=str, indent=2)
+            st.code(dump, language="json")
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 def get_log_status_badge(status: str | None) -> str:
@@ -867,12 +1587,8 @@ def _logs_build_session_rows(
     return out
 
 
-def _render_logs_timeline_detail(
-    session: dict[str, Any],
-    *,
-    show_session_header: bool = True,
-) -> None:
-    """Правая панель: опциональный заголовок + читаемая цепочка + карточки событий."""
+def _render_logs_trace_header(session: dict[str, Any]) -> None:
+    """Компактный операторский заголовок трассы (правая панель, сверху)."""
     eid = str(session.get("execution_id") or "—")
     events: list[dict[str, Any]] = session.get("events") or []
     if not isinstance(events, list):
@@ -880,50 +1596,51 @@ def _render_logs_timeline_detail(
     last_at = session.get("last_at")
     route_raw = _logs_infer_route_from_events(events)
     status_s = _logs_session_final_status(events)
+    n_ev = len(events)
+    dur_ms = _logs_session_wall_duration_ms(events)
+    pm = _logs_session_provider_model(events)
     flow_ru = _logs_timeline_flow_ru(events)
-
-    if show_session_header:
-        st.markdown(
-            f"**Сессия:** {_format_dt_moscow_logs(last_at)} · "
-            f"{get_route_badge(route_raw)} {get_log_status_badge(status_s)}",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"<small>execution_id: <code>{html.escape(eid)}</code></small>",
-            unsafe_allow_html=True,
-        )
+    pm_line = html.escape(pm) if pm else "—"
+    st.markdown(
+        '<div class="logs-trace-header">'
+        '<div class="logs-trace-header-title">Трасса execution-сессии</div>'
+        '<div class="logs-trace-header-row logs-trace-header-eid">'
+        "<span>execution_id</span>"
+        f'<code>{html.escape(eid)}</code>'
+        "</div>"
+        '<div class="logs-trace-header-badges">'
+        f"{get_route_badge(route_raw)} {get_log_status_badge(status_s)}"
+        "</div>"
+        '<div class="logs-trace-header-kv">'
+        f"<span>Последняя активность (MSK)</span><span>{html.escape(_format_dt_moscow_logs(last_at))}</span>"
+        f"<span>Событий в трассе</span><span>{n_ev}</span>"
+        f"<span>Длительность (стена)</span><span>{html.escape(_logs_format_duration_ms(dur_ms))}</span>"
+        f"<span>Provider / model</span><span>{pm_line}</span>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     if flow_ru and flow_ru.replace(" → ", "").strip():
         st.markdown(
-            f'<div class="log-timeline-flow">{html.escape(flow_ru)}</div>',
+            f'<div class="logs-trace-flow-compact">{html.escape(flow_ru)}</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown("**События**", unsafe_allow_html=True)
-    for idx, ev in enumerate(events, 1):
-        details = ev.get("details")
-        details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
-        t_s = _format_dt_moscow_logs(ev.get("created_at"))
-        action = _stage_to_action(str(ev.get("stage") or ""))
-        st_l = get_russian_status(str(ev.get("status") or ""))
-        preview = _details_to_description(details, max_len=LOGS_DETAILS_PREVIEW_MAX)
-        tone = _status_tone(str(ev.get("status") or ""))
-        st.markdown(
-            f'<div class="log-timeline-card log-timeline-card--{tone}">'
-            f'<div class="log-timeline-card-head">'
-            f'<span class="log-timeline-idx">{idx}</span>'
-            f'<span class="log-timeline-time">{html.escape(t_s)}</span>'
-            "</div>"
-            f'<div class="log-timeline-action">{html.escape(action)}</div>'
-            f'<div class="log-timeline-status">{html.escape(st_l)}</div>'
-            f'<div class="log-timeline-preview">{html.escape(preview)}</div>'
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        with st.expander("Показать JSON", expanded=False):
-            st.markdown('<div class="json-dark">', unsafe_allow_html=True)
-            dump = json.dumps(details_dict, ensure_ascii=False, default=str, indent=2)
-            st.code(dump, language="json")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+def _render_logs_timeline_detail(
+    session: dict[str, Any],
+    *,
+    show_session_header: bool = True,
+) -> None:
+    """Правая панель: заголовок трассы + вертикальный компактный timeline событий."""
+    events: list[dict[str, Any]] = session.get("events") or []
+    if not isinstance(events, list):
+        events = []
+
+    if show_session_header:
+        _render_logs_trace_header(session)
+
+    _render_trace_flow_timeline(events, section_title="События (trace flow)")
 
 
 def _status_tone(raw: str | None) -> str:
@@ -1140,6 +1857,7 @@ def render_pagination_controls(
 _SPLIT_TOAST_KEYS: dict[str, str] = {
     "text": "split_toast_text",
     "rag": "split_toast_rag",
+    "image": "split_toast_image",
     "docs": "split_toast_docs",
     "logs": "split_toast_logs",
 }
@@ -1588,7 +2306,9 @@ def _render_text_request_detail(req: dict[str, Any]) -> None:
         chain_rows.append(
             {
                 "время": _format_dt_moscow_logs(ev.get("created_at")),
-                "этап": _stage_to_action(str(ev.get("stage") or "")),
+                "этап": _stage_to_action(
+                    str(ev.get("stage") or ""), ev.get("details")
+                ),
                 "status": _status_label(str(ev.get("status") or "")),
                 "details": _details_to_description(ev.get("details"), max_len=400),
             }
@@ -2593,6 +3313,209 @@ def _inject_theme_css() -> None:
           max-height: 4.2em;
           overflow: hidden;
         }
+
+        .logs-trace-header {
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 8px 10px;
+          margin: 0 0 8px 0;
+          box-sizing: border-box;
+        }
+        .logs-trace-header-title {
+          font-size: 0.62rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--accent) !important;
+          margin-bottom: 6px;
+        }
+        .logs-trace-header-row.logs-trace-header-eid {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.7rem;
+          color: var(--text-secondary) !important;
+          margin-bottom: 6px;
+        }
+        .logs-trace-header-eid code {
+          font-size: 0.72rem;
+          color: var(--text-primary) !important;
+          word-break: break-all;
+        }
+        .logs-trace-header-badges {
+          margin-bottom: 6px;
+        }
+        .logs-trace-header-kv {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+          gap: 3px 10px;
+          font-size: 0.72rem;
+          line-height: 1.25;
+        }
+        .logs-trace-header-kv span:nth-child(odd) {
+          color: var(--text-secondary) !important;
+        }
+        .logs-trace-header-kv span:nth-child(even) {
+          color: var(--text-primary) !important;
+          text-align: right;
+          word-break: break-word;
+        }
+        .logs-trace-flow-compact {
+          font-size: 0.68rem;
+          line-height: 1.3;
+          color: var(--text-muted) !important;
+          padding: 2px 0 6px 0;
+          margin: 0 0 2px 0;
+          border-bottom: 1px solid rgba(31, 42, 68, 0.55);
+          word-break: break-word;
+        }
+        .logs-trace-timeline-title {
+          font-size: 0.65rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: var(--text-secondary) !important;
+          margin: 2px 0 5px 0;
+        }
+        .log-trace-step {
+          display: flex;
+          gap: 7px;
+          align-items: flex-start;
+          margin-bottom: 2px;
+          padding-bottom: 5px;
+          border-bottom: 1px solid rgba(31, 42, 68, 0.35);
+        }
+        .log-trace-step:last-child {
+          border-bottom: none;
+          margin-bottom: 0;
+          padding-bottom: 2px;
+        }
+        .log-trace-step-marker {
+          width: 5px;
+          min-width: 5px;
+          align-self: stretch;
+          min-height: 1.5rem;
+          border-radius: 3px;
+          background: var(--border);
+          margin-top: 3px;
+        }
+        .log-trace-step--success .log-trace-step-marker {
+          background: var(--success);
+        }
+        .log-trace-step--error .log-trace-step-marker {
+          background: var(--error);
+        }
+        .log-trace-step--warning .log-trace-step-marker {
+          background: var(--warning);
+        }
+        .log-trace-step--muted .log-trace-step-marker {
+          background: var(--muted);
+        }
+        .log-trace-step-body {
+          flex: 1;
+          min-width: 0;
+        }
+        .log-trace-step-head {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 5px;
+          margin-bottom: 1px;
+        }
+        .log-trace-step-idx {
+          font-size: 0.58rem;
+          font-weight: 700;
+          color: var(--text-secondary) !important;
+        }
+        .log-trace-step-time {
+          font-size: 0.66rem;
+          color: var(--text-secondary) !important;
+        }
+        .log-trace-step-badges .log-status-badge {
+          margin-left: 0 !important;
+        }
+        .log-trace-step-stage {
+          font-size: 0.76rem;
+          font-weight: 600;
+          color: var(--text-primary) !important;
+          line-height: 1.2;
+          margin-bottom: 1px;
+        }
+        .log-trace-step-preview {
+          font-size: 0.66rem;
+          line-height: 1.26;
+          color: var(--text-secondary) !important;
+          max-height: 2.6em;
+          overflow: hidden;
+        }
+
+        .image-prompt-box {
+          font-size: 0.78rem;
+          line-height: 1.32;
+          color: var(--text-primary) !important;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 6px 9px;
+          margin: 2px 0 8px 0;
+          max-height: 7.5em;
+          overflow-y: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .image-preview-compact {
+          max-width: 320px;
+          margin: 6px 0 4px 0;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          overflow: hidden;
+        }
+        .image-asset-meta {
+          font-size: 0.68rem;
+          line-height: 1.3;
+          color: var(--text-secondary) !important;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 6px 9px;
+          margin: 4px 0 6px 0;
+          word-break: break-all;
+        }
+        .image-asset-meta .muted-path {
+          color: var(--text-muted) !important;
+          font-size: 0.64rem;
+        }
+        .image-section-title {
+          font-size: 0.68rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: var(--accent) !important;
+          margin: 10px 0 4px 0;
+        }
+
+        .logs-session-card .rag-list-item-head .rag-list-time {
+          font-weight: 650;
+        }
+        .logs-session-badges-row {
+          margin: 0 0 4px 0;
+        }
+        .logs-session-meta {
+          font-size: 0.64rem;
+          line-height: 1.28;
+          color: var(--text-secondary) !important;
+          margin-top: 5px;
+          padding-top: 4px;
+          border-top: 1px solid rgba(31, 42, 68, 0.45);
+        }
+        .logs-session-meta code {
+          font-size: 0.64rem !important;
+          color: var(--text-secondary) !important;
+          background: transparent !important;
+        }
+
         .logs-list-pane .stButton > button {
           background: var(--bg-card) !important;
           color: var(--text-primary) !important;
@@ -2734,10 +3657,19 @@ def main() -> None:
         tab_summary,
         tab_text,
         tab_rag,
+        tab_images,
         tab_docs,
         tab_logs,
     ) = st.tabs(
-        ("Обзор", "Сводка", "Text-запросы", "RAG-запросы", "Документы", "Логи")
+        (
+            "Обзор",
+            "Сводка",
+            "Text-запросы",
+            "RAG-запросы",
+            "Изображения",
+            "Документы",
+            "Логи",
+        )
     )
 
     status = svc.get_knowledge_base_status()
@@ -2767,7 +3699,9 @@ def main() -> None:
         last_succ = _overview_find_last_success_row(overview_recent)
         if last_succ:
             ls_time = _format_dt_moscow_overview(last_succ.get("created_at"))
-            ls_action = _stage_to_action(last_succ.get("stage"))
+            ls_action = _stage_to_action(
+                last_succ.get("stage"), last_succ.get("details")
+            )
             last_success_inner = (
                 f"{html.escape(ls_time)} — {html.escape(ls_action)} "
                 f'{_overview_log_status_badge_html("success")}'
@@ -3527,6 +4461,281 @@ def main() -> None:
                             )
                             _render_rag_event_detail(selected_ev)
 
+    with tab_images:
+        st.subheader("Изображения")
+        st.caption(
+            "Операторский журнал генераций из `processing_logs`. Список строится по последним "
+            f"{IMAGE_LIST_LOG_CAP} строкам журнала; превью файла загружается только для выбранной сессии."
+        )
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            st.info(
+                "Раздел недоступен: задайте переменную окружения `DATABASE_URL` "
+                "и убедитесь, что таблица `processing_logs` заполняется."
+            )
+        else:
+            img_sample = svc.get_recent_logs(IMAGE_LIST_LOG_CAP)
+            all_image_sessions = _image_build_sessions_from_rows(img_sample)
+            if not all_image_sessions:
+                st.markdown(
+                    '<div class="ops-dashboard-card">'
+                    '<div class="logs-trace-header-title">Генерации изображений</div>'
+                    '<p class="panel-footnote" style="border:none;padding-top:0;margin:0;">'
+                    "Генерации изображений пока отсутствуют.</p></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                img_page = int(st.session_state.get("image_page", 0))
+                img_page_size_seed = int(st.session_state.get("image_page_size", 50))
+                n_total = len(all_image_sessions)
+                has_next_img = (img_page + 1) * img_page_size_seed < n_total
+                img_page, img_page_size = render_pagination_controls(
+                    "image",
+                    total_items=n_total,
+                    has_next=has_next_img,
+                    page_size_label="Сколько сессий показать",
+                )
+                page_items, _, _ = get_paginated_slice(
+                    all_image_sessions, img_page, img_page_size
+                )
+                st.caption(f"Сессий генерации в выборке журнала: {n_total}")
+                show_split_selection_toast("image")
+                render_split_pane_titles(
+                    list_title="Журнал генераций изображений",
+                    detail_title="Трассировка выбранной генерации",
+                )
+                list_col, detail_col = st.columns((0.35, 0.65))
+                selected_img_eid = str(
+                    st.session_state.get("selected_image_execution_id", "")
+                )
+                with list_col:
+                    st.markdown('<div class="logs-list-pane">', unsafe_allow_html=True)
+                    for idx, sess in enumerate(page_items):
+                        eid = str(sess.get("execution_id") or "")
+                        sample_evs = sess.get("sample_events") or []
+                        if not isinstance(sample_evs, list):
+                            sample_evs = []
+                        last_at = sess.get("last_at")
+                        route_n = _logs_infer_route_from_events(sample_evs)
+                        status_s = _logs_session_final_status(sample_evs)
+                        preview = _image_prompt_preview_from_events(sample_evs) or "—"
+                        pm = _logs_session_provider_model(sample_evs)
+                        assets_s = _image_collect_assets_from_events(sample_evs)
+                        gen_n = _image_generation_count_hint(sample_evs, len(assets_s))
+                        dt_label = _format_dt_moscow_logs(last_at)
+                        is_selected = bool(selected_img_eid) and eid == selected_img_eid
+                        item_cls = (
+                            "rag-list-item logs-session-card rag-list-item-selected"
+                            if is_selected
+                            else "rag-list-item logs-session-card"
+                        )
+                        badge_sel = (
+                            '<span class="rag-selected-badge">выбрано</span>'
+                            if is_selected
+                            else ""
+                        )
+                        eid_short = _short_execution_id(eid)
+                        pm_block = ""
+                        if pm:
+                            pmt = pm if len(pm) <= 100 else pm[:99] + "…"
+                            pm_block = (
+                                '<div class="logs-session-meta" style="border-top:none;'
+                                'padding-top:3px;margin-top:2px;">'
+                                f"{html.escape(pmt)}</div>"
+                            )
+                        st.markdown(
+                            f'<div class="{item_cls}">'
+                            '<div class="rag-list-item-head">'
+                            f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
+                            f"{badge_sel}</div>"
+                            '<div class="logs-session-badges-row">'
+                            '<div class="route-badge-line">'
+                            f"{get_route_badge(route_n)} {get_log_status_badge(status_s)}"
+                            "</div></div>"
+                            f'<div class="rag-list-query">{html.escape(preview)}</div>'
+                            f"{pm_block}"
+                            '<div class="logs-session-meta">'
+                            f'<code class="log-eid-short">{html.escape(eid_short)}</code>'
+                            f" · событий (в выборке): {len(sample_evs)}"
+                            f" · файлов/оценка: {gen_n}"
+                            "</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            split_open_button_label(is_selected),
+                            key=f"image_open_{idx}_{eid}",
+                            help="Открыть трассировку справа",
+                        ):
+                            st.session_state["selected_image_execution_id"] = eid
+                            flag_split_selection_toast("image")
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with detail_col:
+                    reset_invalid_selection(
+                        page_items,
+                        "selected_image_execution_id",
+                        lambda s: str(s.get("execution_id") or ""),
+                    )
+                    selected_img_eid = str(
+                        st.session_state.get("selected_image_execution_id", "")
+                    )
+                    if not selected_img_eid:
+                        st.info("Выберите генерацию слева.")
+                    else:
+                        full_rows = svc.get_logs_events_for_execution_ids(
+                            [selected_img_eid]
+                        )
+                        if not full_rows:
+                            st.warning("Не удалось загрузить события для execution_id.")
+                        else:
+                            events = list(full_rows)
+                            if not any(_image_log_row_matches(r) for r in events):
+                                st.markdown(
+                                    '<span class="route-badge route-badge--warning">'
+                                    "В полной трассе нет признаков image-generation"
+                                    "</span>",
+                                    unsafe_allow_html=True,
+                                )
+                            last_times = [
+                                r.get("created_at")
+                                for r in events
+                                if isinstance(r.get("created_at"), datetime)
+                            ]
+                            last_at = max(last_times) if last_times else None
+                            assets = _image_collect_assets_from_events(events)
+                            prompts = _image_extract_prompts_from_events(events)
+                            _render_image_generation_summary_html(
+                                execution_id=selected_img_eid,
+                                events=events,
+                                assets=assets,
+                            )
+                            st.markdown(
+                                '<div class="image-section-title">A. Prompt</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _render_prompt_subsection(
+                                "Исходный запрос", prompts.get("original")
+                            )
+                            _render_prompt_subsection(
+                                "Уточнённый промпт (текст)",
+                                prompts.get("enhanced"),
+                                empty_label="не сохранён",
+                            )
+                            _render_prompt_subsection(
+                                "Image prompt (провайдер)",
+                                prompts.get("image_prompt"),
+                                empty_label="не сохранён",
+                            )
+                            _render_prompt_subsection(
+                                "Негативный prompt", prompts.get("negative")
+                            )
+                            st.markdown(
+                                '<div class="image-section-title">'
+                                "B. Сгенерированные ассеты</div>",
+                                unsafe_allow_html=True,
+                            )
+                            if not assets:
+                                st.markdown(
+                                    '<p class="panel-footnote" style="border:none;padding:0;">'
+                                    "В логах не найдено путей к файлам изображений.</p>",
+                                    unsafe_allow_html=True,
+                                )
+                            for a in assets:
+                                raw_path = a.get("path")
+                                rs = str(raw_path) if raw_path else ""
+                                url_hint = a.get("provider_url") or a.get("url")
+                                http_url = _safe_image_http_url(
+                                    str(url_hint) if url_hint else None
+                                )
+                                fn_meta = a.get("filename")
+                                if isinstance(fn_meta, str) and fn_meta.strip():
+                                    fn = fn_meta.strip()
+                                else:
+                                    try:
+                                        fn = Path(rs).name if rs else "—"
+                                    except Exception:
+                                        fn = "—"
+                                p_resolved = _safe_resolved_asset_path(rs or None)
+                                sz_s = ""
+                                sz_meta = a.get("size")
+                                if sz_meta is not None:
+                                    try:
+                                        sz_s = _format_bytes(int(sz_meta))
+                                    except (TypeError, ValueError, OSError):
+                                        sz_s = ""
+                                if p_resolved and not sz_s:
+                                    try:
+                                        sz_s = _format_bytes(p_resolved.stat().st_size)
+                                    except OSError:
+                                        sz_s = ""
+                                ca = a.get("created_at")
+                                ca_s = (
+                                    _format_dt_moscow_logs(ca)
+                                    if ca is not None
+                                    else "—"
+                                )
+                                url_line = (
+                                    f'<br/>URL: <span class="muted-path">{html.escape(http_url)}</span>'
+                                    if http_url
+                                    else ""
+                                )
+                                st.markdown(
+                                    f'<div class="image-asset-meta">'
+                                    f"<strong>{html.escape(fn)}</strong><br/>"
+                                    f'<span class="muted-path">{html.escape(rs or "—")}</span>'
+                                    f"{url_line}"
+                                    f"{('<br/>размер: ' + html.escape(sz_s)) if sz_s else ''}"
+                                    f"<br/>создано (событие): {html.escape(ca_s)}"
+                                    "</div>",
+                                    unsafe_allow_html=True,
+                                )
+                                preview_ok = False
+                                if p_resolved:
+                                    try:
+                                        st.image(str(p_resolved), width=320)
+                                        with st.expander("Полный размер превью", expanded=False):
+                                            st.image(str(p_resolved))
+                                        preview_ok = True
+                                    except Exception:
+                                        preview_ok = False
+                                if not preview_ok and http_url:
+                                    try:
+                                        st.image(http_url, width=320)
+                                        with st.expander("Полный размер (URL)", expanded=False):
+                                            st.image(http_url)
+                                        preview_ok = True
+                                    except Exception:
+                                        preview_ok = False
+                                if not preview_ok:
+                                    st.markdown(
+                                        '<span class="route-badge route-badge--muted">'
+                                        "изображение недоступно"
+                                        "</span>",
+                                        unsafe_allow_html=True,
+                                    )
+                            st.markdown(
+                                '<div class="image-section-title">'
+                                "C. Технические метаданные</div>",
+                                unsafe_allow_html=True,
+                            )
+                            with st.expander("Показать агрегированные метаданные", expanded=False):
+                                st.json(
+                                    {
+                                        "execution_id": selected_img_eid,
+                                        "n_events": len(events),
+                                        "last_at_msk": _format_dt_moscow_logs(last_at),
+                                        "assets_detected": [a.get("path") for a in assets],
+                                        "final_status": _logs_session_final_status(events),
+                                    }
+                                )
+                            st.markdown(
+                                '<div class="image-section-title">D. Timeline</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _render_trace_flow_timeline(
+                                events, section_title="Цепочка событий"
+                            )
+
     with tab_docs:
         st.subheader("Документы")
         st.caption("Управление базой знаний: загрузка, поиск, версии и переиндексация.")
@@ -3849,8 +5058,8 @@ def main() -> None:
     with tab_logs:
         st.subheader("Логи")
         st.caption(
-            "Журнал обработки: одна строка списка = сессия (`execution_id`). "
-            "Справа — timeline событий по времени (MSK)."
+            "Операторская консоль аудита: слева — журнал execution-сессий, справа — трассировка "
+            "событий (MSK). Технические raw details — только в свёртках."
         )
         total_exec = int(svc.get_logs_execution_ids_total())
         if total_exec <= 0:
@@ -3878,8 +5087,8 @@ def main() -> None:
 
             show_split_selection_toast("logs")
             render_split_pane_titles(
-                list_title="Список сессий (execution_id)",
-                detail_title="Детали выбранной сессии",
+                list_title="Журнал execution-сессий",
+                detail_title="Трассировка выбранной execution-сессии",
             )
             list_col, detail_col = st.columns((0.35, 0.65))
             selected_logs_eid = str(
@@ -3896,11 +5105,21 @@ def main() -> None:
                     route_n = _logs_infer_route_from_events(events)
                     status_s = _logs_session_final_status(events)
                     preview = _logs_session_preview(events) or "—"
+                    n_ev = len(events)
+                    dur_s = _logs_format_duration_ms(
+                        _logs_session_wall_duration_ms(events)
+                    )
+                    max_lat = _logs_session_max_step_latency_ms(events)
+                    lat_part = (
+                        f" · макс. шаг: {max_lat} мс"
+                        if max_lat is not None
+                        else ""
+                    )
                     is_selected = bool(selected_logs_eid) and eid == selected_logs_eid
                     item_cls = (
-                        "rag-list-item rag-list-item-selected"
+                        "rag-list-item logs-session-card rag-list-item-selected"
                         if is_selected
-                        else "rag-list-item"
+                        else "rag-list-item logs-session-card"
                     )
                     badge_sel = (
                         '<span class="rag-selected-badge">выбрано</span>'
@@ -3914,11 +5133,17 @@ def main() -> None:
                         '<div class="rag-list-item-head">'
                         f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
                         f"{badge_sel}</div>"
+                        '<div class="logs-session-badges-row">'
                         f'<div class="route-badge-line">'
-                        f'<code class="log-eid-short">{html.escape(eid_short)}</code> '
                         f"{get_route_badge(route_n)} {get_log_status_badge(status_s)}"
-                        "</div>"
+                        "</div></div>"
                         f'<div class="rag-list-query">{html.escape(preview)}</div>'
+                        '<div class="logs-session-meta">'
+                        f'<code class="log-eid-short">{html.escape(eid_short)}</code>'
+                        f" · событий: {n_ev}"
+                        f" · длит.: {html.escape(dur_s)}"
+                        f"{lat_part if lat_part else ''}"
+                        "</div>"
                         "</div>",
                         unsafe_allow_html=True,
                     )
@@ -3942,7 +5167,7 @@ def main() -> None:
                     st.session_state.get("selected_logs_execution_id", "")
                 )
                 if not selected_logs_eid:
-                    st.info("Выберите запрос слева.")
+                    st.info("Выберите execution-сессию слева.")
                 else:
                     selected_sess = next(
                         (
@@ -3954,29 +5179,11 @@ def main() -> None:
                     )
                     if selected_sess is None:
                         st.session_state.pop("selected_logs_execution_id", None)
-                        st.info("Выберите запрос слева.")
+                        st.info("Выберите execution-сессию слева.")
                     else:
-                        evs = selected_sess.get("events") or []
-                        if not isinstance(evs, list):
-                            evs = []
-                        route_n = _logs_infer_route_from_events(evs)
-                        status_s = _logs_session_final_status(evs)
-                        pv = _logs_session_preview(evs) or "—"
-                        render_split_selected_summary(
-                            short_id=_short_execution_id(selected_logs_eid),
-                            status_line=get_russian_status(status_s),
-                            route_or_type_html=(
-                                f"{get_route_badge(route_n)} "
-                                f"{get_log_status_badge(status_s)}"
-                            ),
-                            timestamp=_format_dt_moscow_logs(
-                                selected_sess.get("last_at")
-                            ),
-                            preview=pv,
-                        )
                         _render_logs_timeline_detail(
                             selected_sess,
-                            show_session_header=False,
+                            show_session_header=True,
                         )
 
 

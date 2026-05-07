@@ -7,7 +7,7 @@ from pathlib import Path
 
 import telebot
 
-from core.orchestrator import PromptOrchestrator
+from core.orchestrator import PromptOrchestrator, build_output_image_records
 from providers.gigachat_provider import GigaChatProvider
 from providers.openai_chat_provider import OpenAIChatProvider
 from providers.rag_embeddings import build_openai_embeddings
@@ -408,6 +408,7 @@ def create_bot() -> telebot.TeleBot:
                         traceback.print_exc()
                 return
 
+            is_image_request = orchestrator.route_request(text) == "image_generation"
             execution_id = str(uuid.uuid4())
             intake_id = lifecycle.create_intake_event(
                 execution_id=execution_id,
@@ -416,20 +417,21 @@ def create_bot() -> telebot.TeleBot:
                 text_preview=text,
                 original_char_length=len(text),
             )
+            intake_details: dict = {
+                "mode": "image" if is_image_request else "text",
+                "query_preview": _safe_query_preview_for_log(text, max_len=200),
+                "user_text": _safe_answer_text_for_log(text, max_len=3000),
+            }
+            if is_image_request:
+                intake_details["route"] = "image_generation"
             lifecycle.log_processing_event(
                 execution_id=execution_id,
                 intake_event_id=intake_id,
                 stage="intake_received",
                 status="success" if intake_id else "error",
-                details={
-                    "mode": "text",
-                    "query_preview": _safe_query_preview_for_log(text, max_len=200),
-                    "user_text": _safe_answer_text_for_log(text, max_len=3000),
-                },
+                details=intake_details,
                 error_text=None if intake_id else "intake_events insert failed",
             )
-
-            is_image_request = orchestrator.route_request(text) == "image_generation"
             if is_image_request:
                 bot.send_message(
                     message.chat.id,
@@ -457,12 +459,47 @@ def create_bot() -> telebot.TeleBot:
                 try:
                     with open(result_text, "rb") as image_file:
                         bot.send_photo(message.chat.id, image_file)
+                    usage_done = orchestrator.get_last_text_usage_snapshot()
+                    model_done = orchestrator.get_last_text_model_snapshot()
+                    img_snap = orchestrator.get_last_image_generation_snapshot()
+                    prov_url = img_snap.get("provider_url") or img_snap.get("image_url")
+                    im_model = str(img_snap.get("model") or "").strip()
+                    details_done: dict = {
+                        "route": "image_generation",
+                        "generation_completed": True,
+                        "output_images": build_output_image_records(
+                            result_text,
+                            provider_url=str(prov_url) if prov_url else None,
+                            provider=str(img_snap.get("provider") or "") or None,
+                            model=im_model or None,
+                        ),
+                        "latency_ms": latency_ms,
+                        "provider": str(img_snap.get("provider") or "").strip() or "proxy",
+                    }
+                    if im_model:
+                        details_done["model"] = im_model
+                    for k in (
+                        "input_tokens",
+                        "output_tokens",
+                        "total_tokens",
+                        "image_tokens",
+                        "cost_usd",
+                        "usage",
+                    ):
+                        if k in img_snap and img_snap.get(k) is not None:
+                            details_done[k] = img_snap[k]
+                    if "input_tokens" in usage_done:
+                        details_done["input_tokens"] = usage_done["input_tokens"]
+                    if "output_tokens" in usage_done:
+                        details_done["output_tokens"] = usage_done["output_tokens"]
+                    if "total_tokens" in usage_done:
+                        details_done["total_tokens"] = usage_done["total_tokens"]
                     lifecycle.log_processing_event(
                         execution_id=execution_id,
                         intake_event_id=intake_id,
                         stage="processing_done",
                         status="success",
-                        details={"route": "image_generation"},
+                        details=details_done,
                     )
                 except Exception as send_exc:
                     traceback.print_exc()

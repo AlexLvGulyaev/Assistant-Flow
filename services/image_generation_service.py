@@ -36,7 +36,6 @@ class ImageGenerationService:
 
         provider = self._providers[normalized_provider]
         result = provider.generate_image(prompt)
-
         model_name = (
             self._config.openai_image_model
             if normalized_provider == "openai"
@@ -52,4 +51,5 @@ class ImageGenerationService:
             status=result.get("status"),
             error_text=result.get("error_text"),
         )
+        result["model"] = model_name
         return result

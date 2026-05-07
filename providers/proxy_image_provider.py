@@ -22,14 +22,21 @@ class ProxyImageProvider(ImageProvider):
         start_ts = time.perf_counter()
         result: Dict[str, Any] = {
             "provider": "proxy",
+            "model": self._model,
             "image_path": None,
             "duration_ms": None,
             "status": "error",
             "error_text": None,
+            "provider_url": None,
         }
 
         try:
             response = self._client.images.generate(model=self._model, prompt=prompt)
+            if getattr(response, "data", None) and response.data:
+                image_item = response.data[0]
+                url_hint = getattr(image_item, "url", None)
+                if url_hint:
+                    result["provider_url"] = str(url_hint)
             image_path = self._save_response_image(response)
             result["image_path"] = str(image_path)
             result["status"] = "success"
