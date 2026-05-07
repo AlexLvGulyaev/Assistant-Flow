@@ -3,6 +3,7 @@ from typing import Dict
 from providers.image_provider import ImageProvider
 from providers.openai_image_provider import OpenAIImageProvider
 from providers.proxy_image_provider import ProxyImageProvider
+from services.asset_repository_factory import create_asset_repository
 from utils.config import AppConfig
 from utils.request_logger import RequestLogger
 
@@ -11,16 +12,19 @@ class ImageGenerationService:
     def __init__(self, config: AppConfig, request_logger: RequestLogger) -> None:
         self._config = config
         self._request_logger = request_logger
+        asset_repository = create_asset_repository(config)
         self._providers: Dict[str, ImageProvider] = {
             "openai": OpenAIImageProvider(
                 api_key=config.openai_api_key,
                 model=config.openai_image_model,
+                asset_repository=asset_repository,
             ),
             "proxy": ProxyImageProvider(
                 api_key=config.proxy_api_key,
                 base_url=config.proxy_openai_base_url
                 or "https://api.proxyapi.ru/openai/v1",
                 model=config.proxy_image_model,
+                asset_repository=asset_repository,
             ),
         }
 

@@ -1507,7 +1507,12 @@ def _format_image_provider_usage_line(u: dict[str, Any] | None) -> str:
 
 
 def _safe_resolved_asset_path(path_str: str | None) -> Path | None:
-    """Путь к файлу только под корнем проекта; иначе None. Без исключений наружу."""
+    """
+    Безопасный путь к asset-файлу.
+    Разрешает:
+    - корень проекта (legacy outputs/...)
+    - configured ASSET_STORAGE_DIR (новый AssetRepository layout)
+    """
     if not path_str or not str(path_str).strip():
         return None
     try:
@@ -1517,8 +1522,30 @@ def _safe_resolved_asset_path(path_str: str | None) -> Path | None:
             p = (ROOT / p).resolve()
         else:
             p = p.resolve()
-        root = ROOT.resolve()
-        p.relative_to(root)
+        allowed_roots: list[Path] = [ROOT.resolve()]
+        try:
+            cfg = load_config()
+            cfg_asset = Path(cfg.asset_storage_dir)
+            if not cfg_asset.is_absolute():
+                cfg_asset = (ROOT / cfg_asset).resolve()
+            else:
+                cfg_asset = cfg_asset.resolve()
+            if cfg_asset not in allowed_roots:
+                allowed_roots.append(cfg_asset)
+        except Exception:
+            # Keep legacy behavior if config cannot be read.
+            pass
+
+        in_allowed_root = False
+        for ar in allowed_roots:
+            try:
+                p.relative_to(ar)
+                in_allowed_root = True
+                break
+            except ValueError:
+                continue
+        if not in_allowed_root:
+            return None
         if p.is_file():
             return p
     except (OSError, ValueError, RuntimeError):

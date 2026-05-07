@@ -1,22 +1,26 @@
 import base64
 import time
 import traceback
-import uuid
-from pathlib import Path
 from typing import Any, Dict
 
 import requests
 from openai import OpenAI
 
 from providers.image_provider import ImageProvider
+from services.asset_repository import AssetRepository
 
 
 class ProxyImageProvider(ImageProvider):
-    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        asset_repository: AssetRepository,
+    ) -> None:
         self._model = model
         self._client = OpenAI(api_key=api_key, base_url=base_url)
-        self._output_dir = Path("outputs")
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._asset_repository = asset_repository
 
     def generate_image(self, prompt: str) -> Dict[str, Any]:
         start_ts = time.perf_counter()
@@ -37,8 +41,10 @@ class ProxyImageProvider(ImageProvider):
                 url_hint = getattr(image_item, "url", None)
                 if url_hint:
                     result["provider_url"] = str(url_hint)
-            image_path = self._save_response_image(response)
+            asset_ref = self._save_response_image(response)
+            image_path = self._asset_repository.resolve_path(asset_ref)
             result["image_path"] = str(image_path)
+            result["asset_ref"] = asset_ref.relative_path
             result["status"] = "success"
             return result
         except Exception:
@@ -48,24 +54,32 @@ class ProxyImageProvider(ImageProvider):
         finally:
             result["duration_ms"] = int((time.perf_counter() - start_ts) * 1000)
 
-    def _save_response_image(self, response: Any) -> Path:
+    def _save_response_image(self, response: Any) -> Any:
         if not getattr(response, "data", None):
             raise RuntimeError("Proxy image response has no data")
 
         image_item = response.data[0]
-        filename = self._output_dir / f"proxy_{uuid.uuid4().hex}.png"
+        filename = "proxy_generated.png"
 
         b64_data = getattr(image_item, "b64_json", None)
         if b64_data:
             binary = base64.b64decode(b64_data)
-            filename.write_bytes(binary)
-            return filename
+            return self._asset_repository.save_bytes(
+                binary,
+                namespace="images",
+                filename=filename,
+                content_type="image/png",
+            )
 
         image_url = getattr(image_item, "url", None)
         if image_url:
-            response = requests.get(image_url, timeout=30)
-            response.raise_for_status()
-            filename.write_bytes(response.content)
-            return filename
+            download_response = requests.get(image_url, timeout=30)
+            download_response.raise_for_status()
+            return self._asset_repository.save_bytes(
+                download_response.content,
+                namespace="images",
+                filename=filename,
+                content_type="image/png",
+            )
 
         raise RuntimeError("Proxy image payload has neither b64_json nor url")

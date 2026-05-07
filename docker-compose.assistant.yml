@@ -33,6 +33,8 @@ services:
     volumes:
       - ./data/documents:/app/data/documents
       - ./outputs:/app/outputs
+      # AssetRepository persistent storage. Do not remove unless full asset reset is intended.
+      - ./storage:/app/storage
     networks:
       - assistant-net
       - n8n_default
@@ -48,6 +50,8 @@ services:
     volumes:
       - ./data/documents:/app/data/documents
       - ./outputs:/app/outputs
+      # Admin UI reads AssetRepository files for previews.
+      - ./storage:/app/storage:ro
     command:
       - streamlit
       - run
