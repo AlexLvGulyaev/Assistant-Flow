@@ -16,6 +16,7 @@ from repositories.document_repository import DocumentRepository
 from repositories.processing_logs_repository import ProcessingLogsRepository
 from services.admin_knowledge_indexer import AdminKnowledgeIndexer
 from services.asset_repository_factory import create_asset_repository
+from services.async_job_service import AsyncJob, AsyncJobService
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
 from services.runtime_lifecycle_service import RuntimeLifecycleService
@@ -67,6 +68,7 @@ class AdminService:
         self._documents_dir = _resolve_dir(self._config.rag_documents_dir)
         self._chroma_dir = _resolve_dir(self._config.chroma_persist_dir)
         self._asset_repository = create_asset_repository(self._config)
+        self._async_jobs = AsyncJobService()
         self._doc_repo = DocumentRepository()
         self._proc_repo = ProcessingLogsRepository()
         self._lifecycle = RuntimeLifecycleService()
@@ -288,6 +290,22 @@ class AdminService:
             files_indexed_ok=report.files_indexed_ok,
             files_found=report.files_found,
             used_postgres=report.used_postgres,
+        )
+
+    def enqueue_reindex_job(
+        self,
+        *,
+        payload: dict[str, Any] | None = None,
+        max_attempts: int = 3,
+    ) -> AsyncJob:
+        """
+        Async foundation helper (P5.3b): enqueue `rag_reindex` job only.
+        Current UI/runtime still use synchronous `run_reindex()` fallback.
+        """
+        return self._async_jobs.create_job(
+            job_type="rag_reindex",
+            payload_json=payload or {},
+            max_attempts=max_attempts,
         )
 
     def get_recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
