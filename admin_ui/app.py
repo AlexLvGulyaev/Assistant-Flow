@@ -29,7 +29,6 @@ import streamlit as st
 
 from services.admin_service import AdminService
 from services.asset_repository_factory import create_asset_repository
-from services.async_reindex_worker import AsyncReindexWorker
 from services.healthcheck_service import (
     HealthSnapshot,
     format_health_badge_status,
@@ -4695,7 +4694,6 @@ def _render_async_jobs_block(svc: AdminService) -> None:
     stale_running = _is_stale_running(selected)
     attempts = int(selected.get("attempts") or 0)
     max_attempts = int(selected.get("max_attempts") or 0)
-    selected_status = str(selected.get("status") or "").strip().lower()
     created_at = selected.get("created_at")
     started_at = selected.get("started_at")
     finished_at = selected.get("finished_at")
@@ -4710,36 +4708,6 @@ def _render_async_jobs_block(svc: AdminService) -> None:
     if stale_running:
         status_row += ' <span class="route-badge route-badge--warning">stale running</span>'
     st.markdown(status_row, unsafe_allow_html=True)
-
-    retry_allowed = selected_status in {"failed", "retry_scheduled"} and attempts < max_attempts
-    retry_caption = (
-        "Retry доступен: status in {failed, retry_scheduled} и attempts < max_attempts."
-    )
-    st.caption(retry_caption)
-    if st.button(
-        "Retry selected job",
-        key=f"async_jobs_retry_{selected_job_id}",
-        disabled=not retry_allowed,
-    ):
-        prev_status = selected_status or "unknown"
-        try:
-            retried = svc.retry_async_job(selected_job_id)
-            st.success(
-                "Retry queued: "
-                f"job_id={retried.id} · previous={prev_status} · new={retried.status} · "
-                f"attempts={retried.attempts}/{retried.max_attempts}"
-            )
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Retry failed: {exc}")
-
-    if not retry_allowed:
-        if selected_status not in {"failed", "retry_scheduled"}:
-            st.info("Retry недоступен: поддерживаются только failed / retry_scheduled.")
-        elif attempts >= max_attempts:
-            st.warning(
-                f"Retry недоступен: attempts exhausted ({attempts}/{max_attempts})."
-            )
 
     render_compact_meta_row("wait_duration", _duration_s(created_at, started_at))
     render_compact_meta_row("run_duration", _duration_s(started_at, finished_at))
@@ -5889,97 +5857,6 @@ def main() -> None:
                 st.caption(f"Чанков в коллекции Chroma: {result.collection_count}")
                 if result.error_message:
                     st.warning(result.error_message)
-            st.caption("Async (manual): controlled one-job lifecycle без background loop.")
-            if st.button("Создать async reindex job", key="create_async_reindex_job"):
-                try:
-                    job = svc.enqueue_reindex_job(
-                        payload={
-                            "source": "admin_ui",
-                            "requested_by": "operator",
-                            "mode": "manual",
-                        }
-                    )
-                    st.success(
-                        f"Async job создан: id={job.id} · type={job.job_type} · status={job.status}"
-                    )
-                except Exception as exc:
-                    st.error(f"Не удалось создать async job: {exc}")
-            if st.button("Выполнить один async job", key="run_one_async_reindex_job"):
-                try:
-                    worker = AsyncReindexWorker(admin_service=svc)
-                    with st.spinner("Выполняется один async job…"):
-                        outcome = worker.run_single_job()
-                    if not outcome.claimed:
-                        st.info("Claimable queued jobs отсутствуют.")
-                    else:
-                        duration_ms = outcome.details.get("duration_ms")
-                        duration_label = (
-                            f"{int(duration_ms)} ms"
-                            if isinstance(duration_ms, (int, float))
-                            else "—"
-                        )
-                        err_summary = str(
-                            outcome.details.get("error_message")
-                            or outcome.details.get("error_type")
-                            or ""
-                        ).strip()
-                        st.success(
-                            "Async job выполнен: "
-                            f"id={outcome.job_id} · prev=queued/running · "
-                            f"current={outcome.status} · duration={duration_label}"
-                        )
-                        if err_summary:
-                            st.warning(f"Ошибка: {err_summary}")
-                        with st.expander("Outcome details", expanded=False):
-                            render_json_preview(outcome.details)
-                except Exception as exc:
-                    st.error(f"Ошибка выполнения async job: {exc}")
-            batch_jobs = int(
-                st.number_input(
-                    "Batch max_jobs",
-                    min_value=1,
-                    max_value=5,
-                    value=3,
-                    step=1,
-                    key="run_batch_async_jobs_limit",
-                )
-            )
-            if st.button("Выполнить batch async jobs", key="run_batch_async_reindex_jobs"):
-                try:
-                    worker = AsyncReindexWorker(admin_service=svc)
-                    with st.spinner("Выполняется batch async jobs…"):
-                        summary = worker.run_batch(max_jobs=batch_jobs)
-                    if summary.claimed == 0:
-                        st.info("Claimable queued jobs отсутствуют.")
-                    else:
-                        st.success(
-                            "Batch выполнен: "
-                            f"claimed={summary.claimed} · succeeded={summary.succeeded} · "
-                            f"failed={summary.failed} · retry_scheduled={summary.retry_scheduled} · "
-                            f"duration={summary.total_duration_ms} ms"
-                        )
-                    st.caption(
-                        "Batch limits: "
-                        f"requested={summary.requested_max_jobs} · applied={summary.applied_max_jobs} (hard cap 5)"
-                    )
-                    if summary.errors:
-                        st.warning("Ошибки в batch: " + " | ".join(summary.errors[:3]))
-                    with st.expander("Batch summary details", expanded=False):
-                        render_json_preview(
-                            {
-                                "requested_max_jobs": summary.requested_max_jobs,
-                                "applied_max_jobs": summary.applied_max_jobs,
-                                "executed_jobs": summary.executed_jobs,
-                                "claimed": summary.claimed,
-                                "succeeded": summary.succeeded,
-                                "failed": summary.failed,
-                                "retry_scheduled": summary.retry_scheduled,
-                                "total_duration_ms": summary.total_duration_ms,
-                                "errors": summary.errors,
-                            }
-                        )
-                except Exception as exc:
-                    st.error(f"Ошибка batch выполнения async jobs: {exc}")
         with tb3:
             search_query = st.text_input(
                 "Search",
@@ -6227,7 +6104,8 @@ def main() -> None:
             "Операторская консоль аудита: слева — журнал execution-сессий, справа — трассировка "
             "событий (MSK). Технические raw details — только в свёртках."
         )
-        _render_async_jobs_block(svc)
+        with st.expander("Developer / Async jobs diagnostics", expanded=False):
+            _render_async_jobs_block(svc)
         st.markdown("<hr/>", unsafe_allow_html=True)
         total_exec = int(svc.get_logs_execution_ids_total())
         if total_exec <= 0:
