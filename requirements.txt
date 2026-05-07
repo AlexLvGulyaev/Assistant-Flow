@@ -3,6 +3,8 @@ python-dotenv
 openai
 pyTelegramBotAPI
 streamlit
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
 pandas
 psycopg[binary]>=3.1
 chromadb>=0.5.0
