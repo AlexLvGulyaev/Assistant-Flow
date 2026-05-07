@@ -4271,6 +4271,83 @@ def _render_tab_overview(
 
 
 
+_ASYNC_JOB_STALE_RUNNING_MINUTES = 10
+
+
+def _async_job_status_badge(status: str | None, *, stale_running: bool = False) -> str:
+    st_norm = (status or "").strip().lower()
+    label_map = {
+        "queued": "queued",
+        "running": "running",
+        "succeeded": "succeeded",
+        "failed": "failed",
+        "retry_scheduled": "retry_scheduled",
+        "cancelled": "cancelled",
+    }
+    tone_map = {
+        "queued": "muted",
+        "running": "info",
+        "succeeded": "success",
+        "failed": "error",
+        "retry_scheduled": "warning",
+        "cancelled": "muted",
+    }
+    tone = tone_map.get(st_norm, "muted")
+    label = label_map.get(st_norm, st_norm or "unknown")
+    if stale_running and st_norm == "running":
+        tone = "warning"
+        label = "running · stale"
+    return (
+        f'<span class="route-badge route-badge--{tone}">'
+        f"{html.escape(label)}</span>"
+    )
+
+
+def _duration_s(start_dt: Any, end_dt: Any) -> str:
+    if not isinstance(start_dt, datetime) or not isinstance(end_dt, datetime):
+        return "—"
+    try:
+        sec = int((end_dt - start_dt).total_seconds())
+    except Exception:
+        return "—"
+    if sec < 0:
+        return "—"
+    if sec < 60:
+        return f"{sec}s"
+    mm, ss = divmod(sec, 60)
+    if mm < 60:
+        return f"{mm}m {ss}s"
+    hh, mm = divmod(mm, 60)
+    return f"{hh}h {mm}m {ss}s"
+
+
+def _is_stale_running(job: dict[str, Any]) -> bool:
+    status = str(job.get("status") or "").strip().lower()
+    started_at = job.get("started_at")
+    if status != "running" or not isinstance(started_at, datetime):
+        return False
+    now_msk_dt = datetime.now(moscow_tz)
+    started_msk = (
+        started_at.astimezone(moscow_tz)
+        if started_at.tzinfo is not None
+        else started_at.replace(tzinfo=moscow_tz)
+    )
+    age_sec = int((now_msk_dt - started_msk).total_seconds())
+    return age_sec >= _ASYNC_JOB_STALE_RUNNING_MINUTES * 60
+
+
+def _render_async_json_preview(title: str, data: Any) -> None:
+    payload = data if data not in (None, "") else {}
+    with st.expander(title, expanded=False):
+        if isinstance(payload, (dict, list)) and len(payload) == 0:
+            st.markdown(
+                '<span class="route-badge route-badge--muted">{}</span>',
+                unsafe_allow_html=True,
+            )
+            return
+        render_json_preview(payload)
+
+
 def _render_async_jobs_block(svc: AdminService) -> None:
     st.markdown(panel_section_title_html("Async Jobs"), unsafe_allow_html=True)
     st.caption("Read-only обзор `async_jobs` (без автозапуска worker).")
@@ -4329,17 +4406,27 @@ def _render_async_jobs_block(svc: AdminService) -> None:
 
     rows = []
     for j in jobs:
+        stale_running = _is_stale_running(j)
         attempts = int(j.get("attempts") or 0)
         max_attempts = int(j.get("max_attempts") or 0)
+        created_at = j.get("created_at")
+        started_at = j.get("started_at")
+        finished_at = j.get("finished_at")
+        status_txt = str(j.get("status") or "—")
+        if stale_running:
+            status_txt = f"{status_txt} (stale)"
         rows.append(
             {
                 "job_id": str(j.get("id") or ""),
                 "job_type": str(j.get("job_type") or "—"),
-                "status": str(j.get("status") or "—"),
+                "status": status_txt,
                 "attempts": f"{attempts}/{max_attempts}",
-                "created_at": _format_dt_moscow_logs(j.get("created_at")),
-                "started_at": _format_dt_moscow_logs(j.get("started_at")),
-                "finished_at": _format_dt_moscow_logs(j.get("finished_at")),
+                "wait_duration": _duration_s(created_at, started_at),
+                "run_duration": _duration_s(started_at, finished_at),
+                "total_duration": _duration_s(created_at, finished_at),
+                "created_at": _format_dt_moscow_logs(created_at),
+                "started_at": _format_dt_moscow_logs(started_at),
+                "finished_at": _format_dt_moscow_logs(finished_at),
                 "updated_at": _format_dt_moscow_logs(j.get("updated_at")),
             }
         )
@@ -4355,9 +4442,34 @@ def _render_async_jobs_block(svc: AdminService) -> None:
     selected = next((j for j in jobs if str(j.get("id") or "") == selected_job_id), None)
     if selected is None:
         return
-    render_metadata_expander("payload_json", selected.get("payload_json") or {})
-    render_metadata_expander("result_json", selected.get("result_json") or {})
-    render_metadata_expander("error_json", selected.get("error_json") or {})
+    stale_running = _is_stale_running(selected)
+    attempts = int(selected.get("attempts") or 0)
+    max_attempts = int(selected.get("max_attempts") or 0)
+    created_at = selected.get("created_at")
+    started_at = selected.get("started_at")
+    finished_at = selected.get("finished_at")
+    st.markdown(
+        f'<div class="logs-session-meta"><code class="log-eid-short">'
+        f'{html.escape(_short_execution_id(str(selected.get("id") or "")))}</code>'
+        f" · type: {html.escape(str(selected.get('job_type') or '—'))}"
+        f" · attempts: {attempts}/{max_attempts}</div>",
+        unsafe_allow_html=True,
+    )
+    status_row = _async_job_status_badge(str(selected.get("status") or ""), stale_running=stale_running)
+    if stale_running:
+        status_row += ' <span class="route-badge route-badge--warning">stale running</span>'
+    st.markdown(status_row, unsafe_allow_html=True)
+    render_compact_meta_row("wait_duration", _duration_s(created_at, started_at))
+    render_compact_meta_row("run_duration", _duration_s(started_at, finished_at))
+    render_compact_meta_row("total_duration", _duration_s(created_at, finished_at))
+    render_compact_meta_row("created_at", _format_dt_moscow_logs(created_at))
+    render_compact_meta_row("started_at", _format_dt_moscow_logs(started_at))
+    render_compact_meta_row("finished_at", _format_dt_moscow_logs(finished_at))
+    render_compact_meta_row("updated_at", _format_dt_moscow_logs(selected.get("updated_at")))
+
+    _render_async_json_preview("payload_json", selected.get("payload_json"))
+    _render_async_json_preview("result_json", selected.get("result_json"))
+    _render_async_json_preview("error_json", selected.get("error_json"))
 
 
 def main() -> None:
