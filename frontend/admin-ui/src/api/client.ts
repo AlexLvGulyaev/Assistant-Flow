@@ -36,6 +36,15 @@ export async function fetchOverview(): Promise<OverviewResponse> {
   return parseJson<OverviewResponse>(res);
 }
 
+export async function fetchSummary(hours = 24): Promise<SummaryResponse> {
+  const q = new URLSearchParams({ hours: String(hours) });
+  const res = await fetch(`${getApiBaseUrl()}/api/summary?${q.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Summary: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<SummaryResponse>(res);
+}
+
 export async function fetchRecentLogs(limit = 20): Promise<LogsRecentResponse> {
   const q = new URLSearchParams({ limit: String(limit) });
   const res = await fetch(
@@ -67,6 +76,60 @@ export interface OverviewResponse {
   asset_storage?: Record<string, unknown>;
   audio?: Record<string, unknown>;
   config_readiness?: Record<string, unknown>;
+}
+
+export interface SummaryEventsBlock {
+  total: number;
+  success: number;
+  error: number;
+  other: number;
+}
+
+export interface SummarySessionsBlock {
+  unique_execution_ids: number;
+}
+
+export interface SummaryRoutesBlock {
+  text: number;
+  rag: number;
+  images: number;
+  audio_voice: number;
+  other_unknown: number;
+}
+
+export interface SummaryLifecycleRow {
+  stage: string;
+  events: number;
+}
+
+export interface TelemetrySampleBlock {
+  scope?: string;
+  cap?: number;
+  rows_considered?: number;
+  rows_in_window?: number;
+  unique_execution_ids_in_sample?: number;
+  tokens_total?: number | null;
+  avg_latency_ms?: number | null;
+  max_latency_ms?: number | null;
+  top_provider_model?: string | null;
+  by_provider_row_counts?: Record<string, number>;
+}
+
+export interface AudioVoiceCountsBlock {
+  sessions_route_bucket: number;
+  voice_pipeline_stage_events: number;
+}
+
+export interface SummaryResponse {
+  hours?: number;
+  events?: SummaryEventsBlock;
+  sessions?: SummarySessionsBlock;
+  routes?: SummaryRoutesBlock;
+  lifecycle_events?: SummaryLifecycleRow[];
+  telemetry_sample?: TelemetrySampleBlock;
+  admin_events?: number;
+  reindex_starts?: number;
+  audio_voice_counts?: AudioVoiceCountsBlock;
 }
 
 export interface LogItem {

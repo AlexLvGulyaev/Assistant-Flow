@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { fetchOverview, type OverviewResponse } from "../api/client";
+import {
+  fetchHealth,
+  fetchOverview,
+  type HealthResponse,
+  type OverviewResponse,
+} from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { MetricCard } from "../components/MetricCard";
@@ -17,6 +22,8 @@ const READINESS_KEYS: { key: string; label: string }[] = [
 
 export function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthWarn, setHealthWarn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,12 +32,33 @@ export function OverviewPage() {
     (async () => {
       setLoading(true);
       setError(null);
+      setHealthWarn(null);
       try {
-        const o = await fetchOverview();
-        if (!cancelled) setData(o);
-      } catch (e) {
-        if (!cancelled)
-          setError(e instanceof Error ? e.message : "Failed to load overview");
+        const [oRes, hRes] = await Promise.allSettled([
+          fetchOverview(),
+          fetchHealth(),
+        ]);
+        if (cancelled) return;
+        if (oRes.status === "rejected") {
+          setData(null);
+          setError(
+            oRes.reason instanceof Error
+              ? oRes.reason.message
+              : "Failed to load overview"
+          );
+        } else {
+          setData(oRes.value);
+        }
+        if (hRes.status === "rejected") {
+          setHealth(null);
+          setHealthWarn(
+            hRes.reason instanceof Error
+              ? hRes.reason.message
+              : "Failed to load live checks"
+          );
+        } else {
+          setHealth(hRes.value);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -82,17 +110,108 @@ export function OverviewPage() {
   const rag = data.rag ?? {};
   const chroma = data.chroma ?? {};
   const readiness = data.config_readiness ?? {};
+  const deps = health?.dependencies ?? {};
+  const pg = asRecord(deps.postgres);
+  const chromaLive = asRecord(deps.chroma);
+  const ragLive = asRecord(deps.rag);
+  const llmMap = asRecordMap(deps.llm);
 
   return (
     <div className="page">
       <h1 className="page__title">Overview</h1>
       <p className="page__lead muted">
-        Operational snapshot · <code>/api/overview</code>
+        Configuration snapshot (<code>/api/overview</code>) + live probes (
+        <code>/api/health</code>)
       </p>
+
+      {healthWarn ? (
+        <div className="panel panel--muted page__mt" role="status">
+          {healthWarn}
+        </div>
+      ) : null}
+
+      {health ? (
+        <SectionCard
+          title="Live dependency checks"
+          description="Runtime probes — distinct from static config readiness below."
+          className="page__mt"
+        >
+          <div className="health-banner">
+            <div>
+              <StatusBadge status={String(health.status ?? "—")} />
+              <div className="health-banner__meta muted page__mt-sm">
+                {health.timestamp ? (
+                  <>
+                    UTC{" "}
+                    <span className="mono">
+                      {formatTs(health.timestamp)}
+                    </span>
+                  </>
+                ) : null}
+                {health.version ? (
+                  <>
+                    {" · "}
+                    <span className="mono">v{health.version}</span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          <div className="health-deps page__mt-sm">
+            <div className="health-dep">
+              <div className="health-dep__title">PostgreSQL</div>
+              <div className="health-dep__row">
+                <StatusBadge status={String(pg.status ?? "—")} />
+                {pg.latency_ms != null ? (
+                  <span className="muted mono">{`${pg.latency_ms} ms`}</span>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </div>
+            </div>
+            <div className="health-dep">
+              <div className="health-dep__title">Chroma</div>
+              <div className="health-dep__row">
+                <StatusBadge status={String(chromaLive.status ?? "—")} />
+                {chromaLive.latency_ms != null ? (
+                  <span className="muted mono">{`${chromaLive.latency_ms} ms`}</span>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </div>
+            </div>
+            <div className="health-dep">
+              <div className="health-dep__title">RAG pipeline</div>
+              <div className="health-dep__row">
+                <StatusBadge status={String(ragLive.status ?? "—")} />
+                {ragLive.latency_ms != null ? (
+                  <span className="muted mono">{`${ragLive.latency_ms} ms`}</span>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </div>
+            </div>
+          </div>
+          {Object.keys(llmMap).length > 0 ? (
+            <div className="page__mt-sm">
+              <div className="health-dep__title">LLM providers</div>
+              <div className="health-llm page__mt-sm">
+                {Object.entries(llmMap).map(([name, snap]) => (
+                  <div key={name} className="health-llm__chip">
+                    <span className="mono">{name}</span>
+                    <StatusBadge status={String(snap.status ?? "—")} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </SectionCard>
+      ) : null}
 
       <SectionCard
         title="System readiness"
         description="Config flags only — no secrets exposed."
+        className="page__mt"
       >
         <div className="readiness-strip">
           {READINESS_KEYS.map(({ key, label }) => {
@@ -165,7 +284,7 @@ export function OverviewPage() {
           </dl>
         </SectionCard>
 
-        <SectionCard title="RAG / Chroma">
+        <SectionCard title="RAG / Chroma (config view)">
           <dl className="kv">
             <dt>RAG</dt>
             <dd>
@@ -213,4 +332,25 @@ export function OverviewPage() {
 function formatVal(v: unknown): string {
   if (v === null || v === undefined) return "—";
   return String(v);
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : {};
+}
+
+function asRecordMap(v: unknown): Record<string, Record<string, unknown>> {
+  const raw = asRecord(v);
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [k, val] of Object.entries(raw)) {
+    out[k] = asRecord(val);
+  }
+  return out;
+}
+
+function formatTs(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().replace("T", " ").slice(0, 19);
 }

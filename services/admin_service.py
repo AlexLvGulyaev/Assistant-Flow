@@ -6,8 +6,9 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import defaultdict
 from typing import Any
 import mimetypes
 
@@ -23,6 +24,175 @@ from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+SUMMARY_LOG_SAMPLE_CAP = 500
+
+SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
+    "intake_received",
+    "route_selected",
+    "text_answer_done",
+    "rag_answer_done",
+    "stt_started",
+    "stt_completed",
+    "tts_started",
+    "tts_completed",
+    "tts_skipped",
+    "tts_error",
+    "voice_processing_done",
+    "voice_processing_error",
+    "processing_done",
+    "admin_reindex_started",
+    "admin_reindex_done",
+    "processing_error",
+)
+
+_AUDIO_PIPELINE_STAGES: frozenset[str] = frozenset(
+    {
+        "stt_started",
+        "stt_completed",
+        "tts_started",
+        "tts_completed",
+        "tts_skipped",
+        "tts_error",
+        "voice_processing_done",
+        "voice_processing_error",
+        "audio_generation_done",
+        "audio_generation_error",
+    }
+)
+
+
+def _summary_filter_rows_since_hours(
+    rows: list[dict[str, Any]], *, hours: int
+) -> list[dict[str, Any]]:
+    delta = timedelta(hours=max(1, int(hours)))
+    cutoff = datetime.now(timezone.utc) - delta
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        t = r.get("created_at")
+        if isinstance(t, datetime):
+            tt = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        elif isinstance(t, str):
+            try:
+                raw_s = t.replace("Z", "+00:00")
+                tt = datetime.fromisoformat(raw_s)
+                if tt.tzinfo is None:
+                    tt = tt.replace(tzinfo=timezone.utc)
+                else:
+                    tt = tt.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                continue
+        else:
+            continue
+        if tt >= cutoff:
+            out.append(r)
+    return out
+
+
+def _summary_extract_latency_ms(details: dict[str, Any]) -> float | None:
+    for key in ("latency_ms", "duration_ms", "elapsed_ms"):
+        v = details.get(key)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _summary_extract_tokens_increment(details: dict[str, Any]) -> int | None:
+    v = details.get("total_tokens")
+    if v is not None:
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            pass
+    usage = details.get("token_usage")
+    if isinstance(usage, dict):
+        u_tot = usage.get("total_tokens")
+        if u_tot is not None:
+            try:
+                return int(float(u_tot))
+            except (TypeError, ValueError):
+                pass
+        pairs = (
+            ("input_tokens", "output_tokens"),
+            ("prompt_tokens", "completion_tokens"),
+        )
+        for a, b in pairs:
+            x = usage.get(a)
+            y = usage.get(b)
+            if x is None and y is None:
+                continue
+            s = 0
+            ok = False
+            for part in (x, y):
+                if part is None:
+                    continue
+                try:
+                    s += int(float(part))
+                    ok = True
+                except (TypeError, ValueError):
+                    continue
+            if ok:
+                return s
+    u_obj = details.get("usage")
+    if isinstance(u_obj, dict):
+        v2 = u_obj.get("total_tokens")
+        if v2 is not None:
+            try:
+                return int(float(v2))
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _summary_telemetry_sample(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    latencies: list[float] = []
+    tokens_sum = 0
+    tokens_any = False
+    pm_counts: dict[tuple[str, str], int] = defaultdict(int)
+    prov_row_counts: dict[str, int] = defaultdict(int)
+    eids: set[str] = set()
+    for r in rows:
+        eid = str(r.get("execution_id") or "").strip()
+        if eid:
+            eids.add(eid)
+        d = r.get("details")
+        if not isinstance(d, dict):
+            continue
+        lm = _summary_extract_latency_ms(d)
+        if lm is not None:
+            latencies.append(lm)
+        inc = _summary_extract_tokens_increment(d)
+        if inc is not None:
+            tokens_sum += inc
+            tokens_any = True
+        prov = str(d.get("provider") or d.get("llm_provider") or "").strip()
+        model = str(d.get("model") or d.get("llm_model") or "").strip()
+        if prov:
+            prov_row_counts[prov] += 1
+        if prov or model:
+            pm_counts[(prov or "—", model or "—")] += 1
+
+    avg_lat = round(sum(latencies) / len(latencies), 1) if latencies else None
+    max_lat = round(max(latencies), 1) if latencies else None
+    top_pm: str | None = None
+    if pm_counts:
+        (prov_t, model_t), _n = max(pm_counts.items(), key=lambda x: x[1])
+        top_pm = f"{prov_t} / {model_t}"
+
+    by_prov = dict(sorted(prov_row_counts.items(), key=lambda x: (-x[1], x[0])))
+
+    return {
+        "unique_execution_ids_in_sample": len(eids),
+        "tokens_total": int(tokens_sum) if tokens_any else None,
+        "avg_latency_ms": avg_lat,
+        "max_latency_ms": max_lat,
+        "top_provider_model": top_pm,
+        "by_provider_row_counts": by_prov,
+    }
 
 
 def _resolve_dir(raw: str) -> Path:
@@ -696,4 +866,83 @@ class AdminService:
             "by_stage": dict(by_stage),
             "by_route": by_route,
             "rag_quality": rag_quality,
+        }
+
+    def get_summary_payload(self, hours: int = 24) -> dict[str, Any]:
+        """
+        Compact aggregates for admin Summary (React). Reuses ``get_dashboard_stats``.
+
+        Events: ``total`` = ``success`` + ``error`` + ``other`` (``other`` absorbs
+        non-terminal / missing statuses vs raw row totals).
+
+        Routes: session counts per normalized route family from ``count_routes_since``
+        (distinct ``execution_id``); ``other_unknown`` reconciles against
+        ``sessions_total`` from ``count_unique_execution_ids_since``.
+
+        Telemetry: capped tail of ``processing_logs`` rows filtered into the window —
+        row-level sample, not traffic share.
+        """
+        h = max(1, min(int(hours), 24 * 365))
+        dash = self.get_dashboard_stats(hours=h)
+        total_e = int(dash["total_events"])
+        succ = int(dash["success_events"])
+        err = int(dash["error_events"])
+        other_e = max(0, total_e - succ - err)
+        sessions_total = int(dash["sessions_total"])
+        br = dash.get("by_route") or {}
+        text_r = int(br.get("text", 0))
+        rag_r = int(br.get("rag", 0))
+        img_r = int(br.get("image_generation", 0))
+        aud_r = int(br.get("audio", 0))
+        routed_known = text_r + rag_r + img_r + aud_r
+        other_unknown = max(0, sessions_total - routed_known)
+
+        by_stage_raw = dash.get("by_stage") or {}
+        by_stage = (
+            {str(k): int(v) for k, v in by_stage_raw.items()}
+            if isinstance(by_stage_raw, dict)
+            else {}
+        )
+        lifecycle_rows: list[dict[str, Any]] = []
+        for stage in SUMMARY_LIFECYCLE_STAGE_ORDER:
+            c = int(by_stage.get(stage, 0))
+            if c > 0:
+                lifecycle_rows.append({"stage": stage, "events": c})
+
+        voice_ev = sum(by_stage.get(s, 0) for s in _AUDIO_PIPELINE_STAGES)
+
+        logs = self.get_recent_logs(limit=SUMMARY_LOG_SAMPLE_CAP)
+        rows_win = _summary_filter_rows_since_hours(logs, hours=h)
+        tel = _summary_telemetry_sample(rows_win)
+
+        return {
+            "hours": h,
+            "events": {
+                "total": total_e,
+                "success": succ,
+                "error": err,
+                "other": other_e,
+            },
+            "sessions": {"unique_execution_ids": sessions_total},
+            "routes": {
+                "text": text_r,
+                "rag": rag_r,
+                "images": img_r,
+                "audio_voice": aud_r,
+                "other_unknown": other_unknown,
+            },
+            "lifecycle_events": lifecycle_rows,
+            "telemetry_sample": {
+                "scope": "recent_log_rows_tail_filtered_to_window",
+                "cap": SUMMARY_LOG_SAMPLE_CAP,
+                "rows_considered": len(logs),
+                "rows_in_window": len(rows_win),
+                **tel,
+            },
+            "admin_events": int(dash.get("admin_events", 0)),
+            "reindex_starts": int(dash.get("reindex_runs", 0)),
+            "audio_voice_counts": {
+                "sessions_route_bucket": aud_r,
+                "voice_pipeline_stage_events": voice_ev,
+            },
         }

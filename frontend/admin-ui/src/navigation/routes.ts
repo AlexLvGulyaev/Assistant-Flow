@@ -11,7 +11,7 @@ export interface NavItem {
 /** Primary sidebar navigation (order matches legacy Streamlit tabs intent). */
 export const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Overview", end: true },
-  { path: "/summary", label: "Summary", placeholder: true },
+  { path: "/summary", label: "Summary" },
   { path: "/text", label: "Text", placeholder: true },
   { path: "/rag", label: "RAG", placeholder: true },
   { path: "/images", label: "Images", placeholder: true },

@@ -3,16 +3,14 @@ import { AdminLayout } from "./layout/AdminLayout";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { SummaryPage } from "./pages/SummaryPage";
 
 export default function App() {
   return (
     <Routes>
       <Route element={<AdminLayout />}>
         <Route index element={<OverviewPage />} />
-        <Route
-          path="summary"
-          element={<PlaceholderPage title="Summary" />}
-        />
+        <Route path="summary" element={<SummaryPage />} />
         <Route path="text" element={<PlaceholderPage title="Text" />} />
         <Route path="rag" element={<PlaceholderPage title="RAG" />} />
         <Route path="images" element={<PlaceholderPage title="Images" />} />

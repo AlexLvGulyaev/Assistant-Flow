@@ -239,6 +239,150 @@ code {
   margin-top: 1rem;
 }
 
+.page__mt-sm {
+  margin-top: 0.55rem;
+}
+
+.summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.summary-hours {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+}
+
+.summary-hours__select {
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.metric-sub {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.checksum-line {
+  margin: 0.55rem 0 0;
+  font-size: 0.74rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 0.45rem;
+}
+
+.stat-chip {
+  padding: 0.42rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+
+.stat-chip__val {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.stat-chip__lbl {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-bottom: 0.12rem;
+}
+
+.telemetry-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.lifecycle-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.health-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+
+.health-banner__meta {
+  font-size: 0.78rem;
+}
+
+.health-deps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+  gap: 0.55rem;
+}
+
+.health-dep {
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.health-dep__title {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+.health-dep__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.health-llm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.health-llm__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  font-size: 0.78rem;
+}
+
 .page__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
