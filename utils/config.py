@@ -61,6 +61,8 @@ class AppConfig:
     stt_provider: str = "disabled"
     tts_provider: str = "disabled"
     audio_storage_namespace: str = "audio"
+    stt_model: str = "whisper-1"
+    audio_max_bytes: int = 20 * 1024 * 1024
 
     @property
     def token_url(self) -> str:
@@ -161,4 +163,6 @@ def load_config() -> AppConfig:
             os.getenv("AUDIO_STORAGE_NAMESPACE", "audio").strip().strip("/")
             or "audio"
         ),
+        stt_model=(os.getenv("STT_MODEL", "whisper-1").strip() or "whisper-1"),
+        audio_max_bytes=_int_env("AUDIO_MAX_BYTES", 20 * 1024 * 1024),
     )

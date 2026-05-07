@@ -10,8 +10,11 @@ import telebot
 
 from core.orchestrator import PromptOrchestrator, build_output_image_records
 from providers.gigachat_provider import GigaChatProvider
+from providers.openai_stt_provider import OpenAISTTProvider
 from providers.openai_chat_provider import OpenAIChatProvider
 from providers.rag_embeddings import build_openai_embeddings
+from providers.stt_provider import DisabledSTTProvider, STTProvider
+from services.audio_pipeline_service import AudioPipelineService, AudioTranscriptionResult
 from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
 from services.asset_repository_factory import create_asset_repository
@@ -209,6 +212,38 @@ def _safe_query_preview_for_log(text: str, max_len: int = 200) -> str:
     return t[:max_len] + "..."
 
 
+def _guess_audio_filename(file_path: str | None, content_type: str | None) -> str:
+    p = str(file_path or "").strip()
+    if p:
+        name = Path(p).name
+        if "." in name:
+            return name
+    c = (content_type or "").lower()
+    if "ogg" in c or "opus" in c:
+        return "voice_input.ogg"
+    if "mpeg" in c or "mp3" in c:
+        return "voice_input.mp3"
+    if "wav" in c:
+        return "voice_input.wav"
+    if "m4a" in c or "mp4" in c:
+        return "voice_input.m4a"
+    return "voice_input.bin"
+
+
+def build_stt_provider(config: AppConfig) -> tuple[STTProvider, str | None]:
+    if not config.audio_enabled:
+        return DisabledSTTProvider(), "audio pipeline is disabled by AUDIO_ENABLED=false"
+    raw = (config.stt_provider or "").strip().lower()
+    if raw in ("", "disabled", "none", "off"):
+        return DisabledSTTProvider(), None
+    if raw in ("openai", "openai_direct"):
+        try:
+            return OpenAISTTProvider(config), None
+        except Exception as exc:
+            return DisabledSTTProvider(), f"stt provider init failed: {type(exc).__name__}: {exc}"
+    return DisabledSTTProvider(), f"unsupported stt provider: {raw}"
+
+
 def create_bot() -> telebot.TeleBot:
     config = load_config()
     if not config.telegram_bot_token:
@@ -217,6 +252,13 @@ def create_bot() -> telebot.TeleBot:
     bot = telebot.TeleBot(config.telegram_bot_token)
     orchestrator = build_orchestrator()
     asset_repository = create_asset_repository(config)
+    audio_pipeline = AudioPipelineService(
+        config=config,
+        asset_repository=asset_repository,
+    )
+    stt_provider, stt_provider_init_error = build_stt_provider(config)
+    if stt_provider_init_error:
+        print(f"[assistant-flow] startup degraded: {stt_provider_init_error}", flush=True)
     _chroma_path = _resolve_project_path(config, config.chroma_persist_dir)
     if config.chroma_use_http:
         print(
@@ -233,6 +275,13 @@ def create_bot() -> telebot.TeleBot:
         )
     user_store = InMemoryTelegramUserStore()
     lifecycle = RuntimeLifecycleService()
+    if stt_provider_init_error:
+        _log_system_degraded(
+            lifecycle=lifecycle,
+            component="stt",
+            reason="provider_init_failed",
+            message=stt_provider_init_error,
+        )
 
     rag_holder: dict[str, Any] = {"service": None, "last_error": None}
 
@@ -372,6 +421,408 @@ def create_bot() -> telebot.TeleBot:
             bot.send_message(message.chat.id, "Неизвестная команда. См. /help")
         except Exception:
             traceback.print_exc()
+
+    @bot.message_handler(content_types=["voice"])
+    def handle_voice(message: telebot.types.Message) -> None:
+        execution_id = str(uuid.uuid4())
+        intake_id: uuid.UUID | None = None
+        try:
+            voice = message.voice
+            if voice is None or not getattr(voice, "file_id", None):
+                bot.send_message(message.chat.id, "Голосовое сообщение не распознано.")
+                return
+
+            mime_type = str(getattr(voice, "mime_type", "") or "audio/ogg").strip()
+            duration_sec = int(getattr(voice, "duration", 0) or 0)
+            declared_size = int(getattr(voice, "file_size", 0) or 0)
+            intake_id = lifecycle.create_intake_event(
+                execution_id=execution_id,
+                telegram_chat_id=message.chat.id,
+                telegram_user_id=message.from_user.id,
+                text_preview="[voice]",
+                original_char_length=0,
+            )
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="intake_received",
+                status="success" if intake_id else "error",
+                details={
+                    "mode": "voice",
+                    "route": "voice",
+                    "input_type": "voice",
+                    "duration_sec": duration_sec,
+                    "mime_type": mime_type,
+                    "size_bytes": declared_size,
+                },
+                error_text=None if intake_id else "intake_events insert failed",
+            )
+
+            if declared_size > max(1, int(config.audio_max_bytes)):
+                err = f"audio too large: {declared_size} > {config.audio_max_bytes}"
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="voice_processing_error",
+                    status="error",
+                    details={
+                        "mode": "voice",
+                        "route": "voice",
+                        "input_type": "voice",
+                        "size_bytes": declared_size,
+                        "audio_max_bytes": int(config.audio_max_bytes),
+                    },
+                    error_text=err,
+                )
+                bot.send_message(
+                    message.chat.id,
+                    "Голосовое сообщение слишком большое. Попробуйте файл меньшего размера.",
+                )
+                return
+
+            file_info = bot.get_file(voice.file_id)
+            raw_bytes = bot.download_file(file_info.file_path)
+            size_bytes = len(raw_bytes)
+            if size_bytes > max(1, int(config.audio_max_bytes)):
+                err = f"audio too large after download: {size_bytes} > {config.audio_max_bytes}"
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="voice_processing_error",
+                    status="error",
+                    details={
+                        "mode": "voice",
+                        "route": "voice",
+                        "input_type": "voice",
+                        "size_bytes": size_bytes,
+                        "audio_max_bytes": int(config.audio_max_bytes),
+                    },
+                    error_text=err,
+                )
+                bot.send_message(
+                    message.chat.id,
+                    "Голосовое сообщение слишком большое. Попробуйте файл меньшего размера.",
+                )
+                return
+
+            filename = _guess_audio_filename(file_info.file_path, mime_type)
+            input_asset = audio_pipeline.save_input_audio(
+                raw_bytes,
+                filename=filename,
+                content_type=mime_type,
+            )
+            input_path = audio_pipeline.resolve_audio_asset_path(asset_ref=input_asset.asset_ref)
+            stt_start_ts = time.monotonic()
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="stt_started",
+                status="started",
+                details={
+                    "mode": "voice",
+                    "route": "voice",
+                    "input_type": "voice",
+                    "filename": input_asset.filename,
+                    "mime_type": input_asset.content_type,
+                    "duration_sec": duration_sec,
+                    "size_bytes": input_asset.size_bytes,
+                    "asset_ref": input_asset.asset_ref,
+                    "audio_path": str(input_path) if input_path else None,
+                    "provider": config.stt_provider,
+                    "model": config.stt_model,
+                },
+            )
+
+            stt_result = stt_provider.transcribe(
+                raw_bytes,
+                filename=input_asset.filename,
+                content_type=input_asset.content_type,
+                metadata={
+                    "execution_id": execution_id,
+                    "telegram_chat_id": message.chat.id,
+                    "telegram_user_id": message.from_user.id,
+                },
+            )
+            stt_latency_ms = stt_result.latency_ms
+            if stt_latency_ms is None:
+                stt_latency_ms = int((time.monotonic() - stt_start_ts) * 1000)
+            stt_norm = AudioTranscriptionResult(
+                ok=stt_result.ok,
+                transcript=stt_result.transcript,
+                provider=stt_result.provider,
+                model=stt_result.model,
+                latency_ms=stt_latency_ms,
+                error=stt_result.error,
+                disabled=stt_result.disabled,
+                input_tokens=(
+                    int(stt_result.usage.get("input_tokens"))
+                    if isinstance(stt_result.usage, dict)
+                    and stt_result.usage.get("input_tokens") is not None
+                    else None
+                ),
+                output_tokens=(
+                    int(stt_result.usage.get("output_tokens"))
+                    if isinstance(stt_result.usage, dict)
+                    and stt_result.usage.get("output_tokens") is not None
+                    else None
+                ),
+                total_tokens=(
+                    int(stt_result.usage.get("total_tokens"))
+                    if isinstance(stt_result.usage, dict)
+                    and stt_result.usage.get("total_tokens") is not None
+                    else None
+                ),
+                cost_usd=(
+                    float(stt_result.usage.get("cost_usd"))
+                    if isinstance(stt_result.usage, dict)
+                    and stt_result.usage.get("cost_usd") is not None
+                    else None
+                ),
+            )
+            stt_details = audio_pipeline.build_audio_event_details(
+                input_asset=input_asset,
+                transcription=stt_norm,
+                metadata={
+                    "mode": "voice",
+                    "route": "voice",
+                    "input_type": "voice",
+                    "filename": input_asset.filename,
+                    "mime_type": input_asset.content_type,
+                    "duration_sec": duration_sec,
+                    "size_bytes": input_asset.size_bytes,
+                    "audio_path": str(input_path) if input_path else None,
+                },
+            )
+            stt_details["transcript"] = stt_norm.transcript
+            stt_details["asset_ref"] = input_asset.asset_ref
+            stt_details["audio_path"] = str(input_path) if input_path else None
+            stt_details["provider"] = stt_norm.provider
+            stt_details["model"] = stt_norm.model
+            stt_details["latency_ms"] = stt_norm.latency_ms
+            stt_details["size_bytes"] = input_asset.size_bytes
+            stt_details["mime_type"] = input_asset.content_type
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="stt_completed",
+                status="success" if stt_norm.ok else "error",
+                details=stt_details,
+                error_text=(stt_norm.error or None),
+            )
+
+            if not stt_norm.ok:
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="voice_processing_error",
+                    status="error",
+                    details=stt_details,
+                    error_text=stt_norm.error,
+                )
+                if stt_norm.disabled:
+                    bot.send_message(
+                        message.chat.id,
+                        "Распознавание голоса временно отключено.",
+                    )
+                else:
+                    bot.send_message(
+                        message.chat.id,
+                        "Не удалось распознать голосовое сообщение. Попробуйте позже.",
+                    )
+                return
+
+            transcript = (stt_norm.transcript or "").strip()
+            if not transcript:
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="voice_processing_error",
+                    status="error",
+                    details=stt_details,
+                    error_text="empty transcript",
+                )
+                bot.send_message(
+                    message.chat.id,
+                    "Не удалось распознать голосовое сообщение. Попробуйте позже.",
+                )
+                return
+
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="route_selected",
+                status="success",
+                details={
+                    "mode": "voice",
+                    "route": "voice",
+                    "query_preview": _safe_query_preview_for_log(transcript, max_len=200),
+                    "transcript": transcript,
+                    "asset_ref": input_asset.asset_ref,
+                    "audio_path": str(input_path) if input_path else None,
+                },
+            )
+
+            is_image_request = orchestrator.route_request(transcript) == "image_generation"
+            if is_image_request:
+                bot.send_message(
+                    message.chat.id,
+                    "Распознал голос. Генерирую изображение по запросу… ⏳",
+                )
+            start_ts = time.monotonic()
+            result = orchestrator.process_text(
+                transcript,
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                lifecycle=lifecycle,
+            )
+            usage = orchestrator.get_last_text_usage_snapshot()
+            model_snapshot = orchestrator.get_last_text_model_snapshot()
+            latency_ms = int((time.monotonic() - start_ts) * 1000)
+            result_text = str(result)
+            is_image_path = (
+                "outputs" in result_text.lower()
+                or "/storage/" in result_text.lower()
+                or result_text.lower().endswith(".png")
+                or result_text.lower().endswith(".jpg")
+                or result_text.lower().endswith(".jpeg")
+            )
+
+            voice_base_details: dict[str, Any] = {
+                "mode": "voice",
+                "route": "voice",
+                "input_type": "voice",
+                "transcript": transcript,
+                "query_preview": _safe_query_preview_for_log(transcript, max_len=200),
+                "asset_ref": input_asset.asset_ref,
+                "audio_path": str(input_path) if input_path else None,
+                "filename": input_asset.filename,
+                "mime_type": input_asset.content_type,
+                "size_bytes": input_asset.size_bytes,
+                "provider": stt_norm.provider,
+                "model": stt_norm.model,
+                "latency_ms": stt_norm.latency_ms,
+            }
+
+            if is_image_path:
+                try:
+                    img_snap = orchestrator.get_last_image_generation_snapshot()
+                    asset_ref = str(img_snap.get("asset_ref") or "").strip()
+                    resolved_path: Path | None = None
+                    if asset_ref:
+                        try:
+                            p_candidate = asset_repository.resolve_path(asset_ref)
+                            if p_candidate.is_file():
+                                resolved_path = p_candidate
+                        except Exception:
+                            resolved_path = None
+                    if resolved_path is None:
+                        p_legacy = Path(result_text)
+                        if p_legacy.is_file():
+                            resolved_path = p_legacy
+                    if resolved_path is None:
+                        raise FileNotFoundError(
+                            "image file is missing for both asset_ref and image_path"
+                        )
+                    with resolved_path.open("rb") as image_file:
+                        bot.send_photo(message.chat.id, image_file)
+                    details_done: dict[str, Any] = {
+                        **voice_base_details,
+                        "route": "image_generation",
+                        "generation_completed": True,
+                        "output_images": build_output_image_records(
+                            str(resolved_path),
+                            provider_url=str(img_snap.get("provider_url") or "") or None,
+                            provider=str(img_snap.get("provider") or "") or None,
+                            model=str(img_snap.get("model") or "") or None,
+                        ),
+                        "latency_ms": latency_ms,
+                    }
+                    for key in ("input_tokens", "output_tokens", "total_tokens"):
+                        if key in usage:
+                            details_done[key] = usage[key]
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="processing_done",
+                        status="success",
+                        details=details_done,
+                    )
+                except Exception as send_exc:
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="voice_processing_error",
+                        status="error",
+                        details=voice_base_details,
+                        error_text=str(send_exc),
+                    )
+                    bot.send_message(
+                        message.chat.id,
+                        "Не удалось обработать голосовой запрос. Попробуйте позже.",
+                    )
+                    return
+            else:
+                formatted_result = format_for_telegram(result_text)
+                send_long_message(bot, message.chat.id, formatted_result)
+                lifecycle.log_processing_event(
+                    execution_id=execution_id,
+                    intake_event_id=intake_id,
+                    stage="text_answer_done",
+                    status="success",
+                    details={
+                        **voice_base_details,
+                        "route": "text_response",
+                        "answer_text": _safe_answer_text_for_log(
+                            formatted_result, max_len=3000
+                        ),
+                        "answer_preview": _safe_answer_text_for_log(
+                            formatted_result, max_len=300
+                        ),
+                        "provider": "gigachat",
+                        "model": model_snapshot or config.gigachat_model,
+                        **(
+                            {"input_tokens": usage["input_tokens"]}
+                            if "input_tokens" in usage
+                            else {}
+                        ),
+                        **(
+                            {"output_tokens": usage["output_tokens"]}
+                            if "output_tokens" in usage
+                            else {}
+                        ),
+                        **(
+                            {"total_tokens": usage["total_tokens"]}
+                            if "total_tokens" in usage
+                            else {}
+                        ),
+                        "latency_ms": latency_ms,
+                    },
+                )
+
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="voice_processing_done",
+                status="success",
+                details={
+                    **voice_base_details,
+                    "downstream_route": "image_generation" if is_image_request else "text_response",
+                },
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_id,
+                stage="voice_processing_error",
+                status="error",
+                details={"mode": "voice", "route": "voice"},
+                error_text=str(exc),
+            )
+            bot.send_message(
+                message.chat.id,
+                "Не удалось обработать голосовое сообщение. Попробуйте позже.",
+            )
 
     @bot.message_handler(
         func=lambda msg: msg.content_type == "text"
