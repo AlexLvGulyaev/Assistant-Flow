@@ -1,15 +1,28 @@
 import { Route, Routes } from "react-router-dom";
-import { Layout } from "./components/Layout";
-import { OverviewPage } from "./pages/OverviewPage";
+import { AdminLayout } from "./layout/AdminLayout";
 import { LogsPage } from "./pages/LogsPage";
+import { OverviewPage } from "./pages/OverviewPage";
+import { PlaceholderPage } from "./pages/PlaceholderPage";
 
 export default function App() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<OverviewPage />} />
-        <Route path="/logs" element={<LogsPage />} />
-      </Routes>
-    </Layout>
+    <Routes>
+      <Route element={<AdminLayout />}>
+        <Route index element={<OverviewPage />} />
+        <Route
+          path="summary"
+          element={<PlaceholderPage title="Summary" />}
+        />
+        <Route path="text" element={<PlaceholderPage title="Text" />} />
+        <Route path="rag" element={<PlaceholderPage title="RAG" />} />
+        <Route path="images" element={<PlaceholderPage title="Images" />} />
+        <Route path="audio" element={<PlaceholderPage title="Audio" />} />
+        <Route
+          path="documents"
+          element={<PlaceholderPage title="Documents" />}
+        />
+        <Route path="logs" element={<LogsPage />} />
+      </Route>
+    </Routes>
   );
 }

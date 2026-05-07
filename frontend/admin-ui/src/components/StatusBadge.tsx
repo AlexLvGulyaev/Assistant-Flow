@@ -9,21 +9,38 @@ function normalizeStatus(s: string): string {
 export function StatusBadge({ status }: StatusBadgeProps) {
   const n = normalizeStatus(status);
   let tone: "ok" | "warn" | "err" | "muted" = "muted";
-  if (n === "ok" || n === "configured") tone = "ok";
-  else if (
+  if (
+    n === "ok" ||
+    n === "configured" ||
+    n === "available" ||
+    n === "on" ||
+    n === "yes"
+  ) {
+    tone = "ok";
+  } else if (
     n === "degraded" ||
     n === "unreachable" ||
+    n === "checking…" ||
     n === "started" ||
     n === "warning"
-  )
+  ) {
     tone = "warn";
-  else if (
+  } else if (
     n === "error" ||
     n.includes("fail") ||
     n === "err" ||
-    n === "internal_error"
-  )
+    n === "internal_error" ||
+    n === "unavailable"
+  ) {
     tone = "err";
+  } else if (
+    n === "off" ||
+    n === "not_configured" ||
+    n === "no" ||
+    n === "—"
+  ) {
+    tone = "muted";
+  }
 
   return (
     <span className={`status-badge status-badge--${tone}`} title={status}>

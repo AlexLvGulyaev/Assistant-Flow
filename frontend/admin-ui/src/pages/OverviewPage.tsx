@@ -1,7 +1,19 @@
 import { useEffect, useState } from "react";
 import { fetchOverview, type OverviewResponse } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { MetricCard } from "../components/MetricCard";
+import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
+
+const READINESS_KEYS: { key: string; label: string }[] = [
+  { key: "database_url_configured", label: "DATABASE_URL" },
+  { key: "openai_configured", label: "OpenAI key" },
+  { key: "proxy_configured", label: "Proxy key" },
+  { key: "gigachat_configured", label: "GigaChat key" },
+  { key: "audio_enabled", label: "Audio" },
+  { key: "chroma_use_http", label: "Chroma HTTP" },
+];
 
 export function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
@@ -32,7 +44,8 @@ export function OverviewPage() {
     return (
       <div className="page">
         <h1 className="page__title">Overview</h1>
-        <div className="skeleton-grid">
+        <LoadingState label="Loading overview…" />
+        <div className="skeleton-grid page__mt">
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
@@ -45,7 +58,7 @@ export function OverviewPage() {
     return (
       <div className="page">
         <h1 className="page__title">Overview</h1>
-        <div className="panel panel--error" role="alert">
+        <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       </div>
@@ -56,7 +69,7 @@ export function OverviewPage() {
     return (
       <div className="page">
         <h1 className="page__title">Overview</h1>
-        <div className="panel panel--muted">No data.</div>
+        <EmptyState message="No overview payload returned." />
       </div>
     );
   }
@@ -68,16 +81,72 @@ export function OverviewPage() {
   const assets = data.asset_storage ?? {};
   const rag = data.rag ?? {};
   const chroma = data.chroma ?? {};
+  const readiness = data.config_readiness ?? {};
 
   return (
     <div className="page">
       <h1 className="page__title">Overview</h1>
       <p className="page__lead muted">
-        Operational snapshot from <code>/api/overview</code>
+        Operational snapshot · <code>/api/overview</code>
       </p>
 
-      <div className="page__grid">
-        <MetricCard title="Data &amp; index">
+      <SectionCard
+        title="System readiness"
+        description="Config flags only — no secrets exposed."
+      >
+        <div className="readiness-strip">
+          {READINESS_KEYS.map(({ key, label }) => {
+            const v = readiness[key];
+            const flag =
+              typeof v === "boolean" ? (v ? "yes" : "no") : String(v ?? "—");
+            return (
+              <div key={key} className="readiness-chip">
+                <span className="readiness-chip__lbl muted">{label}</span>
+                <StatusBadge status={flag} />
+              </div>
+            );
+          })}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Modalities"
+        description="Capabilities exposed by the platform."
+        className="page__mt"
+      >
+        {mods.length === 0 ? (
+          <EmptyState title="No modalities" message="API returned an empty list." />
+        ) : (
+          <div className="modality-grid">
+            {mods.map((m) => (
+              <div key={m} className="modality-card">
+                <span className="modality-card__icon" aria-hidden>
+                  ◇
+                </span>
+                <span className="modality-card__name">{m}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      <div className="page__grid page__mt">
+        <SectionCard title="Providers (configuration)">
+          {Object.keys(providers).length === 0 ? (
+            <p className="muted">No provider entries.</p>
+          ) : (
+            <div className="provider-grid">
+              {Object.entries(providers).map(([name, snap]) => (
+                <div key={name} className="provider-cell">
+                  <span className="provider-cell__name mono">{name}</span>
+                  <StatusBadge status={String(snap.status ?? "—")} />
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Data &amp; index">
           <dl className="kv">
             <dt>PostgreSQL</dt>
             <dd>
@@ -94,9 +163,9 @@ export function OverviewPage() {
             <dt>Chroma chunks</dt>
             <dd>{formatVal(db.collection_chunk_count)}</dd>
           </dl>
-        </MetricCard>
+        </SectionCard>
 
-        <MetricCard title="RAG / Chroma">
+        <SectionCard title="RAG / Chroma">
           <dl className="kv">
             <dt>RAG</dt>
             <dd>
@@ -107,36 +176,7 @@ export function OverviewPage() {
               <StatusBadge status={String(chroma.status ?? "—")} />
             </dd>
           </dl>
-        </MetricCard>
-
-        <MetricCard title="Supported modalities">
-          {mods.length === 0 ? (
-            <p className="muted">None reported.</p>
-          ) : (
-            <ul className="tag-list">
-              {mods.map((m) => (
-                <li key={m}>
-                  <span className="tag">{m}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </MetricCard>
-
-        <MetricCard title="Providers (config)">
-          {Object.keys(providers).length === 0 ? (
-            <p className="muted">No provider entries.</p>
-          ) : (
-            <ul className="inline-list">
-              {Object.entries(providers).map(([name, snap]) => (
-                <li key={name}>
-                  <span className="mono">{name}</span>{" "}
-                  <StatusBadge status={String(snap.status ?? "—")} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </MetricCard>
+        </SectionCard>
 
         <MetricCard title="Asset storage">
           <dl className="kv">
@@ -151,7 +191,7 @@ export function OverviewPage() {
           <dl className="kv">
             <dt>Enabled</dt>
             <dd>
-              {String(audio.enabled) === "true" ? (
+              {audio.enabled === true ? (
                 <StatusBadge status="on" />
               ) : (
                 <StatusBadge status="off" />
