@@ -29,6 +29,7 @@ import streamlit as st
 
 from services.admin_service import AdminService
 from services.asset_repository_factory import create_asset_repository
+from services.async_reindex_worker import AsyncReindexWorker
 from services.healthcheck_service import (
     HealthSnapshot,
     format_health_badge_status,
@@ -5200,6 +5201,51 @@ def main() -> None:
                 st.caption(f"Чанков в коллекции Chroma: {result.collection_count}")
                 if result.error_message:
                     st.warning(result.error_message)
+            st.caption("Async (manual): controlled one-job lifecycle без background loop.")
+            if st.button("Создать async reindex job", key="create_async_reindex_job"):
+                try:
+                    job = svc.enqueue_reindex_job(
+                        payload={
+                            "source": "admin_ui",
+                            "requested_by": "operator",
+                            "mode": "manual",
+                        }
+                    )
+                    st.success(
+                        f"Async job создан: id={job.id} · type={job.job_type} · status={job.status}"
+                    )
+                except Exception as exc:
+                    st.error(f"Не удалось создать async job: {exc}")
+            if st.button("Выполнить один async job", key="run_one_async_reindex_job"):
+                try:
+                    worker = AsyncReindexWorker(admin_service=svc)
+                    with st.spinner("Выполняется один async job…"):
+                        outcome = worker.run_single_job()
+                    if not outcome.claimed:
+                        st.info("Claimable queued jobs отсутствуют.")
+                    else:
+                        duration_ms = outcome.details.get("duration_ms")
+                        duration_label = (
+                            f"{int(duration_ms)} ms"
+                            if isinstance(duration_ms, (int, float))
+                            else "—"
+                        )
+                        err_summary = str(
+                            outcome.details.get("error_message")
+                            or outcome.details.get("error_type")
+                            or ""
+                        ).strip()
+                        st.success(
+                            "Async job выполнен: "
+                            f"id={outcome.job_id} · prev=queued/running · "
+                            f"current={outcome.status} · duration={duration_label}"
+                        )
+                        if err_summary:
+                            st.warning(f"Ошибка: {err_summary}")
+                        with st.expander("Outcome details", expanded=False):
+                            render_json_preview(outcome.details)
+                except Exception as exc:
+                    st.error(f"Ошибка выполнения async job: {exc}")
         with tb3:
             search_query = st.text_input(
                 "Search",

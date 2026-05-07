@@ -6,6 +6,7 @@ It does not start workers and does not change current runtime behavior.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -50,14 +51,14 @@ class AsyncJobService:
         self,
         *,
         job_type: str,
-        payload_json: dict[str, Any] | None = None,
+        payload_json: Any = None,
         max_attempts: int = 3,
     ) -> AsyncJob:
         jt = (job_type or "").strip()
         if not jt:
             raise ValueError("job_type is required")
         ma = max(1, int(max_attempts))
-        payload = payload_json if isinstance(payload_json, dict) else {}
+        payload = self._json_param(payload_json)
         with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -107,10 +108,10 @@ class AsyncJobService:
         self,
         job_id: uuid.UUID | str,
         *,
-        result_json: dict[str, Any] | None = None,
+        result_json: Any = None,
     ) -> AsyncJob:
         jid = self._normalize_job_id(job_id)
-        result = result_json if isinstance(result_json, dict) else {}
+        result = self._json_param(result_json)
         with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -133,11 +134,11 @@ class AsyncJobService:
         self,
         job_id: uuid.UUID | str,
         *,
-        error_json: dict[str, Any] | None = None,
+        error_json: Any = None,
         retry: bool = False,
     ) -> AsyncJob:
         jid = self._normalize_job_id(job_id)
-        err = error_json if isinstance(error_json, dict) else {}
+        err = self._json_param(error_json)
         next_status: AsyncJobStatus = "retry_scheduled" if retry else "failed"
         with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
@@ -223,6 +224,27 @@ class AsyncJobService:
         if isinstance(job_id, uuid.UUID):
             return job_id
         return uuid.UUID(str(job_id))
+
+    @staticmethod
+    def _json_param(value: Any) -> str:
+        """
+        Safe JSONB SQL param serializer for psycopg placeholders.
+        Returns JSON text, used with `%s::jsonb`.
+        """
+        if value is None:
+            return "{}"
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return "{}"
+            try:
+                json.loads(s)
+                return s
+            except Exception:
+                return json.dumps({"value": value}, ensure_ascii=False)
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return json.dumps({"value": value}, ensure_ascii=False, default=str)
 
     @staticmethod
     def _row_to_job(row: dict[str, Any]) -> AsyncJob:
