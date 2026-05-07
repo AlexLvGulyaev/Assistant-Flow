@@ -4,6 +4,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from typing import Any
 
 import telebot
 
@@ -99,6 +100,79 @@ def build_rag_query_service(config: AppConfig) -> RagQueryService:
     return RagQueryService(store, chat, config)
 
 
+def _log_system_degraded(
+    lifecycle: RuntimeLifecycleService,
+    *,
+    component: str,
+    reason: str,
+    message: str | None = None,
+) -> None:
+    """Best-effort processing_logs row when startup is degraded (requires PostgreSQL)."""
+    lifecycle.log_processing_event(
+        execution_id=f"system-{uuid.uuid4()}",
+        intake_event_id=None,
+        stage="system_degraded",
+        status="error",
+        details={"component": component, "reason": reason},
+        error_text=(message or "")[:4000] or None,
+    )
+
+
+def _try_build_rag_query_service(
+    config: AppConfig,
+    *,
+    lifecycle: RuntimeLifecycleService,
+    log_to_db: bool,
+) -> tuple[RagQueryService | None, str | None]:
+    """
+    Build RAG service without crashing the process. On failure optionally logs system_degraded.
+    """
+    try:
+        svc = build_rag_query_service(config)
+        print("[assistant-flow] RAG service ready", flush=True)
+        return svc, None
+    except Exception as exc:
+        msg = f"{type(exc).__name__}: {exc}"
+        print(f"[assistant-flow] startup degraded: rag unavailable ({msg})", flush=True)
+        low = msg.lower()
+        if config.chroma_use_http and any(
+            x in low
+            for x in (
+                "connection",
+                "refused",
+                "timeout",
+                "chroma",
+                "unreachable",
+                "failed to connect",
+                "errno",
+            )
+        ):
+            print("[assistant-flow] startup degraded: chroma unavailable", flush=True)
+        if log_to_db:
+            if any(
+                x in low
+                for x in (
+                    "chroma",
+                    "chromadb",
+                    "connection",
+                    "refused",
+                    "unreachable",
+                    "timeout",
+                    "failed to connect",
+                )
+            ):
+                comp = "chroma"
+            else:
+                comp = "rag"
+            _log_system_degraded(
+                lifecycle,
+                component=comp,
+                reason="init_failed",
+                message=msg,
+            )
+        return None, msg
+
+
 def _format_rag_telegram_reply(result: RagQueryResult) -> str:
     # User-facing Telegram response must stay clean (no technical diagnostics).
     return (result.answer or "").strip()
@@ -141,7 +215,6 @@ def create_bot() -> telebot.TeleBot:
 
     bot = telebot.TeleBot(config.telegram_bot_token)
     orchestrator = build_orchestrator()
-    rag_service = build_rag_query_service(config)
     _chroma_path = _resolve_project_path(config, config.chroma_persist_dir)
     if config.chroma_use_http:
         print(
@@ -158,6 +231,18 @@ def create_bot() -> telebot.TeleBot:
         )
     user_store = InMemoryTelegramUserStore()
     lifecycle = RuntimeLifecycleService()
+
+    rag_holder: dict[str, Any] = {"service": None, "last_error": None}
+
+    def try_init_rag(*, log_to_db: bool) -> RagQueryService | None:
+        svc, err = _try_build_rag_query_service(
+            config, lifecycle=lifecycle, log_to_db=log_to_db
+        )
+        rag_holder["service"] = svc
+        rag_holder["last_error"] = err
+        return svc
+
+    try_init_rag(log_to_db=True)
 
     chroma_display = _resolve_project_path(config, config.chroma_persist_dir)
     docs_display = _resolve_project_path(config, config.rag_documents_dir)
@@ -306,6 +391,44 @@ def create_bot() -> telebot.TeleBot:
                 intake_id: uuid.UUID | None = None
                 try:
                     print("[assistant-flow] rag handler started", flush=True)
+                    rag_service = rag_holder["service"] or try_init_rag(log_to_db=False)
+                    if rag_service is None:
+                        intake_id = lifecycle.create_intake_event(
+                            execution_id=execution_id,
+                            telegram_chat_id=message.chat.id,
+                            telegram_user_id=message.from_user.id,
+                            text_preview=text,
+                            original_char_length=len(text),
+                        )
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="intake_received",
+                            status="success" if intake_id else "error",
+                            details={"mode": "rag"},
+                            error_text=None
+                            if intake_id
+                            else "intake_events insert failed",
+                        )
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="rag_unavailable",
+                            status="error",
+                            details={
+                                "route": "rag",
+                                "reason": "chroma_unavailable",
+                            },
+                            error_text=(rag_holder["last_error"] or "rag init failed")[
+                                :4000
+                            ],
+                        )
+                        bot.send_message(
+                            message.chat.id,
+                            "База знаний временно недоступна. Попробуйте позже.",
+                        )
+                        return
+
                     bot.send_message(message.chat.id, "Ищу в базе знаний… ⏳")
                     intake_id = lifecycle.create_intake_event(
                         execution_id=execution_id,
@@ -394,6 +517,19 @@ def create_bot() -> telebot.TeleBot:
                     print("[assistant-flow] rag handler failed", flush=True)
                     print(type(exc), exc, flush=True)
                     traceback.print_exc()
+                    el = str(exc).lower()
+                    if any(
+                        x in el
+                        for x in (
+                            "chroma",
+                            "connection",
+                            "refused",
+                            "timeout",
+                            "unreachable",
+                            "errno",
+                        )
+                    ):
+                        rag_holder["service"] = None
                     try:
                         bot.send_message(
                             message.chat.id,

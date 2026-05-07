@@ -71,6 +71,15 @@ class AdminService:
     def documents_directory(self) -> Path:
         return self._documents_dir
 
+    @property
+    def chroma_persist_path(self) -> Path:
+        """Resolved Chroma persist directory (same as indexer / RAG store)."""
+        return self._chroma_dir
+
+    @property
+    def app_config(self) -> AppConfig:
+        return self._config
+
     def get_documents_filesystem_count(self) -> int:
         """Number of ``.txt`` files under ``RAG_DOCUMENTS_DIR`` (recursive)."""
         root = self._documents_dir

@@ -1,4 +1,27 @@
 services:
+  # Chroma healthcheck is diagnostic-only.
+  # assistant-flow must still boot in degraded mode when Chroma is unavailable.
+  assistant-chroma:
+    image: chromadb/chroma:1.0.15
+    container_name: assistant-chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - assistant_chroma_data:/data
+
+    # Chroma index is persisted in assistant_chroma_data volume.
+    # Do not remove this volume unless full reindex is intended.
+    # NOTE:
+    # chromadb/chroma:1.0.15 may not contain python/curl/wget binaries in all builds.
+    # To avoid false-negative/unhealthy loops from missing shell tools, docker-level
+    # healthcheck is intentionally disabled here.
+    # Chroma availability is checked on app-level via services/healthcheck_service.py
+    # (heartbeat + client heartbeat + collection count with timeout).
+    networks:
+      - assistant-net
+      - n8n_default
+
   assistant-flow:
     build:
       context: .
@@ -35,6 +58,20 @@ services:
       - "8501"
     ports:
       - "8501:8501"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsS",
+          "--max-time",
+          "3",
+          "http://127.0.0.1:8501/_stcore/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 50s
     networks:
       - assistant-net
       - n8n_default
@@ -44,3 +81,7 @@ networks:
     external: true
   n8n_default:
     external: true
+
+volumes:
+  assistant_chroma_data:
+  

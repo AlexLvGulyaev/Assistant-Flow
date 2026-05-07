@@ -28,6 +28,11 @@ import pandas as pd
 import streamlit as st
 
 from services.admin_service import AdminService
+from services.healthcheck_service import (
+    HealthSnapshot,
+    format_health_badge_status,
+    run_system_healthchecks,
+)
 from utils.config import load_config
 
 moscow_tz = zoneinfo.ZoneInfo("Europe/Moscow")
@@ -293,6 +298,8 @@ _EVENT_TYPE_RU: dict[str, str] = {
     "image_prompt_refinement_done": "Подготовка image prompt завершена",
     "image_provider_done": "Изображение получено от провайдера",
     "image_assets_persisted": "Файлы изображения сохранены",
+    "rag_unavailable": "RAG недоступен",
+    "system_degraded": "Деградация системы",
 }
 
 _ROUTE_ALIASES: dict[str, str] = {
@@ -3834,6 +3841,67 @@ def _render_summary_technical_tables_expander(
             render_empty_state("Нет данных по маршрутам за выбранный период.")
 
 
+def _overview_health_badge_class(status: str) -> str:
+    s = (status or "").strip().lower()
+    if s in ("ok", "configured"):
+        return "route-badge--success"
+    if s == "degraded":
+        return "route-badge--warning"
+    if s == "not_configured":
+        return "route-badge--muted"
+    return "route-badge--error"
+
+
+def _overview_system_health_snap_html(snap: Any) -> str:
+    if not isinstance(snap, HealthSnapshot):
+        return html.escape("—")
+    bcls = _overview_health_badge_class(snap.status)
+    lbl = format_health_badge_status(snap.status)
+    parts: list[str] = [
+        f'<span class="route-badge {bcls}">{html.escape(lbl)}</span>',
+    ]
+    if snap.latency_ms is not None:
+        parts.append(html.escape(f" {snap.latency_ms} ms"))
+    if snap.detail:
+        parts.append(html.escape(f" · {snap.detail}"))
+    if snap.error_message:
+        parts.append(html.escape(f" · {snap.error_message[:140]}"))
+    cnt = snap.extras.get("collection_count")
+    if cnt is not None:
+        parts.append(html.escape(f" · chunks={cnt}"))
+    return "".join(parts)
+
+
+def _overview_system_health_card_html(svc: AdminService) -> str:
+    rep = run_system_healthchecks(
+        svc.app_config,
+        chroma_persist_path=str(svc.chroma_persist_path),
+    )
+    llm_line = " · ".join(
+        f"{html.escape(str(name))}: "
+        f"{html.escape(format_health_badge_status(snap.status))}"
+        for name, snap in rep.llm.items()
+    )
+    inner = _overview_ops_kv_mixed(
+        [
+            _overview_ops_kv_item("PostgreSQL", _overview_system_health_snap_html(rep.postgres)),
+            _overview_ops_kv_item("Chroma", _overview_system_health_snap_html(rep.chroma)),
+            _overview_ops_kv_item(
+                "Готовность RAG", _overview_system_health_snap_html(rep.rag)
+            ),
+            _overview_ops_kv_item("LLM (только конфигурация)", llm_line),
+        ]
+    )
+    return ops_dashboard_card_html(
+        "S. Состояние системы (live)",
+        inner,
+        footnote_html=_render_panel_footnote_html(
+            "Короткие таймауты; без вызовов LLM. PostgreSQL: SELECT 1. "
+            "Chroma: heartbeat (HTTP) + count в отдельном потоке."
+        ),
+    )
+
+
 def _render_tab_overview(
     svc: AdminService,
     dashboard_stats: dict[str, Any],
@@ -4106,6 +4174,14 @@ def _render_tab_overview(
             + "</div>"
         )
 
+    try:
+        card_s = _overview_system_health_card_html(svc)
+    except Exception as exc:
+        card_s = ops_dashboard_card_html(
+            "S. Состояние системы (live)",
+            f'<p class="panel-footnote">{html.escape(str(exc))}</p>',
+        )
+
     overview_html = (
         '<div class="ops-dashboard-wrap">'
         '<p class="ops-dashboard-intro">'
@@ -4113,7 +4189,7 @@ def _render_tab_overview(
         "активность AI, база знаний и ограничения безопасности админки."
         "</p>"
         '<div class="ops-dashboard-grid">'
-        f"{card_a}{card_b}{card_c}{card_d}"
+        f"{card_s}{card_a}{card_b}{card_c}{card_d}"
         "</div>"
         f"{warn_html}"
         "</div>"
