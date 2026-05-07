@@ -30,6 +30,23 @@ class ProcessingLogsRepository:
             row = cur.fetchone()
         return int(row[0]) if row else 0
 
+    def count_unique_execution_ids_since(
+        self, conn: Connection, *, hours: int = 24
+    ) -> int:
+        """Distinct ``execution_id`` count in the time window."""
+        h = _sanitize_hours(hours)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT execution_id)::bigint
+                FROM processing_logs
+                WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
+                """,
+                (h,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
     def count_by_status_since(self, conn: Connection, *, hours: int = 24) -> dict[str, int]:
         """Counts grouped by ``status`` in the time window."""
         h = _sanitize_hours(hours)
@@ -90,6 +107,21 @@ class ProcessingLogsRepository:
                             THEN 'text'
                             WHEN (details->>'route') IN ('image_generation', 'image', 'image_response')
                             THEN 'image_generation'
+                            WHEN (details->>'route') IN ('audio', 'voice', 'voice_response')
+                                 OR (details->>'mode') = 'voice'
+                                 OR stage IN (
+                                    'stt_started',
+                                    'stt_completed',
+                                    'tts_started',
+                                    'tts_completed',
+                                    'tts_skipped',
+                                    'tts_error',
+                                    'voice_processing_done',
+                                    'voice_processing_error',
+                                    'audio_generation_done',
+                                    'audio_generation_error'
+                                 )
+                            THEN 'audio'
                             ELSE NULL
                         END AS route_bucket
                     FROM processing_logs

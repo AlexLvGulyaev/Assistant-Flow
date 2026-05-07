@@ -663,6 +663,14 @@ SUMMARY_LIFECYCLE_ORDER: tuple[str, ...] = (
     "route_selected",
     "text_answer_done",
     "rag_answer_done",
+    "stt_started",
+    "stt_completed",
+    "tts_started",
+    "tts_completed",
+    "tts_skipped",
+    "tts_error",
+    "voice_processing_done",
+    "voice_processing_error",
     "processing_done",
     "admin_reindex_started",
     "admin_reindex_done",
@@ -708,11 +716,12 @@ def _summary_route_sample_outcomes(
         "text": {"success": 0, "error": 0, "other": 0},
         "rag": {"success": 0, "error": 0, "other": 0},
         "image_generation": {"success": 0, "error": 0, "other": 0},
+        "audio": {"success": 0, "error": 0, "other": 0},
         "unknown": {"success": 0, "error": 0, "other": 0},
     }
     for _eid, _start, events in packed:
         rt = _logs_infer_route_from_events(events)
-        bucket = rt if rt in ("text", "rag", "image_generation") else "unknown"
+        bucket = rt if rt in ("text", "rag", "image_generation", "audio") else "unknown"
         final = str(_logs_session_final_status(events)).strip().lower()
         if final == "success":
             out[bucket]["success"] += 1
@@ -792,53 +801,34 @@ def _summary_lifecycle_list_html(by_stage: dict[str, Any]) -> str:
 def _summary_route_rows_html(
     *,
     by_route: dict[str, int],
-    sample_out: dict[str, dict[str, int]],
-    unknown_sample_n: int,
+    sessions_total: int,
 ) -> str:
-    """Компактные карточки маршрутов: счётчики 24 ч из dashboard + исходы из выборки."""
+    """Компактные карточки маршрутов по сессиям (24 ч, SQL)."""
     n_text = int(by_route.get("text", 0) or 0)
     n_rag = int(by_route.get("rag", 0) or 0)
     n_img = int(by_route.get("image_generation", 0) or 0)
-    denom = max(1, n_text + n_rag + n_img + max(0, unknown_sample_n))
+    n_audio = int(by_route.get("audio", 0) or 0)
+    known_sum = n_text + n_rag + n_img + n_audio
+    n_unknown = max(0, int(sessions_total) - known_sum)
+    denom = max(1, int(sessions_total))
 
     def pct(n: int) -> str:
         return f"{round(100.0 * n / denom, 1)}%"
 
-    def outcome_line(bucket: str) -> str:
-        o = sample_out.get(bucket) or {}
-        s_ok = int(o.get("success", 0))
-        s_er = int(o.get("error", 0))
-        s_ot = int(o.get("other", 0))
-        if s_ok == 0 and s_er == 0 and s_ot == 0:
-            return (
-                '<span class="route-badge route-badge--muted">'
-                "нет сессий в выборке"
-                "</span>"
-            )
-        parts_o = [
-            f'<span class="log-status-badge log-status-badge--success">успех {s_ok}</span>',
-            f'<span class="log-status-badge log-status-badge--error">ошибка {s_er}</span>',
-        ]
-        if s_ot:
-            parts_o.append(
-                f'<span class="log-status-badge log-status-badge--warning">прочее {s_ot}</span>'
-            )
-        return '<span class="summary-route-outcomes">' + " · ".join(parts_o) + "</span>"
-
-    cards: list[tuple[str, str, str, str]] = [
-        ("Текст", str(n_text), pct(n_text), "text"),
-        ("RAG", str(n_rag), pct(n_rag), "rag"),
-        ("Генерация изображений", str(n_img), pct(n_img), "image_generation"),
+    cards: list[tuple[str, str, str]] = [
+        ("Текст", str(n_text), pct(n_text)),
+        ("RAG", str(n_rag), pct(n_rag)),
+        ("Генерация изображений", str(n_img), pct(n_img)),
+        ("Аудио / Voice", str(n_audio), pct(n_audio)),
         (
             "Прочее / без маршрута",
-            str(max(0, unknown_sample_n)),
-            pct(max(0, unknown_sample_n)),
-            "unknown",
+            str(n_unknown),
+            pct(n_unknown),
         ),
     ]
 
     blocks: list[str] = ['<div class="summary-route-grid">']
-    for title, cnt_s, share_s, bucket in cards:
+    for title, cnt_s, share_s in cards:
         blocks.append('<div class="summary-route-card">')
         blocks.append(f'<div class="summary-route-card-title">{html.escape(title)}</div>')
         blocks.append(
@@ -847,14 +837,21 @@ def _summary_route_rows_html(
             f'<span class="summary-route-share">{html.escape(share_s)}</span>'
             "</div>"
         )
-        blocks.append(
-            '<div class="summary-route-card-outcomes">'
-            f"{outcome_line(bucket)}"
-            "</div>"
-        )
         blocks.append("</div>")
     blocks.append("</div>")
     return "".join(blocks)
+
+
+def _summary_audio_activity_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    sessions = _audio_build_sessions_from_rows(rows)
+    m = _audio_metrics_from_sessions(sessions)
+    return {
+        "sessions": int(m.get("total") or 0),
+        "stt_completed": int(m.get("stt_done") or 0),
+        "tts_completed": int(m.get("tts_done") or 0),
+        "errors_or_degraded": int(m.get("degraded_or_error") or 0),
+        "last_at": m.get("last_at"),
+    }
 
 
 def _short_file_hash(raw: Any, *, prefix_len: int = 12) -> str:
@@ -2543,6 +2540,9 @@ def _build_text_requests_from_rows(rows: list[dict[str, Any]]) -> list[dict[str,
                 route_norm = route_candidate
                 break
 
+        if route_norm != "text":
+            continue
+
         out.append(
             {
                 "execution_id": eid,
@@ -4198,7 +4198,7 @@ def _render_summary_technical_tables_expander(
             ) + int(count or 0)
         route_total = sum(
             int(normalized_route_counts.get(k, 0))
-            for k in ("rag", "text", "image_generation")
+            for k in ("rag", "text", "image_generation", "audio")
         )
         if route_total > 0:
             rows_r = [
@@ -4208,7 +4208,7 @@ def _render_summary_technical_tables_expander(
                         normalized_route_counts.get(k, 0)
                     ),
                 }
-                for k in ("text", "rag", "image_generation")
+                for k in ("text", "rag", "image_generation", "audio")
             ]
             st.dataframe(
                 pd.DataFrame(rows_r), use_container_width=True, hide_index=True
@@ -4291,7 +4291,11 @@ def _render_tab_overview(
     text_n = int(by_route.get("text", 0))
     rag_n = int(by_route.get("rag", 0))
     img_n = int(by_route.get("image_generation", 0))
-    total_req_24h = text_n + rag_n + img_n
+    aud_n = int(by_route.get("audio", 0))
+    if aud_n <= 0:
+        aud_n = len(_audio_build_sessions_from_rows(overview_recent))
+    total_req_24h = text_n + rag_n + img_n + aud_n
+    cfg = load_config()
 
     db_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
     err_24h = (
@@ -4421,6 +4425,34 @@ def _render_tab_overview(
                 _overview_ops_kv_item("PostgreSQL", pg_val),
                 _overview_ops_kv_item("Chroma", chroma_val),
                 _overview_ops_kv_item(
+                    "Audio subsystem",
+                    (
+                        html.escape("enabled")
+                        + ' <span class="route-badge route-badge--success">ON</span>'
+                        if cfg.audio_enabled
+                        else html.escape("disabled")
+                        + ' <span class="route-badge route-badge--warning">OFF</span>'
+                    ),
+                ),
+                _overview_ops_kv_item(
+                    "STT provider",
+                    html.escape(cfg.stt_provider)
+                    + (
+                        ' <span class="route-badge route-badge--warning">DISABLED</span>'
+                        if cfg.stt_provider in ("", "disabled", "none", "off")
+                        else ' <span class="route-badge route-badge--success">OK</span>'
+                    ),
+                ),
+                _overview_ops_kv_item(
+                    "TTS provider",
+                    html.escape(cfg.tts_provider)
+                    + (
+                        ' <span class="route-badge route-badge--warning">DISABLED</span>'
+                        if cfg.tts_provider in ("", "disabled", "none", "off")
+                        else ' <span class="route-badge route-badge--success">OK</span>'
+                    ),
+                ),
+                _overview_ops_kv_item(
                     "Последнее успешное событие (журнал)", last_success_inner
                 ),
                 _overview_ops_kv_item(
@@ -4441,6 +4473,7 @@ def _render_tab_overview(
             ("Text (норм.)", str(text_n)),
             ("RAG (норм.)", str(rag_n)),
             ("Image / gen", str(img_n)),
+            ("Audio / voice", str(aud_n)),
             ("Всего запросов", str(total_req_24h)),
         ]
     ) + _overview_ops_kv_mixed(
@@ -4454,7 +4487,7 @@ def _render_tab_overview(
         "B. AI-активность",
         activity_inner,
         footnote_html=_render_panel_footnote_html(
-            "Text/RAG/Image — уникальные <code>execution_id</code> за 24 ч с нормализацией "
+            "Text/RAG/Image/Audio — уникальные <code>execution_id</code> за 24 ч с нормализацией "
             "<code>route</code>/<code>mode</code>/<code>stage</code> (как в SQL "
             "<code>count_routes_since</code>)."
         ),
@@ -4862,66 +4895,51 @@ def main() -> None:
             rows_24 = _summary_rows_since_hours(
                 summary_sample, hours=SUMMARY_HOURS_WINDOW
             )
-            uniq_exec = _summary_unique_execution_ids(rows_24)
-            sample_out = _summary_route_sample_outcomes(rows_24)
-            unk_o = sample_out.get("unknown") or {}
-            unknown_sample_n = sum(int(unk_o.get(k, 0)) for k in ("success", "error", "other"))
+            uniq_exec_sample = _summary_unique_execution_ids(rows_24)
             telem = _summary_telemetry_extended_from_rows(rows_24)
             by_status = dashboard_stats.get("by_status") or {}
             by_stage = dashboard_stats.get("by_stage") or {}
             by_route = dashboard_stats.get("by_route") or {}
+            sessions_total = int(dashboard_stats.get("sessions_total") or 0)
 
             def _ds_int(key: str) -> int:
                 return int(dashboard_stats.get(key) or 0)
 
+            _total_ev = _ds_int("total_events")
+            _succ_ev = _ds_int("success_events")
+            _err_ev = _ds_int("error_events")
+            other_events = max(0, _total_ev - _succ_ev - _err_ev)
+
             activity_chips = _overview_metric_chips_html(
                 [
-                    ("Всего событий", str(_ds_int("total_events"))),
-                    ("Успешных", str(_ds_int("success_events"))),
-                    ("Ошибок", str(_ds_int("error_events"))),
-                    ("Уникальных execution_id", str(uniq_exec)),
-                    ("Админ операции", str(_ds_int("admin_events"))),
-                    ("Переиндексации", str(_ds_int("reindex_runs"))),
-                    ("Генерации изображений", str(_ds_int("image_generations"))),
+                    ("Событий (24ч)", str(_total_ev)),
+                    ("Успешных событий", str(_succ_ev)),
+                    ("Событий с ошибкой", str(_err_ev)),
+                    ("Прочих событий", str(other_events)),
+                    ("Сессий / execution_id (24ч)", str(sessions_total)),
+                    ("Сессий в telemetry sample", str(uniq_exec_sample)),
+                    ("Admin events", str(_ds_int("admin_events"))),
+                    ("Reindex starts", str(_ds_int("reindex_runs"))),
                 ]
             )
 
             card_a = ops_dashboard_card_html(
                 "A. Сводка активности",
                 activity_chips,
-                footnote_html=_render_panel_footnote_html(
-                    "Агрегаты событий — из <code>get_dashboard_stats</code> (24 ч). "
-                    "Уникальные <code>execution_id</code> — только по сессиям в выборке "
-                    f"(до {SUMMARY_LOG_SAMPLE_CAP} последних строк журнала, отфильтровано по 24 ч); "
-                    "полный DISTINCT по окну в UI без нового API недоступен."
-                ),
             )
 
             route_body = _summary_route_rows_html(
                 by_route=by_route,
-                sample_out=sample_out,
-                unknown_sample_n=unknown_sample_n,
+                sessions_total=sessions_total,
             )
             card_b = ops_dashboard_card_html(
                 "B. Маршруты",
                 route_body,
-                footnote_html=_render_panel_footnote_html(
-                    "Счётчики Text / RAG / Image — уникальные <code>execution_id</code> за 24 ч "
-                    "с нормализацией route/mode/stage (как в SQL <code>count_routes_since</code>). "
-                    "Доля — от суммы Text+RAG+Image+«прочее» в выборке. "
-                    "Успех/ошибка по маршруту — по итогу сессии в этой выборке (см. "
-                    "<code>_logs_infer_route_from_events</code> / "
-                    "<code>_logs_session_final_status</code>)."
-                ),
             )
 
             card_c = ops_dashboard_card_html(
-                "C. Этапы / lifecycle",
+                "C. События по этапам / lifecycle events",
                 _summary_lifecycle_list_html(by_stage),
-                footnote_html=_render_panel_footnote_html(
-                    "Числа — сырые <code>stage</code> из журнала за 24 ч; подписи через "
-                    "существующие хелперы нормализации."
-                ),
             )
 
             top_pm = telem.get("top_provider_model")
@@ -4965,21 +4983,17 @@ def main() -> None:
                 )
 
             card_d = ops_dashboard_card_html(
-                "D. Провайдеры и производительность",
+                "D. Telemetry sample / провайдеры и производительность",
                 _overview_ops_kv_mixed(
                     [
                         _overview_ops_kv_item("Топ provider / model", tpm_line),
-                        _overview_ops_kv_item("Токены (сумма по details)", tok_line),
-                        _overview_ops_kv_item("Средняя latency", avg_line),
-                        _overview_ops_kv_item("Макс. latency", max_line),
+                        _overview_ops_kv_item("Токены (sample, сумма по details)", tok_line),
+                        _overview_ops_kv_item("Средняя latency (sample)", avg_line),
+                        _overview_ops_kv_item("Макс. latency (sample)", max_line),
                     ]
                 )
-                + '<span class="panel-footnote-heading">Строки журнала по провайдеру</span>'
+                + '<span class="panel-footnote-heading">По последним строкам журнала (sample)</span>'
                 + prov_html,
-                footnote_html=_render_panel_footnote_html(
-                    "По строкам журнала за 24 ч в выборке (поля <code>details</code>). "
-                    "Если в логах нет provider/tokens/latency — отображается «нет данных»."
-                ),
             )
 
             summary_html = (

@@ -614,11 +614,11 @@ class AdminService:
         Aggregates from ``processing_logs`` for the admin dashboard (no schema changes).
 
         Keys: total_events, success_events, error_events, admin_events, image_generations,
-        reindex_runs, by_status, by_stage, by_route, rag_quality.
+        reindex_runs, sessions_total, by_status, by_stage, by_route, rag_quality.
 
         ``by_status`` contains only ``success`` and ``error`` (for the dashboard table).
         ``by_route`` counts only ``route_selected`` / ``processing_done`` with a known
-        ``details.route`` (``rag``, ``text``, ``image_generation``).
+        normalized route family (``rag``, ``text``, ``image_generation``, ``audio``).
         ``rag_quality`` aggregates rows whose ``details`` indicate RAG (``route`` = ``rag``
         or presence of RAG diagnostic keys).
         """
@@ -640,12 +640,14 @@ class AdminService:
             "admin_events": 0,
             "image_generations": 0,
             "reindex_runs": 0,
+            "sessions_total": 0,
             "by_status": {},
             "by_stage": {},
             "by_route": {
                 "rag": 0,
                 "text": 0,
                 "image_generation": 0,
+                "audio": 0,
             },
             "rag_quality": dict(empty_rq),
         }
@@ -654,6 +656,9 @@ class AdminService:
         try:
             with get_connection() as conn:
                 total = self._proc_repo.count_events_since(conn, hours=h)
+                sessions_total = self._proc_repo.count_unique_execution_ids_since(
+                    conn, hours=h
+                )
                 by_status = self._proc_repo.count_by_status_since(conn, hours=h)
                 by_stage = self._proc_repo.count_by_stage_since(conn, hours=h)
                 by_route_raw = self._proc_repo.count_routes_since(conn, hours=h)
@@ -670,6 +675,7 @@ class AdminService:
             "rag": int(by_route_raw.get("rag", 0)),
             "text": int(by_route_raw.get("text", 0)),
             "image_generation": int(by_route_raw.get("image_generation", 0)),
+            "audio": int(by_route_raw.get("audio", 0)),
         }
         # Dashboard status table: terminal outcomes only (exclude e.g. ``started``).
         by_status_dashboard = {
@@ -685,6 +691,7 @@ class AdminService:
             "admin_events": admin_events,
             "image_generations": by_route["image_generation"],
             "reindex_runs": reindex_runs,
+            "sessions_total": int(sessions_total),
             "by_status": by_status_dashboard,
             "by_stage": dict(by_stage),
             "by_route": by_route,
