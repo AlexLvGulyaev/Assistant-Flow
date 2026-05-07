@@ -57,6 +57,10 @@ class AppConfig:
     chroma_port: int = 8000
     asset_storage_backend: str = "filesystem"
     asset_storage_dir: str = "/app/storage/assets"
+    audio_enabled: bool = True
+    stt_provider: str = "disabled"
+    tts_provider: str = "disabled"
+    audio_storage_namespace: str = "audio"
 
     @property
     def token_url(self) -> str:
@@ -149,5 +153,12 @@ def load_config() -> AppConfig:
         asset_storage_dir=(
             os.getenv("ASSET_STORAGE_DIR", "/app/storage/assets").strip()
             or "/app/storage/assets"
+        ),
+        audio_enabled=_bool_env("AUDIO_ENABLED", True),
+        stt_provider=(os.getenv("STT_PROVIDER", "disabled").strip().lower() or "disabled"),
+        tts_provider=(os.getenv("TTS_PROVIDER", "disabled").strip().lower() or "disabled"),
+        audio_storage_namespace=(
+            os.getenv("AUDIO_STORAGE_NAMESPACE", "audio").strip().strip("/")
+            or "audio"
         ),
     )
