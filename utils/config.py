@@ -55,6 +55,8 @@ class AppConfig:
     chroma_use_http: bool = False
     chroma_host: str = "127.0.0.1"
     chroma_port: int = 8000
+    asset_storage_backend: str = "filesystem"
+    asset_storage_dir: str = "/app/storage/assets"
 
     @property
     def token_url(self) -> str:
@@ -140,4 +142,12 @@ def load_config() -> AppConfig:
         chroma_use_http=_bool_env("CHROMA_USE_HTTP", False),
         chroma_host=(os.getenv("CHROMA_HOST", "127.0.0.1").strip() or "127.0.0.1"),
         chroma_port=_int_env("CHROMA_PORT", 8000),
+        asset_storage_backend=(
+            os.getenv("ASSET_STORAGE_BACKEND", "filesystem").strip().lower()
+            or "filesystem"
+        ),
+        asset_storage_dir=(
+            os.getenv("ASSET_STORAGE_DIR", "/app/storage/assets").strip()
+            or "/app/storage/assets"
+        ),
     )
