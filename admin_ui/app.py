@@ -300,6 +300,13 @@ _EVENT_TYPE_RU: dict[str, str] = {
     "image_prompt_refinement_done": "Подготовка image prompt завершена",
     "image_provider_done": "Изображение получено от провайдера",
     "image_assets_persisted": "Файлы изображения сохранены",
+    "stt_started": "STT запущен",
+    "stt_completed": "STT завершён",
+    "tts_started": "TTS запущен",
+    "tts_completed": "TTS завершён",
+    "voice_processing_done": "Voice-обработка завершена",
+    "audio_generation_done": "Генерация аудио завершена",
+    "audio_generation_error": "Ошибка генерации аудио",
     "rag_unavailable": "RAG недоступен",
     "system_degraded": "Деградация системы",
 }
@@ -312,12 +319,16 @@ _ROUTE_ALIASES: dict[str, str] = {
     "rag_answer_done": "rag",
     "image": "image_generation",
     "image_response": "image_generation",
+    "audio": "audio",
+    "voice": "audio",
+    "voice_response": "audio",
 }
 
 _ROUTE_LABEL_RU: dict[str, str] = {
     "rag": "RAG",
     "text": "Текст",
     "image_generation": "Генерация изображений",
+    "audio": "Аудио",
     "unknown": "Прочее",
 }
 
@@ -388,6 +399,8 @@ def get_route_badge(route: str | None) -> str:
         tone = "info"
     elif norm == "image_generation":
         tone = "warning"
+    elif norm == "audio":
+        tone = "info"
     return (
         f'<span class="route-badge route-badge--{tone}">'
         f"{html.escape(label)}</span>"
@@ -913,6 +926,7 @@ LOGS_TIMELINE_PREVIEW_MAX = 120
 LOGS_LIST_PREVIEW_MAX = 140
 LOGS_EXEC_ID_SHORT_LEN = 8
 IMAGE_LIST_LOG_CAP = 500
+_AUDIO_LIST_LOG_CAP = 500
 _IMAGE_PROMPT_PREVIEW_MAX = 200
 _IMAGE_STAGE_MARKERS: frozenset[str] = frozenset(
     {
@@ -933,6 +947,27 @@ _IMAGE_FILE_SUFFIXES: tuple[str, ...] = (
     ".webp",
     ".gif",
 )
+_AUDIO_STAGE_MARKERS: frozenset[str] = frozenset(
+    {
+        "stt_started",
+        "stt_completed",
+        "tts_started",
+        "tts_completed",
+        "voice_processing_done",
+        "audio_generation_done",
+        "audio_generation_error",
+    }
+)
+_AUDIO_FILE_SUFFIXES: tuple[str, ...] = (
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".opus",
+)
+_AUDIO_TRANSCRIPT_PREVIEW_MAX = 200
 
 
 def _short_execution_id(eid: str | None) -> str:
@@ -962,12 +997,24 @@ def _logs_infer_route_from_events(events: list[dict[str, Any]]) -> str:
             return "rag"
         if mode == "image":
             return "image_generation"
+        if mode == "voice":
+            return "audio"
     for ev in reversed(events):
         stg = str(ev.get("stage") or "")
         if stg == "rag_answer_done":
             return "rag"
         if stg == "text_answer_done":
             return "text"
+        if stg in (
+            "stt_started",
+            "stt_completed",
+            "tts_started",
+            "tts_completed",
+            "voice_processing_done",
+            "audio_generation_done",
+            "audio_generation_error",
+        ):
+            return "audio"
     return "unknown"
 
 
@@ -1047,17 +1094,21 @@ def infer_event_severity(
         "image_text_enhancement_done",
         "image_prompt_refinement_done",
         "image_assets_persisted",
+        "stt_completed",
+        "tts_completed",
+        "voice_processing_done",
+        "audio_generation_done",
         "processing_done",
         "admin_reindex_done",
         "admin_document_uploaded",
     ):
         if stat == "success":
             return "success"
-    if stg in ("image_generation_started",):
+    if stg in ("image_generation_started", "stt_started", "tts_started"):
         return "warning"
     if stg == "image_provider_done":
         return "error" if stat == "error" else "success"
-    if stg in ("image_generation_error",):
+    if stg in ("image_generation_error", "audio_generation_error"):
         return "error"
     if stg == "admin_reindex_started":
         return "warning"
@@ -1386,6 +1437,174 @@ def _safe_image_http_url(url: str | None) -> str | None:
     return None
 
 
+def _audio_log_row_matches(row: dict[str, Any]) -> bool:
+    stg = str(row.get("stage") or "").strip().lower()
+    if stg in _AUDIO_STAGE_MARKERS:
+        return True
+    details = row.get("details")
+    if not isinstance(details, dict):
+        return False
+    mode = str(details.get("mode") or "").strip().lower()
+    if mode == "voice":
+        return True
+    route = normalize_route(str(details.get("route") or "").strip())
+    if route == "audio":
+        return True
+    return False
+
+
+def _audio_build_sessions_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered = [r for r in rows if _audio_log_row_matches(r)]
+    if not filtered:
+        return []
+    groups = group_logs_by_execution_id(filtered)
+    sessions: list[dict[str, Any]] = []
+    for eid, start_ts, events in groups:
+        last_times = [
+            r.get("created_at")
+            for r in events
+            if isinstance(r.get("created_at"), datetime)
+        ]
+        last_at = max(last_times) if last_times else None
+        sessions.append(
+            {
+                "execution_id": eid,
+                "start_ts": start_ts,
+                "last_at": last_at,
+                "sample_events": events,
+            }
+        )
+    sessions.sort(
+        key=lambda s: s.get("last_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return sessions
+
+
+def _audio_transcript_preview_from_events(events: list[dict[str, Any]]) -> str:
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        txt = _first_non_empty(
+            d,
+            (
+                "transcript",
+                "stt_transcript",
+                "recognized_text",
+                "user_text",
+                "query_preview",
+                "text",
+            ),
+        )
+        if txt:
+            s = str(txt).strip()
+            if len(s) > _AUDIO_TRANSCRIPT_PREVIEW_MAX:
+                return s[: _AUDIO_TRANSCRIPT_PREVIEW_MAX - 1] + "…"
+            return s
+    return ""
+
+
+def _audio_collect_assets_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ev in events:
+        d = ev.get("details")
+        if not isinstance(d, dict):
+            continue
+        candidates: list[dict[str, Any]] = []
+        for key in ("output_audio", "generated_audio", "output_files", "generated_files"):
+            fl = d.get(key)
+            if isinstance(fl, list):
+                for x in fl:
+                    if isinstance(x, dict):
+                        candidates.append(x)
+        candidates.append(d)
+        for c in candidates:
+            path_s = str(
+                c.get("path")
+                or c.get("audio_path")
+                or c.get("output_path")
+                or c.get("file_path")
+                or ""
+            ).strip()
+            asset_ref = str(
+                c.get("asset_ref") or c.get("asset_key") or c.get("relative_path") or ""
+            ).strip()
+            if not path_s and not asset_ref:
+                continue
+            low = path_s.lower().replace("\\", "/")
+            if path_s and not (
+                any(low.endswith(sfx) for sfx in _AUDIO_FILE_SUFFIXES)
+                or "/storage/assets/" in low
+            ):
+                continue
+            k = path_s or f"asset_ref:{asset_ref}"
+            if k in seen:
+                continue
+            seen.add(k)
+            assets.append(
+                {
+                    "path": path_s or None,
+                    "asset_ref": asset_ref or None,
+                    "filename": c.get("filename"),
+                    "size": c.get("size") or c.get("size_bytes"),
+                    "mime_type": c.get("mime_type") or c.get("content_type"),
+                    "duration_sec": c.get("duration_sec") or c.get("duration_s"),
+                    "sample_rate": c.get("sample_rate"),
+                    "channels": c.get("channels"),
+                    "created_at": ev.get("created_at"),
+                }
+            )
+    return assets
+
+
+def _audio_section_payload(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    base: dict[str, Any] = {}
+    for ev in events:
+        d = ev.get("details")
+        if isinstance(d, dict):
+            base.update(d)
+    transcript = _first_non_empty(
+        base,
+        ("transcript", "stt_transcript", "recognized_text", "query_preview", "text"),
+    )
+    generated_text = _first_non_empty(base, ("tts_text", "answer_text", "response_text"))
+    return {
+        "original": {
+            "filename": base.get("filename"),
+            "input_type": base.get("input_type") or base.get("modality"),
+            "duration_sec": base.get("duration_sec") or base.get("duration_s"),
+            "mime_type": base.get("mime_type") or base.get("content_type"),
+            "sample_rate": base.get("sample_rate"),
+            "channels": base.get("channels"),
+            "size": base.get("size") or base.get("size_bytes"),
+            "created_at": base.get("created_at"),
+            "asset_ref": base.get("asset_ref") or base.get("asset_key"),
+            "asset_path": base.get("audio_path") or base.get("path"),
+        },
+        "stt": {
+            "transcript": transcript,
+            "latency_ms": base.get("stt_latency_ms") or base.get("latency_ms"),
+            "provider": base.get("stt_provider") or base.get("provider"),
+            "model": base.get("stt_model") or base.get("model"),
+            "input_tokens": base.get("input_tokens"),
+            "output_tokens": base.get("output_tokens"),
+            "total_tokens": base.get("total_tokens"),
+            "cost_usd": base.get("cost_usd"),
+        },
+        "tts": {
+            "generated_text": generated_text,
+            "latency_ms": base.get("tts_latency_ms"),
+            "provider": base.get("tts_provider") or base.get("provider"),
+            "model": base.get("tts_model") or base.get("model"),
+            "asset_ref": base.get("tts_asset_ref") or base.get("asset_ref"),
+            "audio_path": base.get("tts_audio_path") or base.get("audio_path"),
+            "mime_type": base.get("tts_mime_type") or base.get("mime_type"),
+        },
+        "technical": base,
+    }
+
 def _image_text_stage_token_totals(
     events: list[dict[str, Any]],
 ) -> tuple[int, int, int | None]:
@@ -1683,6 +1902,36 @@ def _render_image_generation_summary_html(
                 ("Токены / usage (image API)", img_tok_s),
                 ("Провайдер изображения", img_usage_s),
                 ("Сводно usage", total_usage_s),
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_audio_session_summary_html(
+    *,
+    execution_id: str,
+    events: list[dict[str, Any]],
+    assets: list[dict[str, Any]],
+    transcript_preview: str,
+) -> None:
+    status_s = _logs_session_final_status(events)
+    pm = _logs_session_provider_model(events)
+    lat = _logs_session_max_step_latency_ms(events)
+    wall = _logs_session_wall_duration_ms(events)
+    route_n = _logs_infer_route_from_events(events)
+    st.markdown(
+        ops_trace_header_html(
+            title="Сводка аудио-сессии",
+            execution_id=execution_id,
+            badges_inner_html=f"{get_route_badge(route_n)} {get_log_status_badge(status_s)}",
+            kv_pairs=[
+                ("Событий", html.escape(str(len(events)))),
+                ("Аудио ассетов", html.escape(str(len(assets)))),
+                ("Provider / model", html.escape(pm) if pm else "—"),
+                ("Latency (шаг, max)", html.escape(f"{lat} мс" if lat is not None else "—")),
+                ("Длительность (стена)", html.escape(_logs_format_duration_ms(wall))),
+                ("Transcript preview", html.escape(transcript_preview or "данные пока недоступны")),
             ],
         ),
         unsafe_allow_html=True,
@@ -2057,6 +2306,7 @@ _SPLIT_TOAST_KEYS: dict[str, str] = {
     "text": "split_toast_text",
     "rag": "split_toast_rag",
     "image": "split_toast_image",
+    "audio": "split_toast_audio",
     "docs": "split_toast_docs",
     "logs": "split_toast_logs",
 }
@@ -4542,6 +4792,7 @@ def main() -> None:
         tab_text,
         tab_rag,
         tab_images,
+        tab_audio,
         tab_docs,
         tab_logs,
     ) = st.tabs(
@@ -4551,6 +4802,7 @@ def main() -> None:
             "Text-запросы",
             "RAG-запросы",
             "Изображения",
+            "Аудио",
             "Документы",
             "Логи",
         )
@@ -5261,6 +5513,298 @@ def main() -> None:
                             )
                             _render_trace_flow_timeline(
                                 events, section_title="Цепочка событий"
+                            )
+
+    with tab_audio:
+        st.subheader("Аудио")
+        st.caption(
+            "Операторский журнал voice/audio сессий из `processing_logs`. "
+            "Список строится по последним строкам журнала; детальные данные загружаются лениво."
+        )
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            render_empty_state(
+                "Раздел недоступен: задайте переменную окружения DATABASE_URL "
+                "и убедитесь, что таблица processing_logs заполняется."
+            )
+        else:
+            audio_sample = svc.get_recent_logs(_AUDIO_LIST_LOG_CAP)
+            all_audio_sessions = _audio_build_sessions_from_rows(audio_sample)
+            if not all_audio_sessions:
+                render_empty_state(
+                    "Аудио/voice сессии пока отсутствуют. "
+                    "После появления маршрутов `audio/voice` события будут отображены здесь."
+                )
+            else:
+                aud_page = int(st.session_state.get("audio_page", 0))
+                aud_page_size_seed = int(st.session_state.get("audio_page_size", 50))
+                n_total = len(all_audio_sessions)
+                has_next_aud = (aud_page + 1) * aud_page_size_seed < n_total
+                aud_page, aud_page_size = render_pagination_controls(
+                    "audio",
+                    total_items=n_total,
+                    has_next=has_next_aud,
+                    page_size_label="Сколько audio-сессий показать",
+                )
+                page_items, _, _ = get_paginated_slice(
+                    all_audio_sessions, aud_page, aud_page_size
+                )
+                st.caption(f"Audio-сессий в выборке журнала: {n_total}")
+                show_split_selection_toast("audio")
+                render_split_pane_titles(
+                    list_title="Журнал audio/voice сессий",
+                    detail_title="Детали выбранной audio-сессии",
+                )
+                list_col, detail_col = split_list_detail_columns()
+                selected_audio_eid = str(
+                    st.session_state.get("selected_audio_execution_id", "")
+                )
+                with list_col:
+                    st.markdown('<div class="logs-list-pane">', unsafe_allow_html=True)
+                    for idx, sess in enumerate(page_items):
+                        eid = str(sess.get("execution_id") or "")
+                        sample_evs = sess.get("sample_events") or []
+                        if not isinstance(sample_evs, list):
+                            sample_evs = []
+                        last_at = sess.get("last_at")
+                        route_n = _logs_infer_route_from_events(sample_evs)
+                        status_s = _logs_session_final_status(sample_evs)
+                        preview = _audio_transcript_preview_from_events(sample_evs) or "—"
+                        pm = _logs_session_provider_model(sample_evs)
+                        wall = _logs_session_wall_duration_ms(sample_evs)
+                        dur_s = _logs_format_duration_ms(wall)
+                        input_type = "—"
+                        output_type = "—"
+                        for ev in reversed(sample_evs):
+                            d = ev.get("details")
+                            if not isinstance(d, dict):
+                                continue
+                            if input_type == "—":
+                                input_type = str(
+                                    d.get("input_type") or d.get("mode") or d.get("modality") or "—"
+                                )
+                            if output_type == "—":
+                                output_type = str(
+                                    d.get("output_type")
+                                    or d.get("response_type")
+                                    or d.get("message_type")
+                                    or "—"
+                                )
+                            if input_type != "—" and output_type != "—":
+                                break
+                        dt_label = _format_dt_moscow_logs(last_at)
+                        is_selected = bool(selected_audio_eid) and eid == selected_audio_eid
+                        item_cls = (
+                            "rag-list-item logs-session-card rag-list-item-selected"
+                            if is_selected
+                            else "rag-list-item logs-session-card"
+                        )
+                        badge_sel = (
+                            '<span class="rag-selected-badge">выбрано</span>'
+                            if is_selected
+                            else ""
+                        )
+                        eid_short = _short_execution_id(eid)
+                        pm_block = ""
+                        if pm:
+                            pmt = pm if len(pm) <= 100 else pm[:99] + "…"
+                            pm_block = (
+                                '<div class="logs-session-meta" style="border-top:none;'
+                                'padding-top:3px;margin-top:2px;">'
+                                f"{html.escape(pmt)}</div>"
+                            )
+                        st.markdown(
+                            f'<div class="{item_cls}">'
+                            '<div class="rag-list-item-head">'
+                            f'<div class="rag-list-time">{html.escape(dt_label)}</div>'
+                            f"{badge_sel}</div>"
+                            '<div class="logs-session-badges-row">'
+                            '<div class="route-badge-line">'
+                            f"{get_route_badge('audio')} {get_log_status_badge(status_s)}"
+                            "</div></div>"
+                            f'<div class="rag-list-query">{html.escape(preview)}</div>'
+                            f"{pm_block}"
+                            '<div class="logs-session-meta">'
+                            f'<code class="log-eid-short">{html.escape(eid_short)}</code>'
+                            f" · событий: {len(sample_evs)} · длит.: {html.escape(dur_s)}"
+                            f" · in/out: {html.escape(input_type)}/{html.escape(output_type)}"
+                            "</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            split_open_button_label(is_selected),
+                            key=f"audio_open_{idx}_{eid}",
+                            help="Открыть детали справа",
+                        ):
+                            st.session_state["selected_audio_execution_id"] = eid
+                            flag_split_selection_toast("audio")
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with detail_col:
+                    reset_invalid_selection(
+                        page_items,
+                        "selected_audio_execution_id",
+                        lambda s: str(s.get("execution_id") or ""),
+                    )
+                    selected_audio_eid = str(
+                        st.session_state.get("selected_audio_execution_id", "")
+                    )
+                    if not selected_audio_eid:
+                        render_empty_state("Выберите audio-сессию слева.")
+                    else:
+                        full_rows = svc.get_logs_events_for_execution_ids([selected_audio_eid])
+                        if not full_rows:
+                            render_empty_state("Не удалось загрузить события для execution_id.")
+                        else:
+                            events = list(full_rows)
+                            if not any(_audio_log_row_matches(r) for r in events):
+                                st.markdown(
+                                    '<span class="route-badge route-badge--warning">'
+                                    "В полной трассе пока нет явных audio/STT/TTS признаков"
+                                    "</span>",
+                                    unsafe_allow_html=True,
+                                )
+                            assets = _audio_collect_assets_from_events(events)
+                            sections = _audio_section_payload(events)
+                            transcript_preview = _audio_transcript_preview_from_events(events)
+                            _render_audio_session_summary_html(
+                                execution_id=selected_audio_eid,
+                                events=events,
+                                assets=assets,
+                                transcript_preview=transcript_preview,
+                            )
+
+                            st.markdown(
+                                panel_section_title_html("A. Original voice/audio metadata"),
+                                unsafe_allow_html=True,
+                            )
+                            original = sections.get("original") or {}
+                            has_original = any(v not in (None, "", "—") for v in original.values())
+                            if not has_original:
+                                st.markdown(
+                                    '<p class="panel-footnote muted-path">данные пока недоступны</p>',
+                                    unsafe_allow_html=True,
+                                )
+                            else:
+                                for k in (
+                                    "filename",
+                                    "duration_sec",
+                                    "mime_type",
+                                    "sample_rate",
+                                    "channels",
+                                    "size",
+                                    "created_at",
+                                    "asset_ref",
+                                    "asset_path",
+                                ):
+                                    render_compact_meta_row(k, str(original.get(k) or "—"))
+
+                            st.markdown(
+                                panel_section_title_html("B. STT transcript"),
+                                unsafe_allow_html=True,
+                            )
+                            stt_meta = sections.get("stt") or {}
+                            transcript_full = str(stt_meta.get("transcript") or "").strip()
+                            if not transcript_full:
+                                st.markdown(
+                                    '<p class="panel-footnote muted-path">данные пока недоступны</p>',
+                                    unsafe_allow_html=True,
+                                )
+                            else:
+                                _render_prompt_subsection(
+                                    "Transcript preview",
+                                    transcript_full,
+                                    preview_len=280,
+                                    empty_label="данные пока недоступны",
+                                )
+                            for k in (
+                                "latency_ms",
+                                "provider",
+                                "model",
+                                "input_tokens",
+                                "output_tokens",
+                                "total_tokens",
+                                "cost_usd",
+                            ):
+                                render_compact_meta_row(f"stt.{k}", str(stt_meta.get(k) or "—"))
+                            if transcript_full:
+                                with st.expander("Полный transcript", expanded=False):
+                                    st.text(transcript_full)
+
+                            st.markdown(
+                                panel_section_title_html("C. TTS/output audio"),
+                                unsafe_allow_html=True,
+                            )
+                            tts_meta = sections.get("tts") or {}
+                            for k in (
+                                "generated_text",
+                                "provider",
+                                "model",
+                                "latency_ms",
+                                "asset_ref",
+                                "audio_path",
+                                "mime_type",
+                            ):
+                                render_compact_meta_row(f"tts.{k}", str(tts_meta.get(k) or "—"))
+
+                            asset_primary = assets[0] if assets else {}
+                            audio_asset_ref = str(
+                                asset_primary.get("asset_ref")
+                                or tts_meta.get("asset_ref")
+                                or original.get("asset_ref")
+                                or ""
+                            ).strip()
+                            audio_path_raw = str(
+                                asset_primary.get("path")
+                                or tts_meta.get("audio_path")
+                                or original.get("asset_path")
+                                or ""
+                            ).strip()
+                            p_resolved = _safe_resolved_asset_ref(audio_asset_ref)
+                            if p_resolved is None:
+                                p_resolved = _safe_resolved_asset_path(audio_path_raw or None)
+                            if p_resolved is not None:
+                                with st.expander("Audio preview", expanded=False):
+                                    try:
+                                        st.audio(str(p_resolved))
+                                    except Exception:
+                                        st.markdown(
+                                            '<span class="route-badge route-badge--warning">'
+                                            "аудиофайл недоступен"
+                                            "</span>",
+                                            unsafe_allow_html=True,
+                                        )
+                            else:
+                                st.markdown(
+                                    '<span class="route-badge route-badge--muted">'
+                                    "аудиофайл недоступен"
+                                    "</span>",
+                                    unsafe_allow_html=True,
+                                )
+
+                            st.markdown(
+                                panel_section_title_html("D. Technical metadata"),
+                                unsafe_allow_html=True,
+                            )
+                            render_metadata_expander(
+                                "Показать агрегированные метаданные",
+                                {
+                                    "execution_id": selected_audio_eid,
+                                    "n_events": len(events),
+                                    "route_inferred": _logs_infer_route_from_events(events),
+                                    "final_status": _logs_session_final_status(events),
+                                    "assets_detected": assets,
+                                },
+                                expanded=False,
+                            )
+
+                            st.markdown(
+                                panel_section_title_html("E. Timeline/events"),
+                                unsafe_allow_html=True,
+                            )
+                            _render_trace_flow_timeline(
+                                events,
+                                section_title="Цепочка audio/STT/TTS событий",
                             )
 
     with tab_docs:
