@@ -295,6 +295,7 @@ class PromptOrchestrator:
             **{
                 k: image_result.get(k)
                 for k in (
+                    "asset_ref",
                     "input_tokens",
                     "output_tokens",
                     "total_tokens",

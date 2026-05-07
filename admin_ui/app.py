@@ -28,6 +28,7 @@ import pandas as pd
 import streamlit as st
 
 from services.admin_service import AdminService
+from services.asset_repository_factory import create_asset_repository
 from services.healthcheck_service import (
     HealthSnapshot,
     format_health_badge_status,
@@ -1279,20 +1280,25 @@ def _image_collect_assets_from_events(
     events: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     assets: list[dict[str, Any]] = []
-    seen_paths: set[str] = set()
+    seen_keys: set[str] = set()
 
     def _append_asset(rec: dict[str, Any]) -> None:
         p = str(rec.get("path") or "").strip()
-        if not p:
+        asset_ref = str(rec.get("asset_ref") or "").strip()
+        if not p and not asset_ref:
             return
-        pl = p.lower().replace("\\", "/")
-        if not (
-            any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES) or "/outputs/" in pl
-        ):
+        if p:
+            pl = p.lower().replace("\\", "/")
+            if not (
+                any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES)
+                or "/outputs/" in pl
+                or "/storage/assets/" in pl
+            ):
+                return
+        key = p or f"asset_ref:{asset_ref}"
+        if key in seen_keys:
             return
-        if p in seen_paths:
-            return
-        seen_paths.add(p)
+        seen_keys.add(key)
         assets.append(rec)
 
     for ev in events:
@@ -1305,14 +1311,22 @@ def _image_collect_assets_from_events(
                 continue
             for x in fl:
                 if isinstance(x, dict):
-                    p = x.get("path")
-                    if not (isinstance(p, str) and p.strip()):
+                    p = str(x.get("path") or "").strip()
+                    aref = str(
+                        x.get("asset_ref")
+                        or x.get("asset_key")
+                        or x.get("relative_path")
+                        or d.get("asset_ref")
+                        or ""
+                    ).strip()
+                    if not p and not aref:
                         continue
                     url_raw = x.get("provider_url") or x.get("url")
                     url_s = str(url_raw).strip() if url_raw else ""
                     _append_asset(
                         {
-                            "path": p.strip(),
+                            "path": p,
+                            "asset_ref": aref or None,
                             "filename": x.get("filename"),
                             "provider_url": url_s or None,
                             "size": x.get("size"),
@@ -1329,14 +1343,16 @@ def _image_collect_assets_from_events(
                         }
                     )
         for p in _image_details_collect_paths(d):
-            if p in seen_paths:
-                continue
             pl = p.lower().replace("\\", "/")
-            if any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES) or "/outputs/" in pl:
-                seen_paths.add(p)
-                assets.append(
+            if (
+                any(pl.endswith(sfx) for sfx in _IMAGE_FILE_SUFFIXES)
+                or "/outputs/" in pl
+                or "/storage/assets/" in pl
+            ):
+                _append_asset(
                     {
                         "path": p,
+                        "asset_ref": str(d.get("asset_ref") or "").strip() or None,
                         "stage": ev.get("stage"),
                         "created_at": ev.get("created_at"),
                     }
@@ -1549,6 +1565,29 @@ def _safe_resolved_asset_path(path_str: str | None) -> Path | None:
         if p.is_file():
             return p
     except (OSError, ValueError, RuntimeError):
+        return None
+    return None
+
+
+@st.cache_resource
+def _asset_repository_ui() -> Any:
+    try:
+        return create_asset_repository(load_config())
+    except Exception:
+        return None
+
+
+def _safe_resolved_asset_ref(asset_ref: str | None) -> Path | None:
+    if not asset_ref or not str(asset_ref).strip():
+        return None
+    repo = _asset_repository_ui()
+    if repo is None:
+        return None
+    try:
+        p = repo.resolve_path(str(asset_ref).strip())
+        if isinstance(p, Path) and p.is_file():
+            return p
+    except Exception:
         return None
     return None
 
@@ -4893,6 +4932,7 @@ def main() -> None:
                             for a in assets:
                                 raw_path = a.get("path")
                                 rs = str(raw_path) if raw_path else ""
+                                asset_ref_s = str(a.get("asset_ref") or "").strip()
                                 url_hint = a.get("provider_url") or a.get("url")
                                 http_url = _safe_image_http_url(
                                     str(url_hint) if url_hint else None
@@ -4905,7 +4945,9 @@ def main() -> None:
                                         fn = Path(rs).name if rs else "—"
                                     except Exception:
                                         fn = "—"
-                                p_resolved = _safe_resolved_asset_path(rs or None)
+                                p_resolved = _safe_resolved_asset_ref(asset_ref_s)
+                                if p_resolved is None:
+                                    p_resolved = _safe_resolved_asset_path(rs or None)
                                 sz_s = ""
                                 sz_meta = a.get("size")
                                 if sz_meta is not None:
@@ -4933,6 +4975,7 @@ def main() -> None:
                                     f'<div class="image-asset-meta">'
                                     f"<strong>{html.escape(fn)}</strong><br/>"
                                     f'<span class="muted-path">{html.escape(rs or "—")}</span>'
+                                    f'{(f"<br/>asset_ref: <span class=\"muted-path\">{html.escape(asset_ref_s)}</span>") if asset_ref_s else ""}'
                                     f"{url_line}"
                                     f"{('<br/>размер: ' + html.escape(sz_s)) if sz_s else ''}"
                                     f"<br/>создано (событие): {html.escape(ca_s)}"

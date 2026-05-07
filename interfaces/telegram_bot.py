@@ -14,6 +14,7 @@ from providers.openai_chat_provider import OpenAIChatProvider
 from providers.rag_embeddings import build_openai_embeddings
 from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
+from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import ChromaRagStore, count_chroma_chunks
 from services.rag_query_service import RagQueryService
 from services.rag_types import RagQueryResult
@@ -215,6 +216,7 @@ def create_bot() -> telebot.TeleBot:
 
     bot = telebot.TeleBot(config.telegram_bot_token)
     orchestrator = build_orchestrator()
+    asset_repository = create_asset_repository(config)
     _chroma_path = _resolve_project_path(config, config.chroma_persist_dir)
     if config.chroma_use_http:
         print(
@@ -587,24 +589,42 @@ def create_bot() -> telebot.TeleBot:
             result_text = str(result)
             is_image_path = (
                 "outputs" in result_text.lower()
+                or "/storage/" in result_text.lower()
                 or result_text.lower().endswith(".png")
                 or result_text.lower().endswith(".jpg")
                 or result_text.lower().endswith(".jpeg")
             )
             if is_image_path:
                 try:
-                    with open(result_text, "rb") as image_file:
+                    img_snap = orchestrator.get_last_image_generation_snapshot()
+                    asset_ref = str(img_snap.get("asset_ref") or "").strip()
+                    resolved_path: Path | None = None
+                    if asset_ref:
+                        try:
+                            p_candidate = asset_repository.resolve_path(asset_ref)
+                            if p_candidate.is_file():
+                                resolved_path = p_candidate
+                        except Exception:
+                            resolved_path = None
+                    if resolved_path is None:
+                        p_legacy = Path(result_text)
+                        if p_legacy.is_file():
+                            resolved_path = p_legacy
+                    if resolved_path is None:
+                        raise FileNotFoundError(
+                            "image file is missing for both asset_ref and image_path"
+                        )
+                    with resolved_path.open("rb") as image_file:
                         bot.send_photo(message.chat.id, image_file)
                     usage_done = orchestrator.get_last_text_usage_snapshot()
                     model_done = orchestrator.get_last_text_model_snapshot()
-                    img_snap = orchestrator.get_last_image_generation_snapshot()
                     prov_url = img_snap.get("provider_url") or img_snap.get("image_url")
                     im_model = str(img_snap.get("model") or "").strip()
                     details_done: dict = {
                         "route": "image_generation",
                         "generation_completed": True,
                         "output_images": build_output_image_records(
-                            result_text,
+                            str(resolved_path),
                             provider_url=str(prov_url) if prov_url else None,
                             provider=str(img_snap.get("provider") or "") or None,
                             model=im_model or None,
@@ -615,6 +635,7 @@ def create_bot() -> telebot.TeleBot:
                     if im_model:
                         details_done["model"] = im_model
                     for k in (
+                        "asset_ref",
                         "input_tokens",
                         "output_tokens",
                         "total_tokens",
