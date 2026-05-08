@@ -56,6 +56,15 @@ export async function fetchRecentLogs(limit = 20): Promise<LogsRecentResponse> {
   return parseJson<LogsRecentResponse>(res);
 }
 
+export async function fetchDocuments(limit = 200): Promise<DocumentsResponse> {
+  const q = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${getApiBaseUrl()}/api/documents?${q.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Documents: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<DocumentsResponse>(res);
+}
+
 export function getAssetPreviewUrl(assetRef: string): string {
   const q = new URLSearchParams({ asset_ref: assetRef });
   return `${getApiBaseUrl()}/api/assets/preview?${q.toString()}`;
@@ -151,4 +160,34 @@ export interface LogsRecentResponse {
   limit?: number;
   count?: number;
   items?: LogItem[];
+}
+
+export interface DocumentItem {
+  document_id: string;
+  filename: string;
+  extension: string;
+  status: string;
+  status_raw?: string;
+  active_version?: number | null;
+  versions_count?: number;
+  chunk_count?: number;
+  last_indexed_at?: string | null;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+  path_category?: string | null;
+  last_indexing_event?: LogItem | null;
+}
+
+export interface DocumentsObservability {
+  reindex_available?: boolean;
+  last_reindex_event?: LogItem | null;
+  admin_operations?: LogItem[];
+  timeline_events?: LogItem[];
+}
+
+export interface DocumentsResponse {
+  limit?: number;
+  count?: number;
+  items?: DocumentItem[];
+  observability?: DocumentsObservability;
 }

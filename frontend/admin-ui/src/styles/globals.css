@@ -986,6 +986,15 @@ code {
   height: 34px;
 }
 
+.docs-filter-row {
+  grid-template-columns: 1fr 1fr 84px;
+}
+
+.mini-badge--docs {
+  border-color: rgba(63, 185, 80, 0.42);
+  color: #9ae6ab;
+}
+
 @media (max-width: 900px) {
   .admin-shell {
     grid-template-columns: 1fr;

@@ -16,6 +16,6 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/rag", label: "RAG", placeholder: true },
   { path: "/images", label: "Images" },
   { path: "/audio", label: "Audio" },
-  { path: "/documents", label: "Documents", placeholder: true },
+  { path: "/documents", label: "Documents" },
   { path: "/logs", label: "Logs" },
 ];
