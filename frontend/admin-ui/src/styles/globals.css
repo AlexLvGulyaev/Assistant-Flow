@@ -986,6 +986,16 @@ code {
   height: 34px;
 }
 
+.text-filter-row,
+.rag-filter-row {
+  grid-template-columns: 1fr 1fr 84px;
+}
+
+.mini-badge--rag {
+  border-color: rgba(147, 112, 219, 0.45);
+  color: #c6a7ff;
+}
+
 .docs-filter-row {
   grid-template-columns: 1fr 1fr 84px;
 }

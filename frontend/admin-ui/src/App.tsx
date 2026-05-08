@@ -5,8 +5,9 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { ImagesPage } from "./pages/ImagesPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { RagPage } from "./pages/RagPage";
 import { SummaryPage } from "./pages/SummaryPage";
+import { TextPage } from "./pages/TextPage";
 
 export default function App() {
   return (
@@ -14,8 +15,8 @@ export default function App() {
       <Route element={<AdminLayout />}>
         <Route index element={<OverviewPage />} />
         <Route path="summary" element={<SummaryPage />} />
-        <Route path="text" element={<PlaceholderPage title="Text" />} />
-        <Route path="rag" element={<PlaceholderPage title="RAG" />} />
+        <Route path="text" element={<TextPage />} />
+        <Route path="rag" element={<RagPage />} />
         <Route path="images" element={<ImagesPage />} />
         <Route path="audio" element={<AudioPage />} />
         <Route path="documents" element={<DocumentsPage />} />

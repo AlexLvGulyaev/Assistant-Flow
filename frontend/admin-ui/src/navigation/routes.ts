@@ -12,8 +12,8 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Overview", end: true },
   { path: "/summary", label: "Summary" },
-  { path: "/text", label: "Text", placeholder: true },
-  { path: "/rag", label: "RAG", placeholder: true },
+  { path: "/text", label: "Text" },
+  { path: "/rag", label: "RAG" },
   { path: "/images", label: "Images" },
   { path: "/audio", label: "Audio" },
   { path: "/documents", label: "Documents" },
