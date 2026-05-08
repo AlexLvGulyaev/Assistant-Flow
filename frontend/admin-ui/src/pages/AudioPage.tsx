@@ -11,7 +11,7 @@ import { StatusBadge } from "../components/StatusBadge";
 const INITIAL_LIMIT = 140;
 const LIMIT_STEP = 80;
 
-interface AudioSession {
+interface АудиоSession {
   executionId: string;
   rows: LogItem[];
   startedAt: number;
@@ -22,9 +22,9 @@ interface AudioSession {
   latencyMs: number | null;
   stageCount: number;
   transcript: string | null;
-  responseText: string | null;
-  inputAudioRef: string | null;
-  outputAudioRef: string | null;
+  responseТекст: string | null;
+  inputАудиоRef: string | null;
+  outputАудиоRef: string | null;
   inputMeta: Record<string, string | null>;
   outputMeta: Record<string, string | null>;
   preview: string;
@@ -42,8 +42,8 @@ export function AudioPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [inAudioFailed, setInAudioFailed] = useState(false);
-  const [outAudioFailed, setOutAudioFailed] = useState(false);
+  const [inАудиоFailed, setInАудиоFailed] = useState(false);
+  const [outАудиоFailed, setOutАудиоFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,7 +55,7 @@ export function AudioPage() {
         if (!cancelled) setItems(res.items ?? []);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load audio logs");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить логи аудио");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -66,7 +66,7 @@ export function AudioPage() {
     };
   }, [limit]);
 
-  const sessions = useMemo(() => buildAudioSessions(items), [items]);
+  const sessions = useMemo(() => buildАудиоSessions(items), [items]);
   const providers = useMemo(
     () =>
       Array.from(
@@ -96,10 +96,10 @@ export function AudioPage() {
         return (
           s.executionId.toLowerCase().includes(q) ||
           (s.transcript || "").toLowerCase().includes(q) ||
-          (s.responseText || "").toLowerCase().includes(q) ||
+          (s.responseТекст || "").toLowerCase().includes(q) ||
           (s.providerModel || "").toLowerCase().includes(q) ||
           s.rows.some((r) =>
-            `${r.stage ?? ""} ${previewSummary(r.details)}`.toLowerCase().includes(q)
+            `${r.stage ?? ""} ${previewСводка(r.details)}`.toLowerCase().includes(q)
           )
         );
       }),
@@ -122,31 +122,31 @@ export function AudioPage() {
     null;
   const canLoadMore = items.length >= limit;
 
-  const inputAudioUrl =
-    selected?.inputAudioRef ? getAssetPreviewUrl(selected.inputAudioRef) : null;
-  const outputAudioUrl =
-    selected?.outputAudioRef ? getAssetPreviewUrl(selected.outputAudioRef) : null;
+  const inputАудиоUrl =
+    selected?.inputАудиоRef ? getAssetPreviewUrl(selected.inputАудиоRef) : null;
+  const outputАудиоUrl =
+    selected?.outputАудиоRef ? getAssetPreviewUrl(selected.outputАудиоRef) : null;
 
   useEffect(() => {
-    setInAudioFailed(false);
-    setOutAudioFailed(false);
-  }, [selectedId, inputAudioUrl, outputAudioUrl]);
+    setInАудиоFailed(false);
+    setOutАудиоFailed(false);
+  }, [selectedId, inputАудиоUrl, outputАудиоUrl]);
 
   return (
     <div className="page logs-page">
-      <h1 className="page__title">Audio</h1>
+      <h1 className="page__title">Аудио</h1>
       <p className="page__lead muted">
         Voice/STT/TTS operational sessions · <code>/api/logs/recent</code>
       </p>
       {loading ? (
-        <LoadingState label="Loading audio sessions…" />
+        <LoadingState label="Загрузка аудио-sessions…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : sessions.length === 0 ? (
         <section className="card">
-          <EmptyState message="No audio sessions in recent logs." />
+          <EmptyState message="Нет audio sessions in recent logs." />
         </section>
       ) : (
         <div className="logs-console audio-console">
@@ -158,7 +158,7 @@ export function AudioPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
                   <option value="other">other</option>
@@ -168,7 +168,7 @@ export function AudioPage() {
                   value={providerFilter}
                   onChange={(e) => setProviderFilter(e.target.value)}
                 >
-                  <option value="all">provider: all</option>
+                  <option value="all">провайдер: все</option>
                   {providers.map((p) => (
                     <option key={p} value={p.toLowerCase()}>
                       {p}
@@ -180,14 +180,14 @@ export function AudioPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit(INITIAL_LIMIT)}
                 >
-                  reset
+                  сброс
                 </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search transcript / response / execution"
+                placeholder="поиск transcript / response / execution"
               />
               <div className="logs-quick-row">
                 {(["audio", "stt", "tts"] as const).map((k) => (
@@ -202,7 +202,7 @@ export function AudioPage() {
                 ))}
               </div>
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / source rows {items.length}
+                sessions {filtered.length} / исходных строк {items.length}
               </div>
             </div>
             <div className="logs-list">
@@ -235,7 +235,7 @@ export function AudioPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -243,11 +243,11 @@ export function AudioPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select audio session to inspect details." />
+              <EmptyState message="Выберите audio session to inspect details." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Session summary</h2>
+                  <h2 className="card__title">Сводка сессии</h2>
                   <StatusBadge status={selected.status} />
                 </div>
                 <dl className="kv">
@@ -281,7 +281,7 @@ export function AudioPage() {
                       <dd className="mono">{selected.inputMeta.duration ?? "—"}</dd>
                       <dt>asset_ref</dt>
                       <dd className="mono break-all">
-                        {selected.inputAudioRef ?? "—"}
+                        {selected.inputАудиоRef ?? "—"}
                       </dd>
                     </dl>
                   </div>
@@ -300,7 +300,7 @@ export function AudioPage() {
                       <dd className="mono">{selected.outputMeta.duration ?? "—"}</dd>
                       <dt>asset_ref</dt>
                       <dd className="mono break-all">
-                        {selected.outputAudioRef ?? "—"}
+                        {selected.outputАудиоRef ?? "—"}
                       </dd>
                     </dl>
                   </div>
@@ -324,14 +324,14 @@ export function AudioPage() {
                   <div className="logs-detail-block">
                     <h3 className="card__title">Assistant response</h3>
                     <pre className="logs-pre mono">
-                      {clip(selected.responseText, 420) ?? "—"}
+                      {clip(selected.responseТекст, 420) ?? "—"}
                     </pre>
                     <details className="page__mt-sm">
                       <summary className="log-details__summary mono">
                         full response text
                       </summary>
                       <pre className="log-details__json mono">
-                        {selected.responseText ?? "—"}
+                        {selected.responseТекст ?? "—"}
                       </pre>
                     </details>
                   </div>
@@ -340,9 +340,9 @@ export function AudioPage() {
                 <div className="logs-detail-grid page__mt">
                   <div className="logs-detail-block">
                     <h3 className="card__title">Input audio preview</h3>
-                    {!inputAudioUrl ? (
-                      <div className="panel panel--muted">No input audio asset.</div>
-                    ) : inAudioFailed ? (
+                    {!inputАудиоUrl ? (
+                      <div className="panel panel--muted">Нет input audio asset.</div>
+                    ) : inАудиоFailed ? (
                       <div className="panel panel--muted">
                         Input audio is unavailable or unreadable.
                       </div>
@@ -351,17 +351,17 @@ export function AudioPage() {
                         controls
                         preload="none"
                         className="audio-player"
-                        onError={() => setInAudioFailed(true)}
+                        onError={() => setInАудиоFailed(true)}
                       >
-                        <source src={inputAudioUrl} />
+                        <source src={inputАудиоUrl} />
                       </audio>
                     )}
                   </div>
                   <div className="logs-detail-block">
                     <h3 className="card__title">TTS/output audio preview</h3>
-                    {!outputAudioUrl ? (
-                      <div className="panel panel--muted">No output audio asset.</div>
-                    ) : outAudioFailed ? (
+                    {!outputАудиоUrl ? (
+                      <div className="panel panel--muted">Нет output audio asset.</div>
+                    ) : outАудиоFailed ? (
                       <div className="panel panel--muted">
                         Output audio is unavailable or unreadable.
                       </div>
@@ -370,15 +370,15 @@ export function AudioPage() {
                         controls
                         preload="none"
                         className="audio-player"
-                        onError={() => setOutAudioFailed(true)}
+                        onError={() => setOutАудиоFailed(true)}
                       >
-                        <source src={outputAudioUrl} />
+                        <source src={outputАудиоUrl} />
                       </audio>
                     )}
                   </div>
                 </div>
 
-                <h3 className="card__title page__mt">Timeline/events</h3>
+                <h3 className="card__title page__mt">Таймлайн / события</h3>
                 <div className="logs-timeline">
                   {selected.rows.map((row, i) => {
                     const prev = i > 0 ? toTs(selected.rows[i - 1].created_at) : null;
@@ -397,7 +397,7 @@ export function AudioPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(row.details)}
+                            {previewСводка(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatDetailsJson(row.details)}
@@ -410,7 +410,7 @@ export function AudioPage() {
 
                 <details className="page__mt">
                   <summary className="log-details__summary mono">
-                    raw session JSON ({selected.rows.length} rows)
+                    raw JSON сессии ({selected.rows.length} rows)
                   </summary>
                   <pre className="log-details__json mono">
                     {JSON.stringify(selected.rows, null, 2)}
@@ -425,17 +425,17 @@ export function AudioPage() {
   );
 }
 
-function buildAudioSessions(rows: LogItem[]): AudioSession[] {
+function buildАудиоSessions(rows: LogItem[]): АудиоSession[] {
   const grouped = new Map<string, LogItem[]>();
   for (const row of rows) {
-    if (!isAudioEvent(row)) continue;
+    if (!isАудиоEvent(row)) continue;
     const id = String(row.execution_id || "").trim();
     if (!id) continue;
     const bucket = grouped.get(id) ?? [];
     bucket.push(row);
     grouped.set(id, bucket);
   }
-  const out: AudioSession[] = [];
+  const out: АудиоSession[] = [];
   for (const [executionId, chunk] of grouped) {
     const ordered = [...chunk].sort((a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0));
     const detailsPool = ordered
@@ -443,26 +443,26 @@ function buildAudioSessions(rows: LogItem[]): AudioSession[] {
       .filter((d): d is Record<string, unknown> => d !== null);
     const latest = ordered[ordered.length - 1];
     const first = ordered[0];
-    const inputAudioRef = pickText(detailsPool, [
+    const inputАудиоRef = pickТекст(detailsPool, [
       "input_audio_asset_ref",
       "audio_asset_ref",
       "input_asset_ref",
       "source_audio_asset_ref",
       "asset_ref",
     ]);
-    const outputAudioRef = pickText(detailsPool, [
+    const outputАудиоRef = pickТекст(detailsPool, [
       "output_audio_asset_ref",
       "tts_asset_ref",
       "generated_audio_asset_ref",
       "audio_output_asset_ref",
     ]);
-    const transcript = pickText(detailsPool, [
+    const transcript = pickТекст(detailsPool, [
       "transcript",
       "transcript_text",
       "stt_text",
       "transcript_preview",
     ]);
-    const responseText = pickText(detailsPool, [
+    const responseТекст = pickТекст(detailsPool, [
       "assistant_response",
       "response_text",
       "answer",
@@ -475,23 +475,23 @@ function buildAudioSessions(rows: LogItem[]): AudioSession[] {
       startedAt: toTs(first.created_at) ?? 0,
       lastAt: toTs(latest.created_at) ?? 0,
       status: String(latest.status || "—"),
-      route: pickAudioRoute(ordered),
+      route: pickАудиоRoute(ordered),
       providerModel: pickProviderModel(detailsPool),
       latencyMs: pickLatency(detailsPool),
       stageCount: ordered.length,
       transcript,
-      responseText,
-      inputAudioRef,
-      outputAudioRef,
-      inputMeta: pickInputAudioMeta(detailsPool),
-      outputMeta: pickOutputAudioMeta(detailsPool),
-      preview: clip(transcript || responseText || previewSummary(latest.details), 120) || "—",
+      responseТекст,
+      inputАудиоRef,
+      outputАудиоRef,
+      inputMeta: pickInputАудиоMeta(detailsPool),
+      outputMeta: pickOutputАудиоMeta(detailsPool),
+      preview: clip(transcript || responseТекст || previewСводка(latest.details), 120) || "—",
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }
 
-function isAudioEvent(row: LogItem): boolean {
+function isАудиоEvent(row: LogItem): boolean {
   const route = String(row.route || "").trim().toLowerCase();
   const mode = String(row.mode || "").trim().toLowerCase();
   const stage = String(row.stage || "").trim().toLowerCase();
@@ -517,7 +517,7 @@ function isAudioEvent(row: LogItem): boolean {
   ].includes(stage);
 }
 
-function pickAudioRoute(rows: LogItem[]): "audio" | "voice" {
+function pickАудиоRoute(rows: LogItem[]): "audio" | "voice" {
   for (let i = rows.length - 1; i >= 0; i--) {
     const route = String(rows[i].route || rows[i].mode || "").toLowerCase();
     if (route.includes("audio")) return "audio";
@@ -543,44 +543,44 @@ function matchesQuickFilter(rows: LogItem[], quick: "audio" | "stt" | "tts"): bo
 function pickProviderModel(detailsPool: Record<string, unknown>[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
-    const p = pickText([d], ["provider", "stt_provider", "tts_provider", "llm_provider"]);
-    const m = pickText([d], ["model", "stt_model", "tts_model", "llm_model"]);
+    const p = pickТекст([d], ["provider", "stt_provider", "tts_provider", "llm_provider"]);
+    const m = pickТекст([d], ["model", "stt_model", "tts_model", "llm_model"]);
     if (p || m) return `${p || "—"} / ${m || "—"}`;
   }
   return null;
 }
 
-function pickInputAudioMeta(detailsPool: Record<string, unknown>[]): Record<string, string | null> {
+function pickInputАудиоMeta(detailsPool: Record<string, unknown>[]): Record<string, string | null> {
   return {
-    filename: pickText(detailsPool, ["filename", "input_filename", "audio_filename"]),
-    mimeType: pickText(detailsPool, ["mime_type", "audio_mime_type", "content_type"]),
-    size: pickText(detailsPool, ["size_bytes", "audio_size_bytes", "size"]),
-    duration: pickText(detailsPool, ["duration_ms", "audio_duration_ms", "duration_sec"]),
+    filename: pickТекст(detailsPool, ["filename", "input_filename", "audio_filename"]),
+    mimeType: pickТекст(detailsPool, ["mime_type", "audio_mime_type", "content_type"]),
+    size: pickТекст(detailsPool, ["size_bytes", "audio_size_bytes", "size"]),
+    duration: pickТекст(detailsPool, ["duration_ms", "audio_duration_ms", "duration_sec"]),
   };
 }
 
-function pickOutputAudioMeta(
+function pickOutputАудиоMeta(
   detailsPool: Record<string, unknown>[]
 ): Record<string, string | null> {
   return {
-    filename: pickText(detailsPool, [
+    filename: pickТекст(detailsPool, [
       "output_filename",
       "tts_filename",
       "generated_audio_filename",
     ]),
-    mimeType: pickText(detailsPool, [
+    mimeType: pickТекст(detailsPool, [
       "output_mime_type",
       "tts_mime_type",
       "generated_audio_mime_type",
       "content_type",
     ]),
-    size: pickText(detailsPool, [
+    size: pickТекст(detailsPool, [
       "output_size_bytes",
       "tts_size_bytes",
       "generated_audio_size_bytes",
       "size_bytes",
     ]),
-    duration: pickText(detailsPool, [
+    duration: pickТекст(detailsPool, [
       "output_duration_ms",
       "tts_duration_ms",
       "generated_audio_duration_ms",
@@ -599,7 +599,7 @@ function pickLatency(detailsPool: Record<string, unknown>[]): number | null {
   return null;
 }
 
-function pickText(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     for (const key of keys) {
@@ -649,7 +649,7 @@ function clip(value: string | null | undefined, max: number): string | null {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function previewSummary(d: LogItem["details"]): string {
+function previewСводка(d: LogItem["details"]): string {
   if (d == null) return "∅ empty";
   if (typeof d === "string") return clip(d, 88) ?? "?";
   try {

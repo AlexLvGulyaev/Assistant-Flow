@@ -21,7 +21,7 @@ export function Topbar() {
       setLastOkAt(new Date());
     } catch (e) {
       setHealth(null);
-      setError(e instanceof Error ? e.message : "Health request failed");
+      setError(e instanceof Error ? e.message : "Ошибка проверки health");
     } finally {
       setLoading(false);
     }
@@ -39,7 +39,7 @@ export function Topbar() {
       : undefined;
 
   const backendLabel = loading
-    ? "checking…"
+    ? "checking"
     : error
       ? "unreachable"
       : health?.status ?? "—";
@@ -49,7 +49,7 @@ export function Topbar() {
       <div className="admin-shell__topbar-left">
         <h1 className="admin-shell__app-title">Admin console</h1>
         <span className="admin-shell__app-meta muted">
-          FastAPI · read-only ops
+          FastAPI · консоль наблюдаемости
         </span>
       </div>
       <div className="admin-shell__topbar-right">
@@ -60,16 +60,16 @@ export function Topbar() {
           </span>
         ) : null}
         <span className="admin-shell__topbar-kv muted">
-          Backend <StatusBadge status={backendLabel} />
+          Бэкенд <StatusBadge status={backendLabel} />
         </span>
         {health?.timestamp ? (
-          <span className="admin-shell__topbar-kv muted mono" title="Server timestamp">
+          <span className="admin-shell__topbar-kv muted mono" title="Время сервера">
             API {health.timestamp.slice(0, 19)}
           </span>
         ) : null}
         {lastOkAt ? (
-          <span className="admin-shell__topbar-kv muted mono" title="Last successful client refresh">
-            Checked {formatCheckedAt(lastOkAt)}
+          <span className="admin-shell__topbar-kv muted mono" title="Последнее успешное обновление">
+            Проверено {formatCheckedAt(lastOkAt)}
           </span>
         ) : null}
         <button
@@ -78,7 +78,7 @@ export function Topbar() {
           onClick={() => void loadHealth()}
           disabled={loading}
         >
-          Refresh health
+          Обновить health
         </button>
         {error ? (
           <span className="admin-shell__topbar-err" title={error}>

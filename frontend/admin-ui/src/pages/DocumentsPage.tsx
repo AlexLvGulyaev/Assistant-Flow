@@ -34,7 +34,7 @@ export function DocumentsPage() {
         if (!cancelled) setData(res);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load documents");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить документы");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -89,19 +89,19 @@ export function DocumentsPage() {
 
   return (
     <div className="page logs-page">
-      <h1 className="page__title">Documents</h1>
+      <h1 className="page__title">Документы</h1>
       <p className="page__lead muted">
         Document inventory & indexing observability · <code>/api/documents</code>
       </p>
       {loading ? (
-        <LoadingState label="Loading documents…" />
+        <LoadingState label="Загрузка документов…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : items.length === 0 ? (
         <section className="card">
-          <EmptyState message="No documents returned by API." />
+          <EmptyState message="Нет documents returned by API." />
         </section>
       ) : (
         <div className="logs-console docs-console">
@@ -113,7 +113,7 @@ export function DocumentsPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="indexed">indexed</option>
                   <option value="pending">pending</option>
                   <option value="error">error</option>
@@ -138,14 +138,14 @@ export function DocumentsPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit(INITIAL_LIMIT)}
                 >
-                  reset
+                  сброс
                 </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search filename / status / extension"
+                placeholder="поиск filename / status / extension"
               />
               <div className="logs-quick-row">
                 <button
@@ -195,7 +195,7 @@ export function DocumentsPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -203,7 +203,7 @@ export function DocumentsPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select document to inspect metadata and indexing history." />
+              <EmptyState message="Выберите document to inspect metadata and indexing history." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
@@ -280,7 +280,7 @@ export function DocumentsPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(ev.details)}
+                            {previewСводка(ev.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatJson(ev.details)}
@@ -355,7 +355,7 @@ function fmtTime(iso: string | null | undefined): string {
   return d.toISOString().replace("T", " ").slice(0, 19) + "Z";
 }
 
-function previewSummary(value: unknown): string {
+function previewСводка(value: unknown): string {
   if (value == null) return "∅ empty";
   if (typeof value === "string") return value.length > 88 ? `${value.slice(0, 88)}…` : value;
   try {

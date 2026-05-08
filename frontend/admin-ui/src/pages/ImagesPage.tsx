@@ -47,7 +47,7 @@ export function ImagesPage() {
         if (!cancelled) setItems(res.items ?? []);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load image logs");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить логи изображений");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -88,7 +88,7 @@ export function ImagesPage() {
           (s.enhancedPrompt || "").toLowerCase().includes(q) ||
           (s.providerModel || "").toLowerCase().includes(q) ||
           s.rows.some((r) =>
-            `${r.stage ?? ""} ${previewSummary(r.details)}`.toLowerCase().includes(q)
+            `${r.stage ?? ""} ${previewСводка(r.details)}`.toLowerCase().includes(q)
           )
         );
       }),
@@ -118,19 +118,19 @@ export function ImagesPage() {
 
   return (
     <div className="page logs-page">
-      <h1 className="page__title">Images</h1>
+      <h1 className="page__title">Изображения</h1>
       <p className="page__lead muted">
         Image generation sessions · <code>/api/logs/recent</code>
       </p>
       {loading ? (
-        <LoadingState label="Loading image sessions…" />
+        <LoadingState label="Загрузка sessions изображений…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : sessions.length === 0 ? (
         <section className="card">
-          <EmptyState message="No image generation sessions in recent logs." />
+          <EmptyState message="Нет image generation sessions in recent logs." />
         </section>
       ) : (
         <div className="logs-console images-console">
@@ -142,7 +142,7 @@ export function ImagesPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
                   <option value="other">other</option>
@@ -152,7 +152,7 @@ export function ImagesPage() {
                   value={providerFilter}
                   onChange={(e) => setProviderFilter(e.target.value)}
                 >
-                  <option value="all">provider: all</option>
+                  <option value="all">провайдер: все</option>
                   {providers.map((p) => (
                     <option key={p} value={p.toLowerCase()}>
                       {p}
@@ -164,17 +164,17 @@ export function ImagesPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit(INITIAL_LIMIT)}
                 >
-                  reset
+                  сброс
                 </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search prompt / execution / stage"
+                placeholder="поиск prompt / execution / stage"
               />
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / source rows {items.length}
+                sessions {filtered.length} / исходных строк {items.length}
               </div>
             </div>
             <div className="logs-list">
@@ -207,7 +207,7 @@ export function ImagesPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -215,11 +215,11 @@ export function ImagesPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select generation session to inspect details." />
+              <EmptyState message="Выберите generation session to inspect details." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Session summary</h2>
+                  <h2 className="card__title">Сводка сессии</h2>
                   <StatusBadge status={selected.status} />
                 </div>
                 <dl className="kv">
@@ -252,7 +252,7 @@ export function ImagesPage() {
                   <h3 className="card__title">Generated asset preview</h3>
                   {!previewUrl ? (
                     <div className="panel panel--muted">
-                      No image asset reference found in this session.
+                      Нет image asset reference found in this session.
                     </div>
                   ) : imgFailed ? (
                     <div className="panel panel--muted">
@@ -273,7 +273,7 @@ export function ImagesPage() {
                   ) : null}
                 </div>
 
-                <h3 className="card__title page__mt">Timeline/events</h3>
+                <h3 className="card__title page__mt">Таймлайн / события</h3>
                 <div className="logs-timeline">
                   {selected.rows.map((row, i) => {
                     const prev = i > 0 ? toTs(selected.rows[i - 1].created_at) : null;
@@ -292,7 +292,7 @@ export function ImagesPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(row.details)}
+                            {previewСводка(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatDetailsJson(row.details)}
@@ -305,7 +305,7 @@ export function ImagesPage() {
 
                 <details className="page__mt">
                   <summary className="log-details__summary mono">
-                    raw session JSON ({selected.rows.length} rows)
+                    raw JSON сессии ({selected.rows.length} rows)
                   </summary>
                   <pre className="log-details__json mono">
                     {JSON.stringify(selected.rows, null, 2)}
@@ -341,14 +341,14 @@ function buildImageSessions(rows: LogItem[]): ImageSession[] {
     const assets = detailsPool
       .map((d) => strField(d, ["asset_ref", "image_asset_ref", "generated_asset_ref"]))
       .filter((x): x is string => Boolean(x));
-    const prompt = pickText(detailsPool, [
+    const prompt = pickТекст(detailsPool, [
       "prompt",
       "user_input",
       "query",
       "text",
       "input_text",
     ]);
-    const enhancedPrompt = pickText(detailsPool, [
+    const enhancedPrompt = pickТекст(detailsPool, [
       "enhanced_prompt",
       "generated_prompt",
       "provider_prompt",
@@ -367,7 +367,7 @@ function buildImageSessions(rows: LogItem[]): ImageSession[] {
       latencyMs: pickLatency(detailsPool),
       assetRef: assets[assets.length - 1] ?? null,
       assetCount: assets.length,
-      preview: (prompt || enhancedPrompt || previewSummary(latest.details)).slice(0, 160),
+      preview: (prompt || enhancedPrompt || previewСводка(latest.details)).slice(0, 160),
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
@@ -420,7 +420,7 @@ function pickLatency(detailsPool: Record<string, unknown>[]): number | null {
   return null;
 }
 
-function pickText(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     const val = strField(d, keys);
@@ -470,7 +470,7 @@ function shortId(id: string | null | undefined): string {
   return id.length > 12 ? `${id.slice(0, 8)}…` : id;
 }
 
-function previewSummary(d: LogItem["details"]): string {
+function previewСводка(d: LogItem["details"]): string {
   if (d == null) return "∅ empty";
   if (typeof d === "string") return d.length > 88 ? `${d.slice(0, 88)}…` : d;
   try {

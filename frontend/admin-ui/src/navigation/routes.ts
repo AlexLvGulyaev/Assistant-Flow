@@ -10,12 +10,12 @@ export interface NavItem {
 
 /** Primary sidebar navigation (order matches legacy Streamlit tabs intent). */
 export const NAV_ITEMS: NavItem[] = [
-  { path: "/", label: "Overview", end: true },
-  { path: "/summary", label: "Summary" },
-  { path: "/text", label: "Text" },
+  { path: "/", label: "Обзор", end: true },
+  { path: "/summary", label: "Сводка" },
+  { path: "/text", label: "Текст" },
   { path: "/rag", label: "RAG" },
-  { path: "/images", label: "Images" },
-  { path: "/audio", label: "Audio" },
-  { path: "/documents", label: "Documents" },
-  { path: "/logs", label: "Logs" },
+  { path: "/images", label: "Изображения" },
+  { path: "/audio", label: "Аудио" },
+  { path: "/documents", label: "Документы" },
+  { path: "/logs", label: "Логи" },
 ];

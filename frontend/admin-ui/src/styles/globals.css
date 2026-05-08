@@ -751,7 +751,9 @@ code {
   display: grid;
   grid-template-columns: 420px minmax(0, 1fr);
   gap: 0.75rem;
-  min-height: min(76vh, 920px);
+  height: min(76vh, 920px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .logs-left,
@@ -890,7 +892,8 @@ code {
 .logs-detail {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 0.15rem;
 }
 
@@ -899,6 +902,13 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-elevated);
+  padding: 0.1rem 0 0.45rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .logs-detail-grid {

@@ -3,10 +3,10 @@ import { NAV_ITEMS } from "../navigation/routes";
 
 export function Sidebar() {
   return (
-    <aside className="admin-shell__sidebar" aria-label="Primary navigation">
+    <aside className="admin-shell__sidebar" aria-label="Основная навигация">
       <div className="admin-shell__brand">
         <span className="admin-shell__brand-title">Assistant Flow</span>
-        <span className="admin-shell__brand-sub">Operations</span>
+        <span className="admin-shell__brand-sub">Операции</span>
       </div>
       <nav className="admin-shell__nav">
         {NAV_ITEMS.map((item) => (

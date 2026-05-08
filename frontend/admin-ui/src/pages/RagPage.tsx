@@ -53,7 +53,7 @@ export function RagPage() {
         if (!cancelled) setItems(res.items ?? []);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load RAG logs");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить RAG-логи");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -113,14 +113,14 @@ export function RagPage() {
         Retrieval diagnostics view · <code>/api/logs/recent</code>
       </p>
       {loading ? (
-        <LoadingState label="Loading RAG sessions…" />
+        <LoadingState label="Загрузка RAG-sessions…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : sessions.length === 0 ? (
         <section className="card">
-          <EmptyState message="No RAG sessions in recent logs." />
+          <EmptyState message="Нет RAG sessions in recent logs." />
         </section>
       ) : (
         <div className="logs-console rag-console">
@@ -132,7 +132,7 @@ export function RagPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
                   <option value="other">other</option>
@@ -155,14 +155,14 @@ export function RagPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit(INITIAL_LIMIT)}
                 >
-                  reset
+                  сброс
                 </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search query / answer / source / fallback"
+                placeholder="поиск query / answer / source / fallback"
               />
               <div className="logs-quick-row">
                 <button
@@ -174,7 +174,7 @@ export function RagPage() {
                 </button>
               </div>
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / source rows {items.length}
+                sessions {filtered.length} / исходных строк {items.length}
               </div>
             </div>
             <div className="logs-list">
@@ -207,7 +207,7 @@ export function RagPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -215,11 +215,11 @@ export function RagPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select RAG session to inspect diagnostics." />
+              <EmptyState message="Выберите RAG session to inspect diagnostics." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Session summary</h2>
+                  <h2 className="card__title">Сводка сессии</h2>
                   <StatusBadge status={selected.status} />
                 </div>
                 <dl className="kv">
@@ -271,7 +271,7 @@ export function RagPage() {
                 <h3 className="card__title page__mt">Retrieved chunks</h3>
                 <div className="logs-timeline">
                   {selected.chunks.length === 0 ? (
-                    <div className="panel panel--muted">No chunk diagnostics in logs.</div>
+                    <div className="panel panel--muted">Нет chunk diagnostics in logs.</div>
                   ) : (
                     selected.chunks.map((chunk, i) => (
                       <div key={`${chunk.source}-${i}`} className="logs-stage">
@@ -294,7 +294,7 @@ export function RagPage() {
                   )}
                 </div>
 
-                <h3 className="card__title page__mt">Timeline/events</h3>
+                <h3 className="card__title page__mt">Таймлайн / события</h3>
                 <div className="logs-timeline">
                   {selected.rows.map((row, i) => {
                     const prev = i > 0 ? toTs(selected.rows[i - 1].created_at) : null;
@@ -313,7 +313,7 @@ export function RagPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(row.details)}
+                            {previewСводка(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatJson(row.details)}
@@ -326,7 +326,7 @@ export function RagPage() {
 
                 <details className="page__mt">
                   <summary className="log-details__summary mono">
-                    raw session JSON ({selected.rows.length} rows)
+                    raw JSON сессии ({selected.rows.length} rows)
                   </summary>
                   <pre className="log-details__json mono">
                     {JSON.stringify(selected.rows, null, 2)}
@@ -367,8 +367,8 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       startedAt: toTs(first.created_at) ?? 0,
       lastAt: toTs(latest.created_at) ?? 0,
       status: String(latest.status || "—"),
-      query: pickText(detailsPool, ["user_input", "query_preview", "query", "prompt"]),
-      answer: pickText(detailsPool, [
+      query: pickТекст(detailsPool, ["user_input", "query_preview", "query", "prompt"]),
+      answer: pickТекст(detailsPool, [
         "assistant_response",
         "response_text",
         "answer_preview",
@@ -379,7 +379,7 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       contextChars: pickNumber(detailsPool, ["context_chars"]),
       topK: pickNumber(detailsPool, ["top_k"]),
       uniqueSourcesCount: pickNumber(detailsPool, ["unique_sources_count"]),
-      fallbackReason: pickText(detailsPool, ["fallback_reason"]),
+      fallbackReason: pickТекст(detailsPool, ["fallback_reason"]),
       scores,
       chunks,
     });
@@ -410,7 +410,7 @@ function normalizeStatus(status: string): "success" | "error" | "other" {
   return "other";
 }
 
-function pickText(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     for (const key of keys) {
@@ -509,7 +509,7 @@ function clip(value: string | null | undefined, max: number): string | null {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function previewSummary(value: unknown): string {
+function previewСводка(value: unknown): string {
   if (value == null) return "∅ empty";
   if (typeof value === "string") return clip(value, 88) ?? "?";
   try {

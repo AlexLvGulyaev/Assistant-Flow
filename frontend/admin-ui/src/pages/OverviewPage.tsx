@@ -16,7 +16,7 @@ const READINESS_KEYS: { key: string; label: string }[] = [
   { key: "openai_configured", label: "OpenAI key" },
   { key: "proxy_configured", label: "Proxy key" },
   { key: "gigachat_configured", label: "GigaChat key" },
-  { key: "audio_enabled", label: "Audio" },
+  { key: "audio_enabled", label: "Аудио" },
   { key: "chroma_use_http", label: "Chroma HTTP" },
 ];
 
@@ -44,7 +44,7 @@ export function OverviewPage() {
           setError(
             oRes.reason instanceof Error
               ? oRes.reason.message
-              : "Failed to load overview"
+              : "Не удалось загрузить обзор"
           );
         } else {
           setData(oRes.value);
@@ -71,8 +71,8 @@ export function OverviewPage() {
   if (loading) {
     return (
       <div className="page">
-        <h1 className="page__title">Overview</h1>
-        <LoadingState label="Loading overview…" />
+        <h1 className="page__title">Обзор</h1>
+        <LoadingState label="Загрузка обзора…" />
         <div className="skeleton-grid page__mt">
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
@@ -85,7 +85,7 @@ export function OverviewPage() {
   if (error) {
     return (
       <div className="page">
-        <h1 className="page__title">Overview</h1>
+        <h1 className="page__title">Обзор</h1>
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
@@ -96,8 +96,8 @@ export function OverviewPage() {
   if (!data) {
     return (
       <div className="page">
-        <h1 className="page__title">Overview</h1>
-        <EmptyState message="No overview payload returned." />
+        <h1 className="page__title">Обзор</h1>
+        <EmptyState message="Нет overview payload returned." />
       </div>
     );
   }
@@ -118,7 +118,7 @@ export function OverviewPage() {
 
   return (
     <div className="page">
-      <h1 className="page__title">Overview</h1>
+      <h1 className="page__title">Обзор</h1>
       <p className="page__lead muted">
         Configuration snapshot (<code>/api/overview</code>) + live probes (
         <code>/api/health</code>)
@@ -234,7 +234,7 @@ export function OverviewPage() {
         className="page__mt"
       >
         {mods.length === 0 ? (
-          <EmptyState title="No modalities" message="API returned an empty list." />
+          <EmptyState title="Нет modalities" message="API returned an empty list." />
         ) : (
           <div className="modality-grid">
             {mods.map((m) => (
@@ -252,7 +252,7 @@ export function OverviewPage() {
       <div className="page__grid page__mt">
         <SectionCard title="Providers (configuration)">
           {Object.keys(providers).length === 0 ? (
-            <p className="muted">No provider entries.</p>
+            <p className="muted">Нет provider entries.</p>
           ) : (
             <div className="provider-grid">
               {Object.entries(providers).map(([name, snap]) => (
@@ -275,7 +275,7 @@ export function OverviewPage() {
                 <StatusBadge status="unavailable" />
               )}
             </dd>
-            <dt>Documents (DB)</dt>
+            <dt>Документы (DB)</dt>
             <dd>{formatVal(db.postgres_documents)}</dd>
             <dt>Chunks (DB sum)</dt>
             <dd>{formatVal(db.postgres_chunks_sum)}</dd>
@@ -306,7 +306,7 @@ export function OverviewPage() {
           </dl>
         </MetricCard>
 
-        <MetricCard title="Audio">
+        <MetricCard title="Аудио">
           <dl className="kv">
             <dt>Enabled</dt>
             <dd>

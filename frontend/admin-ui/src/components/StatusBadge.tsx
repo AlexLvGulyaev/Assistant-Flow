@@ -42,9 +42,32 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     tone = "muted";
   }
 
+  const label =
+    {
+      success: "успех",
+      error: "ошибка",
+      failed: "ошибка",
+      available: "доступно",
+      unavailable: "недоступно",
+      configured: "настроено",
+      not_configured: "не настроено",
+      started: "запущено",
+      running: "в работе",
+      skipped: "пропущено",
+      degraded: "ограничено",
+      unknown: "неизвестно",
+      unreachable: "недоступно",
+      checking: "проверка",
+      "checking…": "проверка",
+      on: "вкл",
+      off: "выкл",
+      yes: "да",
+      no: "нет",
+    }[n] ?? status;
+
   return (
     <span className={`status-badge status-badge--${tone}`} title={status}>
-      {status}
+      {label}
     </span>
   );
 }

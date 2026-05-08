@@ -28,7 +28,7 @@ export function SummaryPage() {
         if (!cancelled) setData(s);
       } catch (e) {
         if (!cancelled)
-          setError(e instanceof Error ? e.message : "Failed to load summary");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить сводку");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -55,8 +55,8 @@ export function SummaryPage() {
   if (loading) {
     return (
       <div className="page">
-        <h1 className="page__title">Summary</h1>
-        <LoadingState label="Loading summary…" />
+        <h1 className="page__title">Сводка</h1>
+        <LoadingState label="Загрузка сводки…" />
         <div className="skeleton-grid page__mt">
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
@@ -69,7 +69,7 @@ export function SummaryPage() {
   if (error) {
     return (
       <div className="page">
-        <h1 className="page__title">Summary</h1>
+        <h1 className="page__title">Сводка</h1>
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
@@ -80,8 +80,8 @@ export function SummaryPage() {
   if (!data?.events || !data.sessions || !data.routes) {
     return (
       <div className="page">
-        <h1 className="page__title">Summary</h1>
-        <EmptyState message="Summary payload incomplete." />
+        <h1 className="page__title">Сводка</h1>
+        <EmptyState message="Сводка payload incomplete." />
       </div>
     );
   }
@@ -100,7 +100,7 @@ export function SummaryPage() {
     <div className="page">
       <div className="summary-head">
         <div>
-          <h1 className="page__title">Summary</h1>
+          <h1 className="page__title">Сводка</h1>
           <p className="page__lead muted">
             Rolling window from <code>/api/summary</code> · log-derived metrics
           </p>
@@ -174,7 +174,7 @@ export function SummaryPage() {
           </p>
           <div className="stat-grid page__mt-sm">
             <div className="stat-chip">
-              <div className="stat-chip__lbl">Text</div>
+              <div className="stat-chip__lbl">Текст</div>
               <div className="stat-chip__val">{routes.text}</div>
             </div>
             <div className="stat-chip">
@@ -182,11 +182,11 @@ export function SummaryPage() {
               <div className="stat-chip__val">{routes.rag}</div>
             </div>
             <div className="stat-chip">
-              <div className="stat-chip__lbl">Images</div>
+              <div className="stat-chip__lbl">Изображения</div>
               <div className="stat-chip__val">{routes.images}</div>
             </div>
             <div className="stat-chip">
-              <div className="stat-chip__lbl">Audio / voice</div>
+              <div className="stat-chip__lbl">Аудио / voice</div>
               <div className="stat-chip__val">{routes.audio_voice}</div>
             </div>
             <div className="stat-chip">
@@ -204,7 +204,7 @@ export function SummaryPage() {
             <dd>{formatNum(data.admin_events)}</dd>
             <dt>Reindex starts</dt>
             <dd>{formatNum(data.reindex_starts)}</dd>
-            <dt>Audio route sessions</dt>
+            <dt>Аудио route sessions</dt>
             <dd>{formatNum(audioDet.sessions_route_bucket)}</dd>
             <dt>Voice pipeline rows</dt>
             <dd>{formatNum(audioDet.voice_pipeline_stage_events)}</dd>
@@ -237,7 +237,7 @@ export function SummaryPage() {
           </dl>
           <div className="telemetry-providers page__mt-sm">
             {topProviders.length === 0 ? (
-              <span className="muted">No provider-tagged rows in sample.</span>
+              <span className="muted">Нет provider-tagged rows in sample.</span>
             ) : (
               topProviders.map(([name, n]) => (
                 <span key={name} className="mini-badge">
@@ -255,7 +255,7 @@ export function SummaryPage() {
         className="page__mt"
       >
         {lifecycle.length === 0 ? (
-          <p className="muted">No matching stages in this window.</p>
+          <p className="muted">Нет matching stages in this window.</p>
         ) : (
           <LifecycleTags rows={lifecycle} />
         )}

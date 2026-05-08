@@ -53,7 +53,7 @@ export function LogsPage() {
         if (!cancelled) setItems(res.items ?? []);
       } catch (e) {
         if (!cancelled)
-          setError(e instanceof Error ? e.message : "Failed to load logs");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить логи");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -91,20 +91,20 @@ export function LogsPage() {
 
   return (
     <div className="page logs-page">
-      <h1 className="page__title">Logs</h1>
+      <h1 className="page__title">Логи</h1>
       <p className="page__lead muted">
         Operational trace console · <code>/api/logs/recent</code>
       </p>
 
       {loading ? (
-        <LoadingState label="Loading log entries…" />
+        <LoadingState label="Загрузка логов…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : items.length === 0 ? (
         <section className="card">
-          <EmptyState message="No log entries returned for this request." />
+          <EmptyState message="Нет log entries returned for this request." />
         </section>
       ) : (
         <div className="logs-console">
@@ -139,7 +139,7 @@ export function LogsPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
                   <option value="other">other</option>
@@ -149,7 +149,7 @@ export function LogsPage() {
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search execution_id / stage / text"
+                placeholder="поиск execution_id / stage / text"
               />
               <div className="logs-quick-row">
                 {(["audio", "image", "rag"] as const).map((r) => (
@@ -166,13 +166,13 @@ export function LogsPage() {
                 ))}
               </div>
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / source rows {items.length}
+                sessions {filtered.length} / исходных строк {items.length}
               </div>
             </div>
 
             <div className="logs-list">
               {filtered.length === 0 ? (
-                <div className="panel panel--muted">No sessions match filters.</div>
+                <div className="panel panel--muted">Нет sessions match filters.</div>
               ) : (
                 filtered.map((s) => (
                   <button
@@ -205,7 +205,7 @@ export function LogsPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -213,11 +213,11 @@ export function LogsPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select a session to inspect execution trace." />
+              <EmptyState message="Выберите a session to inspect execution trace." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Session summary</h2>
+                  <h2 className="card__title">Сводка сессии</h2>
                   <StatusBadge status={selected.status} />
                 </div>
                 <dl className="kv">
@@ -283,7 +283,7 @@ export function LogsPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(row.details)}
+                            {previewСводка(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatDetailsJson(row.details)}
@@ -296,7 +296,7 @@ export function LogsPage() {
 
                 <details className="page__mt">
                   <summary className="log-details__summary mono">
-                    raw session JSON ({selected.rows.length} rows)
+                    raw JSON сессии ({selected.rows.length} rows)
                   </summary>
                   <pre className="log-details__json mono">
                     {JSON.stringify(selected.rows, null, 2)}
@@ -346,7 +346,7 @@ function buildSessions(rows: LogItem[]): SessionView[] {
     const route = pickRoute(ordered);
     const status = String(latest.status || "—");
     const providerModel = pickProviderModel(detailsPool);
-    const userInput = pickText(detailsPool, [
+    const userInput = pickТекст(detailsPool, [
       "user_input",
       "query_preview",
       "query",
@@ -354,15 +354,15 @@ function buildSessions(rows: LogItem[]): SessionView[] {
       "input_text",
       "text",
     ]);
-    const transcript = pickText(detailsPool, ["transcript_preview", "transcript"]);
-    const assistantOutput = pickText(detailsPool, [
+    const transcript = pickТекст(detailsPool, ["transcript_preview", "transcript"]);
+    const assistantOutput = pickТекст(detailsPool, [
       "assistant_response",
       "response_text",
       "answer_preview",
       "answer",
       "output_text",
     ]);
-    const generatedPrompt = pickText(detailsPool, [
+    const generatedPrompt = pickТекст(detailsPool, [
       "generated_prompt",
       "image_prompt",
       "prompt_enriched",
@@ -374,7 +374,7 @@ function buildSessions(rows: LogItem[]): SessionView[] {
       lastAt: toTs(latest.created_at) ?? 0,
       route,
       status,
-      preview: userInput || assistantOutput || previewSummary(latest.details),
+      preview: userInput || assistantOutput || previewСводка(latest.details),
       providerModel,
       latencyMs: pickLatency(detailsPool),
       stageCount: ordered.length,
@@ -414,7 +414,7 @@ function filterSessions(
       s.providerModel,
       s.userInput,
       s.assistantOutput,
-      ...s.rows.map((r) => `${r.stage ?? ""} ${previewSummary(r.details)}`),
+      ...s.rows.map((r) => `${r.stage ?? ""} ${previewСводка(r.details)}`),
     ]
       .join(" ")
       .toLowerCase();
@@ -469,7 +469,7 @@ function pickLatency(detailsPool: Record<string, unknown>[]): number | null {
   return null;
 }
 
-function pickText(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     for (const k of keys) {
@@ -504,7 +504,7 @@ function windowLabelToMs(label: string): number {
   return WINDOW_OPTIONS.find((x) => x.label === label)?.ms ?? WINDOW_OPTIONS[0].ms;
 }
 
-function previewSummary(d: LogItem["details"]): string {
+function previewСводка(d: LogItem["details"]): string {
   if (d == null) return "∅ empty";
   if (typeof d === "string") return d.length > 56 ? d.slice(0, 56) + "…" : d;
   try {

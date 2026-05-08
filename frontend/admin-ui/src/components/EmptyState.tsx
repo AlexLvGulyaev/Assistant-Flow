@@ -4,7 +4,7 @@ interface EmptyStateProps {
 }
 
 export function EmptyState({
-  title = "Nothing here",
+  title = "Пусто",
   message,
 }: EmptyStateProps) {
   return (

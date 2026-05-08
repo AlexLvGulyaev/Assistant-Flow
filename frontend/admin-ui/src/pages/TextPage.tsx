@@ -39,7 +39,7 @@ export function TextPage() {
         if (!cancelled) setItems(res.items ?? []);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load text logs");
+          setError(e instanceof Error ? e.message : "Не удалось загрузить текстовые логи");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -80,7 +80,7 @@ export function TextPage() {
           (s.assistantOutput || "").toLowerCase().includes(q) ||
           (s.providerModel || "").toLowerCase().includes(q) ||
           s.rows.some((r) =>
-            `${r.stage ?? ""} ${previewSummary(r.details)}`.toLowerCase().includes(q)
+            `${r.stage ?? ""} ${previewСводка(r.details)}`.toLowerCase().includes(q)
           )
         );
       }),
@@ -102,19 +102,19 @@ export function TextPage() {
 
   return (
     <div className="page logs-page">
-      <h1 className="page__title">Text</h1>
+      <h1 className="page__title">Текст</h1>
       <p className="page__lead muted">
-        Text interactions operational view · <code>/api/logs/recent</code>
+        Текст interactions operational view · <code>/api/logs/recent</code>
       </p>
       {loading ? (
-        <LoadingState label="Loading text sessions…" />
+        <LoadingState label="Загрузка текстовых sessions…" />
       ) : error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
       ) : sessions.length === 0 ? (
         <section className="card">
-          <EmptyState message="No text sessions found in recent logs." />
+          <EmptyState message="Нет text sessions found in recent logs." />
         </section>
       ) : (
         <div className="logs-console text-console">
@@ -126,7 +126,7 @@ export function TextPage() {
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">status: all</option>
+                  <option value="all">статус: все</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
                   <option value="other">other</option>
@@ -136,7 +136,7 @@ export function TextPage() {
                   value={providerFilter}
                   onChange={(e) => setProviderFilter(e.target.value)}
                 >
-                  <option value="all">provider: all</option>
+                  <option value="all">провайдер: все</option>
                   {providers.map((p) => (
                     <option key={p} value={p.toLowerCase()}>
                       {p}
@@ -148,17 +148,17 @@ export function TextPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit(INITIAL_LIMIT)}
                 >
-                  reset
+                  сброс
                 </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search input / response / execution"
+                placeholder="поиск input / response / execution"
               />
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / source rows {items.length}
+                sessions {filtered.length} / исходных строк {items.length}
               </div>
             </div>
             <div className="logs-list">
@@ -193,7 +193,7 @@ export function TextPage() {
                   className="admin-shell__refresh"
                   onClick={() => setLimit((v) => v + LIMIT_STEP)}
                 >
-                  Load more (+{LIMIT_STEP})
+                  Загрузить ещё (+{LIMIT_STEP})
                 </button>
               </div>
             ) : null}
@@ -201,11 +201,11 @@ export function TextPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Select text session to inspect details." />
+              <EmptyState message="Выберите text session to inspect details." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Session summary</h2>
+                  <h2 className="card__title">Сводка сессии</h2>
                   <StatusBadge status={selected.status} />
                 </div>
                 <dl className="kv">
@@ -234,7 +234,7 @@ export function TextPage() {
                   </div>
                 </div>
 
-                <h3 className="card__title page__mt">Timeline/events</h3>
+                <h3 className="card__title page__mt">Таймлайн / события</h3>
                 <div className="logs-timeline">
                   {selected.rows.map((row, i) => {
                     const prev = i > 0 ? toTs(selected.rows[i - 1].created_at) : null;
@@ -253,7 +253,7 @@ export function TextPage() {
                         </div>
                         <details>
                           <summary className="log-details__summary mono">
-                            {previewSummary(row.details)}
+                            {previewСводка(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatJson(row.details)}
@@ -266,7 +266,7 @@ export function TextPage() {
 
                 <details className="page__mt">
                   <summary className="log-details__summary mono">
-                    raw session JSON ({selected.rows.length} rows)
+                    raw JSON сессии ({selected.rows.length} rows)
                   </summary>
                   <pre className="log-details__json mono">
                     {JSON.stringify(selected.rows, null, 2)}
@@ -284,7 +284,7 @@ export function TextPage() {
 function buildTextSessions(rows: LogItem[]): TextSession[] {
   const grouped = new Map<string, LogItem[]>();
   for (const row of rows) {
-    if (!isTextEvent(row)) continue;
+    if (!isТекстEvent(row)) continue;
     const id = String(row.execution_id || "").trim();
     if (!id) continue;
     const bucket = grouped.get(id) ?? [];
@@ -307,8 +307,8 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
       status: String(latest.status || "—"),
       providerModel: pickProviderModel(detailsPool),
       latencyMs: pickLatency(detailsPool),
-      userInput: pickText(detailsPool, ["user_input", "query", "prompt", "input_text", "text"]),
-      assistantOutput: pickText(detailsPool, [
+      userInput: pickТекст(detailsPool, ["user_input", "query", "prompt", "input_text", "text"]),
+      assistantOutput: pickТекст(detailsPool, [
         "assistant_response",
         "response_text",
         "answer",
@@ -320,7 +320,7 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }
 
-function isTextEvent(row: LogItem): boolean {
+function isТекстEvent(row: LogItem): boolean {
   const route = String(row.route || "").trim().toLowerCase();
   const mode = String(row.mode || "").trim().toLowerCase();
   const stage = String(row.stage || "").trim().toLowerCase();
@@ -369,8 +369,8 @@ function normalizeStatus(status: string): "success" | "error" | "other" {
 function pickProviderModel(detailsPool: Record<string, unknown>[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
-    const p = pickText([d], ["provider", "llm_provider"]);
-    const m = pickText([d], ["model", "llm_model"]);
+    const p = pickТекст([d], ["provider", "llm_provider"]);
+    const m = pickТекст([d], ["model", "llm_model"]);
     if (p || m) return `${p || "—"} / ${m || "—"}`;
   }
   return null;
@@ -387,7 +387,7 @@ function pickLatency(detailsPool: Record<string, unknown>[]): number | null {
   return null;
 }
 
-function pickText(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     for (const key of keys) {
@@ -436,7 +436,7 @@ function clip(value: string | null | undefined, max: number): string | null {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function previewSummary(value: unknown): string {
+function previewСводка(value: unknown): string {
   if (value == null) return "∅ empty";
   if (typeof value === "string") return clip(value, 88) ?? "?";
   try {
