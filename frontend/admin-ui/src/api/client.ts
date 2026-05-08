@@ -56,6 +56,11 @@ export async function fetchRecentLogs(limit = 20): Promise<LogsRecentResponse> {
   return parseJson<LogsRecentResponse>(res);
 }
 
+export function getAssetPreviewUrl(assetRef: string): string {
+  const q = new URLSearchParams({ asset_ref: assetRef });
+  return `${getApiBaseUrl()}/api/assets/preview?${q.toString()}`;
+}
+
 /** Mirrors admin_api/schemas — keep loose for API evolution */
 export interface HealthResponse {
   status: string;

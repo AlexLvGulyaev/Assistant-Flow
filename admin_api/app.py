@@ -1,17 +1,36 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from admin_api.routes.assets import router as assets_router
 from admin_api.routes.health import router as health_router
 from admin_api.routes.logs import router as logs_router
 from admin_api.routes.overview import router as overview_router
 from admin_api.routes.summary import router as summary_router
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DEV_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://216.57.108.80:5173",
+]
+
+
+def _cors_origins() -> list[str]:
+    """Merge explicit env origins with default local dev origins."""
+    raw = os.getenv("ADMIN_API_CORS_ORIGINS", "")
+    env_origins = [s.strip() for s in raw.split(",") if s.strip()]
+    merged: list[str] = []
+    for origin in [*env_origins, *_DEFAULT_DEV_ORIGINS]:
+        if origin not in merged:
+            merged.append(origin)
+    return merged
 
 
 def create_admin_api_app() -> FastAPI:
@@ -22,7 +41,7 @@ def create_admin_api_app() -> FastAPI:
     )
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -32,6 +51,7 @@ def create_admin_api_app() -> FastAPI:
     application.include_router(overview_router)
     application.include_router(summary_router)
     application.include_router(logs_router)
+    application.include_router(assets_router)
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(

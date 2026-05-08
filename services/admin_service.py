@@ -16,6 +16,7 @@ from repositories.connection import get_connection
 from repositories.document_repository import DocumentRepository
 from repositories.processing_logs_repository import ProcessingLogsRepository
 from services.admin_knowledge_indexer import AdminKnowledgeIndexer
+from services.asset_repository import AssetNotFoundError, AssetValidationError
 from services.asset_repository_factory import create_asset_repository
 from services.async_job_service import AsyncJob, AsyncJobService
 from services.rag_chroma_store import count_chroma_chunks
@@ -493,6 +494,29 @@ class AdminService:
             return rows
         except Exception:
             return []
+
+    def get_media_asset_preview(
+        self, asset_ref: str, *, allowed_prefixes: tuple[str, ...] = ("image/",)
+    ) -> tuple[Path, str]:
+        """
+        Resolve a stored asset reference for safe preview serving.
+
+        Returns tuple: (absolute path, content_type). Raises ValueError when
+        ref/content type is invalid or file is missing.
+        """
+        ref = (asset_ref or "").strip()
+        if not ref:
+            raise ValueError("asset_ref is required")
+        try:
+            path = self._asset_repository.resolve_path(ref)
+            if not path.is_file():
+                raise ValueError("asset not found")
+            guessed = (mimetypes.guess_type(path.name)[0] or "").lower()
+            if not any(guessed.startswith(prefix) for prefix in allowed_prefixes):
+                raise ValueError("asset type is not allowed")
+            return path, guessed
+        except (AssetValidationError, AssetNotFoundError) as exc:
+            raise ValueError("invalid asset_ref") from exc
 
     def list_async_jobs(
         self,

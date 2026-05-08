@@ -14,8 +14,8 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/summary", label: "Summary" },
   { path: "/text", label: "Text", placeholder: true },
   { path: "/rag", label: "RAG", placeholder: true },
-  { path: "/images", label: "Images", placeholder: true },
-  { path: "/audio", label: "Audio", placeholder: true },
+  { path: "/images", label: "Images" },
+  { path: "/audio", label: "Audio" },
   { path: "/documents", label: "Documents", placeholder: true },
   { path: "/logs", label: "Logs" },
 ];

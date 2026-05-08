@@ -1,5 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 import { AdminLayout } from "./layout/AdminLayout";
+import { AudioPage } from "./pages/AudioPage";
+import { ImagesPage } from "./pages/ImagesPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
@@ -13,8 +15,8 @@ export default function App() {
         <Route path="summary" element={<SummaryPage />} />
         <Route path="text" element={<PlaceholderPage title="Text" />} />
         <Route path="rag" element={<PlaceholderPage title="RAG" />} />
-        <Route path="images" element={<PlaceholderPage title="Images" />} />
-        <Route path="audio" element={<PlaceholderPage title="Audio" />} />
+        <Route path="images" element={<ImagesPage />} />
+        <Route path="audio" element={<AudioPage />} />
         <Route
           path="documents"
           element={<PlaceholderPage title="Documents" />}
