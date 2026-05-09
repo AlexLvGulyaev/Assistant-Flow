@@ -95,6 +95,8 @@ def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
         created_out = created.astimezone(timezone.utc).isoformat()
     else:
         created_out = created
+    err_raw = row.get("error_text")
+    err_out = str(err_raw).strip() if err_raw else None
     return {
         "execution_id": str(row.get("execution_id") or "") or None,
         "stage": str(row.get("stage") or "") or None,
@@ -103,4 +105,5 @@ def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "route": route,
         "mode": mode,
         "details": truncate_details(details),
+        "error_text": err_out,
     }

@@ -285,6 +285,53 @@ class ChromaRagStore:
             out.append((Document(page_content=page, metadata=metadata), dist))
         return out
 
+    def delete_vectors_for_document_before_reindex(
+        self,
+        *,
+        document_id: uuid.UUID | None,
+        source_filename: str,
+    ) -> None:
+        """
+        Drop existing vectors for this KB document so single-file reindex stays idempotent.
+
+        Indexer attaches ``document_id`` (and ``document_version_id``) to chunk metadata.
+        Older rows may only have ``source`` (basename); ``$or`` removes both shapes.
+        When PostgreSQL is off, only ``source`` is used.
+        """
+        fn = (source_filename or "").strip()
+        try:
+            if document_id is not None and fn:
+                self._collection.delete(
+                    where={
+                        "$or": [
+                            {"document_id": str(document_id)},
+                            {"source": fn},
+                        ]
+                    },
+                )
+                return
+            if document_id is not None:
+                self._collection.delete(where={"document_id": str(document_id)})
+                return
+            if fn:
+                self._collection.delete(where={"source": fn})
+        except Exception as exc:
+            print(
+                f"[assistant-flow] chroma: targeted delete before reindex failed "
+                f"({type(exc).__name__}: {exc}); retrying document_id-only",
+                flush=True,
+            )
+            try:
+                if document_id is not None:
+                    self._collection.delete(where={"document_id": str(document_id)})
+                elif fn:
+                    self._collection.delete(where={"source": fn})
+            except Exception as exc2:
+                print(
+                    f"[assistant-flow] chroma: delete retry failed: {exc2}",
+                    flush=True,
+                )
+
     def add_documents(self, documents: list[Document], **kwargs: Any) -> list[str]:
         """Add document chunks with embeddings (native collection.add; kwargs unused, kept for API)."""
         del kwargs  # LangChain compatibility; not passed to Chroma

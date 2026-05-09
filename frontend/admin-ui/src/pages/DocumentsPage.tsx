@@ -1,28 +1,78 @@
-import { useEffect, useMemo, useState } from "react";
 import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import {
+  fetchDocumentDetail,
   fetchDocuments,
-  type DocumentItem,
+  postDocumentsReindex,
+  uploadDocument,
+  type DocumentDetailResponse,
   type DocumentsResponse,
-  type LogItem,
 } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  formatDurationMs,
+  formatShortDateMsk,
+  formatTimestampMsk,
+  stageToActionRu,
+} from "../utils/operationalLabels";
 
-const INITIAL_LIMIT = 200;
-const LIMIT_STEP = 100;
+const PAGE_SIZE = 10;
+const DOC_FETCH_LIMIT = 400;
+
+function DocFieldRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="docs-field-inline" title={label}>
+      <span className="docs-field-inline__label">{label}:</span>
+      <span className="docs-field-inline__value">{children}</span>
+    </div>
+  );
+}
 
 export function DocumentsPage() {
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [data, setData] = useState<DocumentsResponse | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedVersionNumber, setSelectedVersionNumber] = useState<number | null>(
+    null
+  );
   const [statusFilter, setStatusFilter] = useState("all");
   const [extFilter, setExtFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [indexedOnly, setIndexedOnly] = useState(false);
-  const [errorsOnly, setErrorsOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingListFocusRef = useRef(false);
+
+  const [detail, setDetail] = useState<DocumentDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadHint, setUploadHint] = useState<string | null>(null);
+  const [reindexDocBusy, setReindexDocBusy] = useState(false);
+  const [reindexAllBusy, setReindexAllBusy] = useState(false);
+  const [actionHint, setActionHint] = useState<string | null>(null);
+  const [summaryPopOpen, setSummaryPopOpen] = useState(false);
+  const [indexPopOpen, setIndexPopOpen] = useState(false);
+  const summaryPopRef = useRef<HTMLDivElement | null>(null);
+  const indexPopRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +80,7 @@ export function DocumentsPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetchDocuments(limit);
+        const res = await fetchDocuments(DOC_FETCH_LIMIT);
         if (!cancelled) setData(res);
       } catch (e) {
         if (!cancelled) {
@@ -43,336 +93,915 @@ export function DocumentsPage() {
     return () => {
       cancelled = true;
     };
-  }, [limit]);
+  }, [refreshKey]);
 
   const items = data?.items ?? [];
-  const observability = data?.observability ?? {};
+  const gis = data?.global_index_sync;
+  const lastFullReindex = data?.observability?.last_reindex_event;
+  const embeddingModel = (data?.embedding_model || "").trim() || null;
+  const providerHint = embeddingModel ? `OpenAI · ${embeddingModel}` : null;
+
   const extensions = useMemo(
     () => Array.from(new Set(items.map((d) => d.extension || "—"))).sort(),
     [items]
   );
+
+  const summary = useMemo(() => {
+    let indexed = 0;
+    let errors = 0;
+    let versions = 0;
+    let chunks = 0;
+    let lastIndexedMs = 0;
+    for (const d of items) {
+      if (d.status === "indexed") indexed++;
+      if (d.status === "error") errors++;
+      versions += d.versions_count ?? 0;
+      chunks += d.chunk_count ?? 0;
+      if (d.last_indexed_at) {
+        const ms = new Date(d.last_indexed_at).getTime();
+        if (Number.isFinite(ms) && ms > lastIndexedMs) lastIndexedMs = ms;
+      }
+    }
+    return {
+      total: items.length,
+      indexed,
+      errors,
+      versions,
+      chunks,
+      lastIndexedLabel:
+        lastIndexedMs > 0 ? formatTimestampMsk(lastIndexedMs) : "—",
+    };
+  }, [items]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((d) => {
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (extFilter !== "all" && d.extension !== extFilter) return false;
-      if (indexedOnly && d.status !== "indexed") return false;
-      if (errorsOnly && d.status !== "error") return false;
       if (!q) return true;
       const hay = [
         d.filename,
         d.extension,
         d.status,
         d.status_raw,
-        d.path_category,
         String(d.chunk_count ?? ""),
+        String(d.active_version ?? ""),
       ]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [errorsOnly, extFilter, indexedOnly, items, search, statusFilter]);
+  }, [extFilter, items, search, statusFilter]);
+
+  const totalPagesRaw = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageIndex = Math.min(currentPage, Math.max(0, totalPagesRaw - 1));
+  const pageDocs = useMemo(
+    () => filtered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [filtered, pageIndex]
+  );
+  const lastPageIndex = Math.max(0, totalPagesRaw - 1);
+
+  const selected = useMemo(
+    () => pageDocs.find((d) => d.document_id === selectedId) ?? null,
+    [pageDocs, selectedId]
+  );
+
+  const timelineWithDelta = useMemo(() => {
+    const raw = detail?.timeline ?? [];
+    const sorted = [...raw].sort(
+      (a, b) =>
+        new Date(a.created_at || 0).getTime() -
+        new Date(b.created_at || 0).getTime()
+    );
+    return sorted.map((ev, i) => {
+      let deltaMs: number | null = null;
+      if (i > 0) {
+        const t0 = new Date(sorted[i - 1].created_at || 0).getTime();
+        const t1 = new Date(ev.created_at || 0).getTime();
+        if (Number.isFinite(t0) && Number.isFinite(t1)) deltaMs = Math.max(0, t1 - t0);
+      }
+      return { ev, deltaMs };
+    });
+  }, [detail?.timeline]);
 
   useEffect(() => {
-    if (!filtered.length) {
+    setCurrentPage(0);
+  }, [statusFilter, extFilter, search]);
+
+  useEffect(() => {
+    if (currentPage !== pageIndex) setCurrentPage(pageIndex);
+  }, [currentPage, pageIndex]);
+
+  useEffect(() => {
+    setSelectedVersionNumber(null);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!pageDocs.length) {
       setSelectedId(null);
       return;
     }
     if (!selectedId || !filtered.some((d) => d.document_id === selectedId)) {
-      setSelectedId(filtered[0].document_id);
+      setSelectedId(pageDocs[0].document_id);
+      return;
     }
-  }, [filtered, selectedId]);
+    if (!pageDocs.some((d) => d.document_id === selectedId)) {
+      setSelectedId(pageDocs[0].document_id);
+    }
+  }, [filtered, pageDocs, selectedId]);
 
-  const selected = filtered.find((d) => d.document_id === selectedId) ?? null;
-  const canLoadMore = items.length >= limit;
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setDetailLoading(true);
+      setDetailError(null);
+      try {
+        const d = await fetchDocumentDetail(
+          selectedId,
+          selectedVersionNumber ?? undefined
+        );
+        if (!cancelled) setDetail(d);
+      } catch (e) {
+        if (!cancelled) {
+          setDetail(null);
+          setDetailError(e instanceof Error ? e.message : "Ошибка загрузки деталей");
+        }
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, selectedVersionNumber]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const list = listRef.current;
+    if (!list) return;
+    const safeId =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(selectedId)
+        : selectedId.replace(/"/g, '\\"');
+    const row = list.querySelector<HTMLButtonElement>(
+      `[data-doc-id="${safeId}"]`
+    );
+    if (!row) return;
+    row.scrollIntoView({ block: "nearest" });
+    const listHasFocus =
+      document.activeElement instanceof Node && list.contains(document.activeElement);
+    const shouldFocus = pendingListFocusRef.current || listHasFocus;
+    pendingListFocusRef.current = false;
+    if (!shouldFocus) return;
+    const id = window.requestAnimationFrame(() => {
+      row.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [selectedId, pageIndex]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.closest("input") ||
+          t.closest("textarea") ||
+          t.closest("select") ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (!filtered.length) return;
+      const curIdx = selectedId
+        ? filtered.findIndex((d) => d.document_id === selectedId)
+        : pageIndex * PAGE_SIZE;
+      if (curIdx < 0) return;
+      const nextIdx =
+        e.key === "ArrowDown"
+          ? Math.min(filtered.length - 1, curIdx + 1)
+          : Math.max(0, curIdx - 1);
+      if (nextIdx === curIdx) return;
+      e.preventDefault();
+      const next = filtered[nextIdx];
+      if (!next) return;
+      pendingListFocusRef.current = true;
+      setCurrentPage(Math.floor(nextIdx / PAGE_SIZE));
+      setSelectedId(next.document_id);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filtered, selectedId, pageIndex]);
+
+  useEffect(() => {
+    if (!summaryPopOpen && !indexPopOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (summaryPopOpen && summaryPopRef.current && !summaryPopRef.current.contains(t)) {
+        setSummaryPopOpen(false);
+      }
+      if (indexPopOpen && indexPopRef.current && !indexPopRef.current.contains(t)) {
+        setIndexPopOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [summaryPopOpen, indexPopOpen]);
+
+  function resetPagination() {
+    pendingListFocusRef.current = true;
+    setCurrentPage(0);
+    const first = filtered.slice(0, PAGE_SIZE)[0];
+    if (first) setSelectedId(first.document_id);
+  }
+
+  function goPrevPage() {
+    pendingListFocusRef.current = true;
+    const np = Math.max(0, pageIndex - 1);
+    setCurrentPage(np);
+    const slice = filtered.slice(np * PAGE_SIZE, (np + 1) * PAGE_SIZE);
+    const pick = slice[slice.length - 1] ?? slice[0];
+    if (pick) setSelectedId(pick.document_id);
+  }
+
+  function goNextPage() {
+    pendingListFocusRef.current = true;
+    const np = Math.min(lastPageIndex, pageIndex + 1);
+    setCurrentPage(np);
+    const slice = filtered.slice(np * PAGE_SIZE, (np + 1) * PAGE_SIZE);
+    if (slice[0]) setSelectedId(slice[0].document_id);
+  }
+
+  async function onRefresh() {
+    setRefreshKey((k) => k + 1);
+    setActionHint(null);
+  }
+
+  async function onPickUpload() {
+    fileInputRef.current?.click();
+  }
+
+  async function onFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setUploadBusy(true);
+    setUploadHint("Загрузка…");
+    try {
+      const r = await uploadDocument(f);
+      if (r.success) {
+        setUploadHint(
+          r.chunks != null
+            ? `Загружено, индексация завершена · чанков: ${r.chunks}`
+            : "Загружено"
+        );
+        setRefreshKey((k) => k + 1);
+        if (r.document_id) {
+          setSelectedId(r.document_id);
+          setCurrentPage(0);
+        }
+      } else {
+        setUploadHint(r.error || "Ошибка индексации");
+      }
+    } catch (err) {
+      setUploadHint(err instanceof Error ? err.message : "Ошибка загрузки");
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  async function onReindexDocument() {
+    if (!selectedId) return;
+    setReindexDocBusy(true);
+    setActionHint(null);
+    try {
+      const r = await postDocumentsReindex({
+        scope: "document",
+        document_id: selectedId,
+      });
+      if (r.success) {
+        setActionHint(
+          r.chunks != null
+            ? `Документ переиндексирован · чанков: ${r.chunks}`
+            : "Переиндексация документа завершена"
+        );
+      } else {
+        setActionHint(r.error || "Ошибка переиндексации документа");
+      }
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setActionHint(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setReindexDocBusy(false);
+    }
+  }
+
+  async function onReindexAll() {
+    setReindexAllBusy(true);
+    setActionHint(null);
+    try {
+      const r = await postDocumentsReindex({ scope: "all" });
+      if (r.success) {
+        setActionHint(
+          `Полная переиндексация завершена · файлов: ${r.files_indexed_ok ?? "—"} / ${r.files_found ?? "—"}`
+        );
+      } else {
+        setActionHint(r.error || "Ошибка полной переиндексации");
+      }
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setActionHint(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setReindexAllBusy(false);
+    }
+  }
+
+  const docStatusRaw = String(detail?.document?.status ?? selected?.status_raw ?? "");
 
   return (
-    <div className="page logs-page">
-      <h1 className="page__title">Документы</h1>
-      <p className="page__lead muted">
-        Document inventory & indexing observability · <code>/api/documents</code>
-      </p>
+    <div className="page logs-page docs-page docs-page-viewport">
+      <header className="docs-page-header-row">
+        <h1 className="docs-page-header-row__title">Документы</h1>
+        <span className="docs-page-header-row__meta muted">
+          <code>/api/documents</code> · МСК
+        </span>
+      </header>
+
+      <div className="docs-toolbar card">
+        <div className="docs-toolbar__actions" role="toolbar" aria-label="Операции с базой знаний">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,text/plain"
+            className="docs-file-input"
+            aria-hidden
+            onChange={onFileChange}
+          />
+          <button
+            type="button"
+            className="docs-action-btn docs-action-btn--primary"
+            onClick={onPickUpload}
+            disabled={uploadBusy}
+          >
+            {uploadBusy ? "⏳ Загрузка…" : "⬆ Загрузить файл"}
+          </button>
+          <button
+            type="button"
+            className="docs-action-btn docs-action-btn--secondary"
+            onClick={onReindexDocument}
+            disabled={!selectedId || reindexDocBusy || reindexAllBusy}
+          >
+            {reindexDocBusy ? "⏳ Переиндексация…" : "↻ Переиндексировать документ"}
+          </button>
+          <button
+            type="button"
+            className="docs-action-btn docs-action-btn--caution"
+            onClick={onReindexAll}
+            disabled={reindexAllBusy || reindexDocBusy}
+          >
+            {reindexAllBusy ? "⏳ Переиндексация…" : "⚠ Переиндексировать всё"}
+          </button>
+          <button
+            type="button"
+            className="docs-action-btn docs-action-btn--ghost"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            Обновить список
+          </button>
+          {!loading && !error && items.length > 0 ? (
+            <>
+              <div className="docs-toolbar__pop-anchor" ref={summaryPopRef}>
+                <button
+                  type="button"
+                  className={`docs-action-btn docs-action-btn--ghost ${summaryPopOpen ? "docs-action-btn--pressed" : ""}`}
+                  aria-expanded={summaryPopOpen}
+                  onClick={() => {
+                    setIndexPopOpen(false);
+                    setSummaryPopOpen((v) => !v);
+                  }}
+                >
+                  Сводка
+                </button>
+                {summaryPopOpen ? (
+                  <div className="docs-toolbar__pop" role="dialog" aria-label="Сводка каталога">
+                    <DocFieldRow label="Всего документов">
+                      <span className="mono">{summary.total}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Проиндексировано">
+                      <span className="mono">{summary.indexed}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Ошибки">
+                      <span className="mono">{summary.errors}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Версий (сумма)">
+                      <span className="mono">{summary.versions}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Чанков (сумма)">
+                      <span className="mono">{summary.chunks}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Последняя индексация">
+                      <span className="mono">{summary.lastIndexedLabel}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Embeddings">
+                      <span className="mono">{providerHint ?? "—"}</span>
+                    </DocFieldRow>
+                  </div>
+                ) : null}
+              </div>
+              <div className="docs-toolbar__pop-anchor" ref={indexPopRef}>
+                <button
+                  type="button"
+                  className={`docs-action-btn docs-action-btn--ghost ${indexPopOpen ? "docs-action-btn--pressed" : ""}`}
+                  aria-expanded={indexPopOpen}
+                  onClick={() => {
+                    setSummaryPopOpen(false);
+                    setIndexPopOpen((v) => !v);
+                  }}
+                >
+                  Статус индекса
+                </button>
+                {indexPopOpen ? (
+                  <div className="docs-toolbar__pop" role="dialog" aria-label="Глобальный статус индекса">
+                    <DocFieldRow label="Векторов в Chroma">
+                      <span className="mono">{gis?.chroma_collection_chunks ?? "—"}</span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Σ chunk_count (активные версии)">
+                      <span className="mono">
+                        {gis?.postgres_chunks_sum_active_versions ?? "—"}
+                      </span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Согласованность">
+                      {gis?.global_chunks_mismatch ? (
+                        <span className="docs-warn">расхождение</span>
+                      ) : (
+                        <StatusBadge status="ok" />
+                      )}
+                    </DocFieldRow>
+                    <DocFieldRow label="Полная переиндексация">
+                      <span className="mono">
+                        {lastFullReindex?.stage
+                          ? `${stageToActionRu(lastFullReindex.stage, lastFullReindex.details)} · `
+                          : ""}
+                        {formatTimestampMsk(lastFullReindex?.created_at ?? null)}
+                      </span>
+                    </DocFieldRow>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>
+        {(uploadHint || actionHint) ? (
+          <p className="docs-toolbar__hint docs-toolbar__hint--one-line muted" title={`${uploadHint ?? ""} ${actionHint ?? ""}`.trim()}>
+            {uploadHint ? <span>{uploadHint}</span> : null}
+            {uploadHint && actionHint ? <span> · </span> : null}
+            {actionHint ? <span>{actionHint}</span> : null}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="docs-main-split">
       {loading ? (
-        <LoadingState label="Загрузка документов…" />
+        <div className="docs-split-fill-center">
+          <LoadingState label="Загрузка документов…" />
+        </div>
       ) : error ? (
-        <div className="panel panel--error page__mt" role="alert">
-          {error}
+        <div className="docs-split-fill-center">
+          <div className="panel panel--error" role="alert">
+            {error}
+          </div>
         </div>
       ) : items.length === 0 ? (
-        <section className="card">
-          <EmptyState message="Нет documents returned by API." />
-        </section>
+        <div className="docs-split-fill-center">
+          <section className="card">
+            <EmptyState message="Нет документов в каталоге (PostgreSQL пуст или недоступен)." />
+          </section>
+        </div>
       ) : (
-        <div className="logs-console docs-console">
-          <section className="logs-left card">
-            <div className="logs-filters">
+        <div className="logs-console docs-console docs-console--fill">
+          <section className="logs-left card docs-left--fill">
+            <div className="logs-filters docs-filters">
               <div className="logs-filter-row docs-filter-row">
                 <select
                   className="logs-select"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
+                  aria-label="Фильтр статуса"
                 >
-                  <option value="all">статус: все</option>
-                  <option value="indexed">indexed</option>
-                  <option value="pending">pending</option>
-                  <option value="error">error</option>
-                  <option value="missing">missing</option>
-                  <option value="unsupported">unsupported</option>
-                  <option value="stale">stale</option>
+                  <option value="all">все статусы</option>
+                  <option value="indexed">проиндексирован</option>
+                  <option value="pending">ожидание</option>
+                  <option value="error">ошибка</option>
+                  <option value="missing">нет в индексе</option>
+                  <option value="unsupported">не поддерживается</option>
+                  <option value="stale">устарело</option>
                 </select>
                 <select
                   className="logs-select"
                   value={extFilter}
                   onChange={(e) => setExtFilter(e.target.value)}
+                  aria-label="Тип файла"
                 >
-                  <option value="all">type: all</option>
-                  {extensions.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
+                  <option value="all">все типы</option>
+                  {extensions.map((ex) => (
+                    <option key={ex} value={ex}>
+                      {ex}
                     </option>
                   ))}
                 </select>
-                <button
-                  type="button"
-                  className="admin-shell__refresh"
-                  onClick={() => setLimit(INITIAL_LIMIT)}
-                >
-                  сброс
-                </button>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="поиск filename / status / extension"
+                placeholder="Поиск: имя файла, статус, версия…"
               />
-              <div className="logs-quick-row">
-                <button
-                  type="button"
-                  className={`logs-chip ${indexedOnly ? "logs-chip--active" : ""}`}
-                  onClick={() => setIndexedOnly((v) => !v)}
-                >
-                  indexed only
-                </button>
-                <button
-                  type="button"
-                  className={`logs-chip ${errorsOnly ? "logs-chip--active" : ""}`}
-                  onClick={() => setErrorsOnly((v) => !v)}
-                >
-                  errors only
-                </button>
-              </div>
               <div className="logs-filter-meta muted">
-                docs {filtered.length} / payload {items.length}
+                Страница {filtered.length === 0 ? 0 : pageIndex + 1} из{" "}
+                {totalPagesRaw || 0} · всего документов: {filtered.length} · показано:{" "}
+                {pageDocs.length}
               </div>
-            </div>
-            <div className="logs-list">
-              {filtered.map((d) => (
-                <button
-                  key={d.document_id}
-                  type="button"
-                  className={`logs-item ${selectedId === d.document_id ? "logs-item--selected" : ""}`}
-                  onClick={() => setSelectedId(d.document_id)}
-                >
-                  <div className="logs-item__row">
-                    <span className="mini-badge mini-badge--docs">{d.extension || "—"}</span>
-                    <StatusBadge status={d.status || "—"} />
-                  </div>
-                  <div className="logs-item__preview mono break-all">{d.filename || "—"}</div>
-                  <div className="logs-item__row logs-item__meta muted">
-                    <span>chunks {d.chunk_count ?? 0}</span>
-                    <span>v{d.active_version ?? "—"}</span>
-                    <span>{fmtTime(d.last_indexed_at)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-            {canLoadMore ? (
-              <div className="logs-loadmore-wrap">
+              <div className="logs-page-controls">
                 <button
                   type="button"
-                  className="admin-shell__refresh"
-                  onClick={() => setLimit((v) => v + LIMIT_STEP)}
+                  className="logs-page-btn"
+                  onClick={goPrevPage}
+                  disabled={pageIndex <= 0 || filtered.length === 0}
                 >
-                  Загрузить ещё (+{LIMIT_STEP})
+                  ← Предыдущая
+                </button>
+                <button
+                  type="button"
+                  className="logs-page-btn"
+                  onClick={goNextPage}
+                  disabled={pageIndex >= lastPageIndex || filtered.length === 0}
+                >
+                  Следующая →
+                </button>
+                <button
+                  type="button"
+                  className="logs-page-btn logs-page-btn--muted"
+                  onClick={resetPagination}
+                  disabled={
+                    pageIndex === 0 &&
+                    !search.trim() &&
+                    statusFilter === "all" &&
+                    extFilter === "all"
+                  }
+                >
+                  Сброс
                 </button>
               </div>
-            ) : null}
-          </section>
+            </div>
 
-          <section className="logs-right card">
-            {!selected ? (
-              <EmptyState message="Выберите document to inspect metadata and indexing history." />
-            ) : (
-              <div className="logs-detail">
-                <div className="logs-detail__head">
-                  <h2 className="card__title">Document summary</h2>
-                  <StatusBadge status={selected.status || "—"} />
-                </div>
-                <dl className="kv">
-                  <dt>filename</dt>
-                  <dd className="mono break-all">{selected.filename || "—"}</dd>
-                  <dt>path/category</dt>
-                  <dd className="mono">{selected.path_category ?? "—"}</dd>
-                  <dt>size</dt>
-                  <dd>{selected.size_bytes != null ? `${selected.size_bytes} B` : "—"}</dd>
-                  <dt>modified_at</dt>
-                  <dd className="mono">{fmtTime(selected.modified_at)}</dd>
-                  <dt>indexed status</dt>
-                  <dd>
-                    <StatusBadge status={selected.status_raw || selected.status || "—"} />
-                  </dd>
-                </dl>
-
-                <div className="logs-detail-grid page__mt">
-                  <div className="logs-detail-block">
-                    <h3 className="card__title">Indexing metadata</h3>
-                    <dl className="kv">
-                      <dt>active version</dt>
-                      <dd>{selected.active_version ?? "—"}</dd>
-                      <dt>versions count</dt>
-                      <dd>{selected.versions_count ?? 0}</dd>
-                      <dt>chunk count</dt>
-                      <dd>{selected.chunk_count ?? 0}</dd>
-                      <dt>last indexed</dt>
-                      <dd className="mono">{fmtTime(selected.last_indexed_at)}</dd>
-                      <dt>collection info</dt>
-                      <dd className="mono">—</dd>
-                      <dt>provider/model</dt>
-                      <dd className="mono">—</dd>
-                    </dl>
-                  </div>
-                  <div className="logs-detail-block">
-                    <h3 className="card__title">Last indexing activity</h3>
-                    <dl className="kv">
-                      <dt>last event stage</dt>
-                      <dd className="mono">
-                        {String(selected.last_indexing_event?.stage || "—")}
-                      </dd>
-                      <dt>last event time</dt>
-                      <dd className="mono">
-                        {fmtTime(selected.last_indexing_event?.created_at || null)}
-                      </dd>
-                      <dt>event status</dt>
-                      <dd>
-                        <StatusBadge
-                          status={String(selected.last_indexing_event?.status || "—")}
-                        />
-                      </dd>
-                      <dt>duration</dt>
-                      <dd>—</dd>
-                    </dl>
-                  </div>
-                </div>
-
-                <h3 className="card__title page__mt">Related logs/events</h3>
-                <div className="logs-timeline">
-                  {(observability.timeline_events ?? [])
-                    .filter((ev) => matchesDocEvent(ev, selected))
-                    .slice(0, 30)
-                    .map((ev, i) => (
-                      <div key={`${ev.stage ?? "event"}-${i}`} className="logs-stage">
-                        <div className="logs-stage__top">
-                          <span className="mono">{fmtTime(ev.created_at)}</span>
-                          <span className="mini-badge">{ev.stage ?? "—"}</span>
-                          <StatusBadge status={ev.status ?? "—"} />
-                        </div>
-                        <details>
-                          <summary className="log-details__summary mono">
-                            {previewСводка(ev.details)}
-                          </summary>
-                          <pre className="log-details__json mono">
-                            {formatJson(ev.details)}
-                          </pre>
-                        </details>
-                      </div>
-                    ))}
-                </div>
-
-                <h3 className="card__title page__mt">Reindex observability</h3>
-                <div className="logs-detail-block">
-                  <dl className="kv">
-                    <dt>reindex capability</dt>
-                    <dd>
-                      {observability.reindex_available ? (
-                        <StatusBadge status="available" />
+            <div className="logs-list" ref={listRef}>
+              {filtered.length === 0 ? (
+                <div className="panel panel--muted">Нет документов по фильтрам.</div>
+              ) : (
+                pageDocs.map((d) => (
+                  <button
+                    key={d.document_id}
+                    type="button"
+                    data-doc-id={d.document_id}
+                    className={`logs-item ${selectedId === d.document_id ? "logs-item--selected" : ""}`}
+                    onClick={() => {
+                      pendingListFocusRef.current = true;
+                      setSelectedId(d.document_id);
+                    }}
+                  >
+                    <div className="logs-item__row logs-item__row--tight">
+                      <span className="mono logs-item__ts">
+                        {formatTimestampMsk(d.last_indexed_at)}
+                      </span>
+                      <span className="logs-item__route-status">
+                        {String(d.status || "").toUpperCase()} · v
+                        {d.active_version ?? "—"} · чанков {d.chunk_count ?? 0}
+                      </span>
+                    </div>
+                    <div className="logs-item__preview">{d.filename || "—"}</div>
+                    <div className="logs-item__row logs-item__meta muted">
+                      <span className="mono truncate" title={d.document_id}>
+                        {shortId(d.document_id)}
+                      </span>
+                      {d.status === "error" ? (
+                        <span className="docs-card-err">сбой индексации</span>
+                      ) : null}
+                      {providerHint ? (
+                        <span className="mono truncate" title={providerHint}>
+                          {providerHint}
+                        </span>
                       ) : (
-                        <StatusBadge status="unavailable" />
+                        <span>embeddings: —</span>
                       )}
-                    </dd>
-                    <dt>last reindex stage</dt>
-                    <dd className="mono">
-                      {String(observability.last_reindex_event?.stage || "—")}
-                    </dd>
-                    <dt>last reindex at</dt>
-                    <dd className="mono">
-                      {fmtTime(observability.last_reindex_event?.created_at || null)}
-                    </dd>
-                  </dl>
-                </div>
-
-                <details className="page__mt">
-                  <summary className="log-details__summary mono">
-                    raw metadata/details
-                  </summary>
-                  <pre className="log-details__json mono">
-                    {JSON.stringify(
-                      {
-                        selected,
-                        observability: {
-                          last_reindex_event: observability.last_reindex_event,
-                          admin_operations: (observability.admin_operations ?? []).slice(0, 20),
-                        },
-                      },
-                      null,
-                      2
-                    )}
-                  </pre>
-                </details>
-              </div>
-            )}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
           </section>
+
+          <div className="docs-right-split">
+            {!selected ? (
+              <div className="docs-detail-placeholder docs-right-split--full card">
+                <EmptyState message="Выберите документ в списке слева." />
+              </div>
+            ) : detailLoading ? (
+              <div className="docs-detail-placeholder docs-right-split--full card">
+                <LoadingState label="Загрузка карточки документа…" />
+              </div>
+            ) : detailError ? (
+              <div className="docs-detail-placeholder docs-right-split--full card">
+                <div className="panel panel--error" role="alert">
+                  {detailError}
+                </div>
+              </div>
+            ) : detail ? (
+              <>
+                <section className="docs-panel-document card">
+                  <header className="docs-panel-document__header">
+                    <h2 className="docs-panel-document__title">СВОДКА ДОКУМЕНТА</h2>
+                    <StatusBadge status={String(selected.status || "—")} />
+                  </header>
+                  <div className="docs-panel-document__summary">
+                    {selected.status === "error" || detail.last_error_message ? (
+                      <div className="docs-alert docs-alert--err docs-alert--compact">
+                        <strong>Ошибка</strong>
+                        {detail.last_error_message ? (
+                          <div className="mono docs-alert__msg">{detail.last_error_message}</div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="docs-ver-table-wrap docs-ver-table-wrap--panel">
+                      <table className="docs-ver-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Версия</th>
+                            <th scope="col">Статус</th>
+                            <th scope="col" className="docs-ver-table__num">
+                              Чанки
+                            </th>
+                            <th scope="col">Дата</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(detail.versions ?? []).map((v) => {
+                            const vn = v.version_number ?? 0;
+                            const active = !!v.is_active;
+                            const sel = detail.selected_version?.version_number === vn;
+                            let stLabel = "архивная";
+                            let stClass = "docs-ver-pill docs-ver-pill--arch";
+                            if (active) {
+                              if (docStatusRaw === "failed") {
+                                stLabel = "ACTIVE·сбой";
+                                stClass = "docs-ver-pill docs-ver-pill--warn";
+                              } else {
+                                stLabel = "ACTIVE";
+                                stClass = "docs-ver-pill docs-ver-pill--act";
+                              }
+                            }
+                            return (
+                              <tr
+                                key={`${v.version_id}-${vn}`}
+                                className={sel ? "docs-ver-tr docs-ver-tr--selected" : "docs-ver-tr"}
+                                tabIndex={0}
+                                onClick={() => setSelectedVersionNumber(vn)}
+                                onKeyDown={(e: ReactKeyboardEvent) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    setSelectedVersionNumber(vn);
+                                  }
+                                }}
+                              >
+                                <td className="mono">v{vn}</td>
+                                <td>
+                                  <span className={stClass}>{stLabel}</span>
+                                </td>
+                                <td className="docs-ver-table__num mono">{v.chunk_count ?? 0}</td>
+                                <td className="mono muted">{formatShortDateMsk(v.indexed_at ?? null)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="docs-op-grid docs-op-grid--summary docs-op-grid--panel">
+                      <DocFieldRow label="Файл">
+                        <span className="mono" title={String(selected.filename)}>
+                          {String(selected.filename)}
+                        </span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Статус PostgreSQL">
+                        <StatusBadge status={docStatusRaw || "—"} />
+                      </DocFieldRow>
+                      <DocFieldRow label="Активная версия">
+                        <span className="mono">v{detail.active_version?.version_number ?? "—"}</span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Выбранная версия">
+                        <span className="mono">v{detail.selected_version?.version_number ?? "—"}</span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Чанков в версии">
+                        <span className="mono">{detail.chunk_count_declared ?? 0}</span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Найдено в БД">
+                        <span className="mono">{detail.chunks_in_db ?? 0}</span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Provider / model">
+                        <span className="mono" title={detail.embedding_model ?? undefined}>
+                          {detail.embedding_model
+                            ? `OpenAI · ${detail.embedding_model}`
+                            : "—"}
+                        </span>
+                      </DocFieldRow>
+                      <DocFieldRow label="Последняя индексация">
+                        <span className="mono">
+                          {formatTimestampMsk(
+                            detail.selected_version?.indexed_at ??
+                              detail.active_version?.indexed_at ??
+                              null
+                          )}
+                        </span>
+                      </DocFieldRow>
+                      <DocFieldRow label="sha256">
+                        <span
+                          className="mono"
+                          title={String(detail.selected_version?.file_hash ?? "")}
+                        >
+                          {detail.selected_version?.file_hash
+                            ? shortHash(String(detail.selected_version.file_hash))
+                            : "—"}
+                        </span>
+                      </DocFieldRow>
+                    </div>
+                    <p
+                      className={`docs-sync-oneline mono docs-sync-oneline--panel ${detail.chunks_sync_ok ? "docs-sync-oneline--ok" : "docs-sync-oneline--warn"}`}
+                      title={
+                        detail.selected_version_id
+                          ? `version_id=${detail.selected_version_id}`
+                          : undefined
+                      }
+                    >
+                      Синхрон чанков:{" "}
+                      {detail.chunks_sync_ok ? (
+                        <strong>OK</strong>
+                      ) : (
+                        <strong>расхождение</strong>
+                      )}{" "}
+                      · заявлено {detail.chunk_count_declared ?? 0} / БД {detail.chunks_in_db ?? 0}
+                      {!detail.chunks_sync_ok ? " · ↻ переиндексировать в шапке" : ""}
+                    </p>
+                  </div>
+                  <div className="docs-panel-document__body">
+                    <div className="docs-panel-document__body-stack">
+                      <div className="docs-panel-block docs-panel-block--preview">
+                        <div className="docs-zone-title">Предпросмотр</div>
+                        <div className="docs-panel-block__scroll docs-panel-block__scroll--tall">
+                          {detail.preview_available && detail.text_preview ? (
+                            <pre className="docs-preview-body mono">{detail.text_preview}</pre>
+                          ) : (
+                            <p className="muted docs-preview-panel__empty">
+                              Нет предпросмотра (.txt / .md) или файл не на диске.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="docs-panel-block docs-panel-block--chunks">
+                        <div className="docs-zone-title">Чанки выбранной версии</div>
+                        <div className="docs-panel-block__scroll docs-panel-block__scroll--tall docs-chunks-scroll">
+                          {(detail.chunks ?? []).length === 0 ? (
+                            <div className="docs-chunk-empty">
+                              <p className="muted">Нет строк document_chunks для выбранной версии.</p>
+                              {(detail.chunk_count_declared ?? 0) > 0 ? (
+                                <p className="docs-chunk-diag mono">
+                                  Заявлено {detail.chunk_count_declared}, в БД{" "}
+                                  {detail.chunks_in_db ?? 0}.{" "}
+                                  doc_id=
+                                  {String(
+                                    (detail.document as { document_id?: string } | undefined)
+                                      ?.document_id ?? selected.document_id
+                                  )}{" "}
+                                  ver={detail.selected_version_id ?? "—"}.
+                                </p>
+                              ) : null}
+                              {detail.chunks_sync_diagnostic ? (
+                                <pre className="docs-chunk-diag-pre mono">
+                                  {detail.chunks_sync_diagnostic}
+                                </pre>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="docs-chunk-list docs-chunk-list--in-grid">
+                              {(detail.chunks ?? []).map((c, idx) => {
+                                const text = c.chunk_text_preview || "";
+                                const chromaShort =
+                                  c.chroma_id && c.chroma_id.length > 12
+                                    ? `${c.chroma_id.slice(0, 8)}…`
+                                    : c.chroma_id || null;
+                                return (
+                                  <div key={`${c.chunk_index}-${idx}`} className="docs-chunk-card">
+                                    <div className="docs-chunk-card__head">
+                                      <span className="mono">#{c.chunk_index ?? idx}</span>
+                                      <span className="muted">
+                                        {text.length} симв.
+                                        {c.token_count != null ? ` · ${c.token_count} ток.` : ""}
+                                      </span>
+                                      <span className="mono muted" title={c.chroma_id ?? undefined}>
+                                        {chromaShort
+                                          ? `Chroma: ${chromaShort} (в коллекции)`
+                                          : "Chroma: нет id"}
+                                      </span>
+                                    </div>
+                                    <div className="docs-chunk-card__body docs-chunk-card__body--scroll">
+                                      {text || "—"}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <details className="docs-tech-strip docs-tech-strip--in-body">
+                        <summary>Технические детали</summary>
+                        <pre className="docs-tech-strip__body mono">
+                          {formatJson({
+                            document: detail.document,
+                            versions: detail.versions,
+                            active_version: detail.active_version,
+                            selected_version: detail.selected_version,
+                            selected_version_id: detail.selected_version_id,
+                            chunk_counts_by_version: detail.chunk_counts_by_version,
+                            chunks_sync_diagnostic: detail.chunks_sync_diagnostic,
+                            chunks_sample: (detail.chunks ?? []).slice(0, 5),
+                            timeline: detail.timeline,
+                          })}
+                        </pre>
+                      </details>
+                    </div>
+                  </div>
+                </section>
+                <section className="docs-panel-lifecycle card">
+                  <h2 className="docs-panel-lifecycle__title">ЖИЗНЕННЫЙ ЦИКЛ</h2>
+                  <div className="docs-panel-lifecycle__scroll logs-timeline docs-timeline">
+                    {timelineWithDelta.length === 0 ? (
+                      <p className="muted">Событий нет.</p>
+                    ) : (
+                      timelineWithDelta.map(({ ev, deltaMs }, i) => (
+                        <div
+                          key={`${ev.stage}-${ev.created_at}-${i}`}
+                          className="logs-stage logs-stage--compact docs-lifecycle-stage"
+                        >
+                          <div className="logs-stage__top">
+                            <span className="mono logs-stage__time">
+                              {formatTimestampMsk(ev.created_at)}
+                            </span>
+                            <StatusBadge status={String(ev.status || "—")} />
+                            <span className="muted mono">Δ {formatDurationMs(deltaMs)}</span>
+                          </div>
+                          <div className="logs-stage__label">
+                            {stageToActionRu(ev.stage, ev.details)}
+                          </div>
+                          {ev.error_text ? (
+                            <div className="logs-stage__details mono">{ev.error_text}</div>
+                          ) : null}
+                          <details className="docs-timeline__raw">
+                            <summary>техн. детали</summary>
+                            <pre className="logs-pre mono">{formatJson(ev.details)}</pre>
+                          </details>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </>
+            ) : null}
+          </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
 
-function matchesDocEvent(ev: LogItem, doc: DocumentItem): boolean {
-  const details =
-    ev.details && typeof ev.details === "object" && !Array.isArray(ev.details)
-      ? (ev.details as Record<string, unknown>)
-      : {};
-  const filename = String(details.filename || "").toLowerCase();
-  return filename === String(doc.filename || "").toLowerCase();
+function shortId(id: string): string {
+  const s = id.replace(/-/g, "");
+  return s.length > 10 ? `${s.slice(0, 8)}…` : id;
 }
 
-function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toISOString().replace("T", " ").slice(0, 19) + "Z";
-}
-
-function previewСводка(value: unknown): string {
-  if (value == null) return "∅ empty";
-  if (typeof value === "string") return value.length > 88 ? `${value.slice(0, 88)}…` : value;
-  try {
-    const raw = JSON.stringify(value);
-    return raw.length > 88 ? `${raw.slice(0, 88)}…` : raw;
-  } catch {
-    return "?";
-  }
+function shortHash(h: string): string {
+  return h.length > 14 ? `${h.slice(0, 12)}…` : h;
 }
 
 function formatJson(value: unknown): string {
   if (value == null) return "null";
-  if (typeof value === "string") return value;
   try {
     return JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
 }
-

@@ -14,7 +14,8 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     n === "configured" ||
     n === "available" ||
     n === "on" ||
-    n === "yes"
+    n === "yes" ||
+    n === "indexed"
   ) {
     tone = "ok";
   } else if (
@@ -22,7 +23,10 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     n === "unreachable" ||
     n === "checking…" ||
     n === "started" ||
-    n === "warning"
+    n === "warning" ||
+    n === "pending" ||
+    n === "stale" ||
+    n === "missing"
   ) {
     tone = "warn";
   } else if (
@@ -30,7 +34,8 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     n.includes("fail") ||
     n === "err" ||
     n === "internal_error" ||
-    n === "unavailable"
+    n === "unavailable" ||
+    n === "unsupported"
   ) {
     tone = "err";
   } else if (
@@ -44,6 +49,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
 
   const label =
     {
+      ok: "норма",
       success: "успех",
       error: "ошибка",
       failed: "ошибка",
@@ -59,6 +65,11 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       unreachable: "недоступно",
       checking: "проверка",
       "checking…": "проверка",
+      indexed: "проиндексирован",
+      pending: "ожидание",
+      missing: "нет в индексе",
+      stale: "устарело",
+      unsupported: "не поддерживается",
       on: "вкл",
       off: "выкл",
       yes: "да",

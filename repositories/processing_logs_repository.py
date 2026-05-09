@@ -212,7 +212,7 @@ class ProcessingLogsRepository:
         offset: int = 0,
         since_hours: int | None = None,
     ) -> list[dict[str, Any]]:
-        lim = max(1, min(int(limit), 500))
+        lim = max(1, min(int(limit), 2000))
         off = max(0, int(offset))
         with conn.cursor(row_factory=dict_row) as cur:
             if since_hours is None:
@@ -237,6 +237,32 @@ class ProcessingLogsRepository:
                     """,
                     (h, lim, off),
                 )
+            return list(cur.fetchall())
+
+    def list_logs_for_document_filename(
+        self,
+        conn: Connection,
+        *,
+        filename: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Recent processing_logs rows mentioning a knowledge-base filename in details."""
+        fn = (filename or "").strip()
+        if not fn:
+            return []
+        lim = max(1, min(int(limit), 200))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT execution_id, stage, status, details, error_text, created_at
+                FROM processing_logs
+                WHERE LOWER(COALESCE(details->>'filename', '')) = LOWER(%s)
+                   OR LOWER(COALESCE(details->>'source_filename', '')) = LOWER(%s)
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (fn, fn, lim),
+            )
             return list(cur.fetchall())
 
     def list_recent_rag_events(

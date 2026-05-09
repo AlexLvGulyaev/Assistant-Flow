@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from admin_api.deps import get_admin_service, log_row_to_entry
 
@@ -36,7 +38,13 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
     docs_timeline = [
         e
         for e in logs_entries
-        if str(e.get("stage") or "") in ("admin_document_uploaded",)
+        if str(e.get("stage") or "")
+        in (
+            "admin_document_uploaded",
+            "admin_document_reindex_started",
+            "admin_document_reindex_done",
+            "admin_document_reindex_error",
+        )
     ][:120]
 
     timeline_by_file: dict[str, dict[str, Any]] = {}
@@ -91,10 +99,26 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
             }
         )
 
+    kb = svc.get_knowledge_base_status()
+    pg_sum = kb.postgres_chunks_sum
+    chroma_n = kb.collection_count
+    global_mismatch = (
+        kb.postgres_available
+        and pg_sum is not None
+        and pg_sum != chroma_n
+    )
+
     return {
         "count": len(items),
         "limit": min(limit, _DOCS_CAP),
         "items": items,
+        "embedding_model": getattr(svc.app_config, "openai_embedding_model", None),
+        "global_index_sync": {
+            "chroma_collection_chunks": chroma_n,
+            "postgres_chunks_sum_active_versions": pg_sum,
+            "postgres_available": kb.postgres_available,
+            "global_chunks_mismatch": global_mismatch,
+        },
         "observability": {
             "reindex_available": True,
             "last_reindex_event": reindex_events[0] if reindex_events else None,
@@ -104,10 +128,85 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
     }
 
 
+class ReindexRequest(BaseModel):
+    scope: str = Field(default="document", description="'all' or 'document'")
+    document_id: str | None = Field(default=None)
+
+
+@router.post("/documents/upload")
+async def api_documents_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    svc = get_admin_service()
+    raw = await file.read()
+    name = file.filename or "upload.txt"
+    try:
+        result = svc.upload_txt_and_index(name, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/documents/reindex")
+def api_documents_reindex(body: ReindexRequest) -> dict[str, Any]:
+    svc = get_admin_service()
+    scope = (body.scope or "document").strip().lower()
+    if scope == "all":
+        report = svc.run_reindex()
+        return {
+            "scope": "all",
+            "success": report.success,
+            "error": report.error_message,
+            "chunks_created": report.chunks_created,
+            "collection_count": report.collection_count,
+            "files_indexed_ok": report.files_indexed_ok,
+            "files_found": report.files_found,
+        }
+    if scope != "document":
+        raise HTTPException(status_code=400, detail="scope must be 'all' or 'document'")
+    did = (body.document_id or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="document_id required for scope=document")
+    try:
+        uid = uuid.UUID(did)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid document_id") from exc
+    return svc.reindex_document_file(uid)
+
+
+@router.get("/documents/{document_id}/detail")
+def api_document_detail(
+    document_id: str,
+    version_number: int | None = Query(default=None, ge=1),
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(document_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid document_id") from exc
+    svc = get_admin_service()
+    bundle = svc.get_document_detail_bundle(uid, version_number=version_number)
+    err = bundle.get("error")
+    if err == "not_found":
+        raise HTTPException(status_code=404, detail="document not found")
+    if err == "postgres_unavailable":
+        raise HTTPException(status_code=503, detail="PostgreSQL not configured")
+    if err == "load_failed":
+        raise HTTPException(
+            status_code=500,
+            detail=str(bundle.get("message") or "load_failed"),
+        )
+
+    raw_rows = bundle.pop("timeline_rows", [])
+    timeline = [log_row_to_entry(r) for r in raw_rows]
+    # chronological for lifecycle reading (oldest first)
+    timeline.sort(key=lambda e: str(e.get("created_at") or ""))
+    bundle["timeline"] = timeline
+    return bundle
+
+
 def _to_iso(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat()
     if isinstance(value, str):
         return value
     return None
-

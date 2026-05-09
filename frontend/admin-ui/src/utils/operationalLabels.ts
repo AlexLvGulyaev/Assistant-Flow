@@ -21,10 +21,13 @@ const EVENT_TYPE_RU: Record<string, string> = {
   processing_done: "Обработка завершена",
   processing_error: "Ошибка обработки",
   database_schema: "Служебное событие схемы БД",
-  admin_document_uploaded: "Загрузка документа (админка)",
-  admin_reindex_started: "Переиндексация запущена",
+  admin_document_uploaded: "Документ загружен",
+  admin_reindex_started: "Переиндексация (полная) запущена",
   admin_reindex_done: "Переиндексация завершена",
   admin_reindex_error: "Ошибка переиндексации",
+  admin_document_reindex_started: "Переиндексация документа запущена",
+  admin_document_reindex_done: "Переиндексация документа завершена",
+  admin_document_reindex_error: "Ошибка переиндексации документа",
   image_generation_started: "Генерация изображения запущена",
   image_text_enhancement_done: "Уточнение промпта (текст) завершено",
   image_prompt_refinement_done: "Подготовка image prompt завершена",
@@ -151,6 +154,24 @@ export function formatTimestampMsk(
   })
     .format(new Date(ms))
     .replace(",", "");
+}
+
+/** Compact calendar stamp for dense lists (e.g. document versions). DD.MM.YY, МСК. */
+export function formatShortDateMsk(
+  isoOrMs: string | number | null | undefined
+): string {
+  if (isoOrMs == null) return "—";
+  const ms =
+    typeof isoOrMs === "number" ? isoOrMs : new Date(isoOrMs).getTime();
+  if (!Number.isFinite(ms)) return "—";
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: MSK_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  })
+    .format(new Date(ms))
+    .replace(/\//g, ".");
 }
 
 /** Like `_logs_format_duration_ms` in Streamlit. */

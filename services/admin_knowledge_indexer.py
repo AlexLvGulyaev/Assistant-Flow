@@ -198,6 +198,40 @@ class AdminKnowledgeIndexer:
             outcomes=outcomes,
         )
 
+    def index_single_file(self, file_path: Path) -> FileIndexOutcome:
+        """
+        Index one file already under ``documents_dir`` without wiping Chroma.
+        Used for admin single-document reindex / post-upload indexing.
+        """
+        root = self._documents_dir.resolve()
+        try:
+            resolved = file_path.resolve()
+        except OSError:
+            return FileIndexOutcome(
+                path=file_path, chunks=0, error="cannot resolve file path"
+            )
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            return FileIndexOutcome(
+                path=file_path,
+                chunks=0,
+                error="file is outside configured documents directory",
+            )
+        if not resolved.is_file():
+            return FileIndexOutcome(path=resolved, chunks=0, error="not a file")
+
+        if not self._config.chroma_use_http:
+            self._chroma_dir.mkdir(parents=True, exist_ok=True)
+
+        embeddings = build_openai_embeddings(self._config)
+        store = ChromaRagStore(
+            self._config,
+            embeddings,
+            persist_directory=self._chroma_dir,
+        )
+        return self._index_one_file(file_path=resolved, store=store)
+
     def _index_one_file(
         self,
         *,
@@ -273,7 +307,11 @@ class AdminKnowledgeIndexer:
         chunks = self._attach_chroma_metadata(raw_chunks, doc_id, ver_id)
 
         try:
-            store.add_documents(chunks)
+            store.delete_vectors_for_document_before_reindex(
+                document_id=doc_id,
+                source_filename=source_filename,
+            )
+            chroma_ids = store.add_documents(chunks)
         except Exception as exc:
             if pg_enabled and doc_id and ver_id and job_id:
                 self._postgres_fail(job_id, doc_id, str(exc))
@@ -287,6 +325,24 @@ class AdminKnowledgeIndexer:
             )
 
         if pg_enabled and doc_id and ver_id and job_id:
+            try:
+                self._postgres_insert_chunk_rows(
+                    document_id=doc_id,
+                    version_id=ver_id,
+                    lc_chunks=chunks,
+                    chroma_ids=chroma_ids,
+                )
+            except Exception as exc:
+                err_text = f"postgres chunk metadata: {exc}"
+                self._postgres_fail(job_id, doc_id, err_text)
+                return FileIndexOutcome(
+                    path=file_path,
+                    chunks=len(chunks),
+                    document_id=doc_id,
+                    version_id=ver_id,
+                    job_id=job_id,
+                    error=err_text,
+                )
             try:
                 self._postgres_complete(
                     job_id=job_id,
@@ -322,6 +378,36 @@ class AdminKnowledgeIndexer:
             version_id=ver_id,
             job_id=job_id,
         )
+
+    def _postgres_insert_chunk_rows(
+        self,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+        lc_chunks: list[Document],
+        chroma_ids: list[str],
+    ) -> None:
+        """Persist per-chunk rows for admin UI / RAG diagnostics (vectors stay in Chroma)."""
+        if len(lc_chunks) != len(chroma_ids):
+            raise RuntimeError(
+                f"chroma id count mismatch: chunks={len(lc_chunks)} ids={len(chroma_ids)}"
+            )
+        collection = RAG_CHROMA_COLLECTION_NAME
+        with get_connection() as conn:
+            with conn.transaction():
+                for i, (doc, cid) in enumerate(zip(lc_chunks, chroma_ids)):
+                    text = doc.page_content or ""
+                    preview = text[:4000] if len(text) > 4000 else text
+                    self._doc_repo.insert_document_chunk(
+                        conn,
+                        document_id=document_id,
+                        document_version_id=version_id,
+                        chunk_index=i,
+                        chunk_text_preview=preview if preview else None,
+                        token_count=len(text) if text else None,
+                        chroma_collection=collection,
+                        chroma_id=cid,
+                        metadata={},
+                    )
 
     @staticmethod
     def _attach_chroma_metadata(

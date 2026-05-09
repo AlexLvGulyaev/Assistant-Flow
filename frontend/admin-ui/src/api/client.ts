@@ -77,6 +77,59 @@ export async function fetchDocuments(limit = 200): Promise<DocumentsResponse> {
   return parseJson<DocumentsResponse>(res);
 }
 
+export async function fetchDocumentDetail(
+  documentId: string,
+  versionNumber?: number | null
+): Promise<DocumentDetailResponse> {
+  const q = new URLSearchParams();
+  if (versionNumber != null && Number.isFinite(versionNumber)) {
+    q.set("version_number", String(versionNumber));
+  }
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/documents/${encodeURIComponent(documentId)}/detail${suffix}`
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(
+      `Document detail: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`
+    );
+  }
+  return parseJson<DocumentDetailResponse>(res);
+}
+
+export async function uploadDocument(file: File): Promise<UploadDocumentResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${getApiBaseUrl()}/api/documents/upload`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Upload: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
+  }
+  return parseJson<UploadDocumentResponse>(res);
+}
+
+export async function postDocumentsReindex(
+  body: ReindexRequestBody
+): Promise<ReindexResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/documents/reindex`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scope: body.scope,
+      document_id: body.document_id ?? null,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Reindex: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
+  }
+  return parseJson<ReindexResponse>(res);
+}
+
 export function getAssetPreviewUrl(assetRef: string): string {
   const q = new URLSearchParams({ asset_ref: assetRef });
   return `${getApiBaseUrl()}/api/assets/preview?${q.toString()}`;
@@ -166,6 +219,7 @@ export interface LogItem {
   route?: string | null;
   mode?: string | null;
   details?: Record<string, unknown> | string | null;
+  error_text?: string | null;
 }
 
 export interface LogsRecentResponse {
@@ -198,9 +252,88 @@ export interface DocumentsObservability {
   timeline_events?: LogItem[];
 }
 
+export interface DocumentsGlobalIndexSync {
+  chroma_collection_chunks?: number;
+  postgres_chunks_sum_active_versions?: number | null;
+  postgres_available?: boolean;
+  global_chunks_mismatch?: boolean;
+}
+
 export interface DocumentsResponse {
   limit?: number;
   count?: number;
   items?: DocumentItem[];
+  embedding_model?: string | null;
+  global_index_sync?: DocumentsGlobalIndexSync;
   observability?: DocumentsObservability;
+}
+
+export interface DocumentDetailVersion {
+  version_id?: string;
+  version_number?: number;
+  is_active?: boolean;
+  chunk_count?: number;
+  file_hash?: string | null;
+  indexed_at?: string | null;
+}
+
+export interface DocumentDetailChunk {
+  chunk_index?: number;
+  chunk_text_preview?: string | null;
+  token_count?: number | null;
+  chroma_collection?: string | null;
+  chroma_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+}
+
+export interface DocumentChunkCountByVersion {
+  version_id?: string;
+  row_count?: number;
+}
+
+export interface DocumentDetailResponse {
+  document?: Record<string, unknown>;
+  versions?: DocumentDetailVersion[];
+  selected_version?: DocumentDetailVersion | null;
+  active_version?: DocumentDetailVersion | null;
+  selected_version_id?: string | null;
+  chunks?: DocumentDetailChunk[];
+  chunks_in_db?: number;
+  chunk_count_declared?: number;
+  chunks_sync_ok?: boolean;
+  chunks_sync_diagnostic?: string | null;
+  chunk_counts_by_version?: DocumentChunkCountByVersion[];
+  text_preview?: string | null;
+  preview_available?: boolean;
+  embedding_model?: string | null;
+  file_size_bytes?: number | null;
+  timeline?: LogItem[];
+  last_error_message?: string | null;
+}
+
+export interface UploadDocumentResponse {
+  filename?: string;
+  path?: string;
+  success?: boolean;
+  error?: string | null;
+  chunks?: number;
+  document_id?: string | null;
+}
+
+export interface ReindexRequestBody {
+  scope: "all" | "document";
+  document_id?: string | null;
+}
+
+export interface ReindexResponse {
+  scope?: string;
+  success?: boolean;
+  error?: string | null;
+  chunks_created?: number;
+  collection_count?: number;
+  files_indexed_ok?: number;
+  files_found?: number;
+  chunks?: number;
+  document_id?: string | null;
 }

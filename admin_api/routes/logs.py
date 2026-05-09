@@ -6,7 +6,7 @@ from admin_api.deps import get_admin_service, log_row_to_entry
 
 router = APIRouter(prefix="/api", tags=["logs"])
 
-_LOG_CAP = 200
+_LOG_CAP = 2000
 
 
 @router.get("/logs/recent")

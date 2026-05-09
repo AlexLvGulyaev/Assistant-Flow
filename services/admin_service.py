@@ -26,6 +26,21 @@ from utils.config import AppConfig, load_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _read_kb_text_preview(path: Path, max_chars: int = 12000) -> str | None:
+    if not path.is_file():
+        return None
+    if path.suffix.lower() not in (".txt", ".md"):
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if len(raw) <= max_chars:
+        return raw
+    return raw[:max_chars] + "\n…"
+
+
 SUMMARY_LOG_SAMPLE_CAP = 500
 
 SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
@@ -773,6 +788,287 @@ class AdminService:
             return rows
         except Exception:
             return []
+
+    def upload_txt_and_index(self, filename: str, data: bytes) -> dict[str, Any]:
+        """Save ``.txt`` via asset pipeline, copy to RAG dir, then index one file."""
+        dest = self.save_uploaded_txt(filename, data)
+        indexer = AdminKnowledgeIndexer(
+            self._config,
+            documents_dir=self._documents_dir,
+            chroma_dir=self._chroma_dir,
+            use_postgres=True,
+        )
+        outcome = indexer.index_single_file(dest)
+        doc_id = str(outcome.document_id) if outcome.document_id else None
+        return {
+            "filename": dest.name,
+            "path": str(dest),
+            "success": outcome.error is None,
+            "error": outcome.error,
+            "chunks": outcome.chunks,
+            "document_id": doc_id,
+        }
+
+    def reindex_document_file(self, document_id: uuid.UUID) -> dict[str, Any]:
+        """Re-embed one on-disk document (no global Chroma reset)."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return {"success": False, "error": "DATABASE_URL not configured"}
+        row: dict[str, Any] | None = None
+        try:
+            with get_connection() as conn:
+                row = self._doc_repo.get_document(conn, document_id)
+                conn.commit()
+        except Exception as exc:
+            return {"success": False, "error": f"postgres: {exc}"}
+        if not row:
+            return {"success": False, "error": "document not found"}
+        storage = str(row.get("storage_path") or "").strip()
+        source_fn = str(row.get("source_filename") or "").strip()
+        path = Path(storage) if storage else Path()
+        if not path.is_file() and source_fn:
+            path = self._documents_dir / source_fn
+        if not path.is_file():
+            return {"success": False, "error": "source file not found on disk"}
+
+        execution_id = str(uuid.uuid4())
+        self._lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=None,
+            stage="admin_document_reindex_started",
+            status="started",
+            details={
+                "document_id": str(document_id),
+                "filename": source_fn or path.name,
+                "path": str(path),
+            },
+        )
+        indexer = AdminKnowledgeIndexer(
+            self._config,
+            documents_dir=self._documents_dir,
+            chroma_dir=self._chroma_dir,
+            use_postgres=True,
+        )
+        outcome = indexer.index_single_file(path)
+        if outcome.error:
+            self._lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=None,
+                stage="admin_document_reindex_error",
+                status="error",
+                details={
+                    "document_id": str(document_id),
+                    "filename": source_fn or path.name,
+                },
+                error_text=str(outcome.error)[:8000],
+            )
+            return {
+                "success": False,
+                "error": outcome.error,
+                "chunks": outcome.chunks,
+                "document_id": str(document_id),
+            }
+        self._lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=None,
+            stage="admin_document_reindex_done",
+            status="success",
+            details={
+                "document_id": str(document_id),
+                "filename": source_fn or path.name,
+                "chunks": outcome.chunks,
+            },
+        )
+        return {
+            "success": True,
+            "error": None,
+            "chunks": outcome.chunks,
+            "document_id": str(document_id),
+        }
+
+    def get_document_detail_bundle(
+        self,
+        document_id: uuid.UUID,
+        *,
+        version_number: int | None = None,
+    ) -> dict[str, Any]:
+        """Document row, versions, chunk rows, FS preview, and raw timeline rows."""
+        if not (os.getenv("DATABASE_URL") or "").strip():
+            return {"error": "postgres_unavailable"}
+        try:
+            with get_connection() as conn:
+                doc = self._doc_repo.get_document(conn, document_id)
+                if not doc:
+                    return {"error": "not_found"}
+                versions = self._doc_repo.list_document_versions(conn, document_id)
+                chunk_counts_by_version = (
+                    self._doc_repo.count_chunks_by_version_for_document(
+                        conn, document_id
+                    )
+                )
+                selected: dict[str, Any] | None = None
+                if version_number is not None:
+                    for v in versions:
+                        if int(v.get("version_number") or 0) == int(version_number):
+                            selected = v
+                            break
+                if selected is None:
+                    for v in versions:
+                        if v.get("is_active"):
+                            selected = v
+                            break
+                if selected is None and versions:
+                    selected = versions[-1]
+                chunks_raw: list[dict[str, Any]] = []
+                chunks_in_db = 0
+                version_uuid: uuid.UUID | None = None
+                if selected:
+                    vid = selected.get("version_id")
+                    if vid:
+                        version_uuid = uuid.UUID(str(vid))
+                        chunks_in_db = self._doc_repo.count_chunks_for_version(
+                            conn, version_uuid
+                        )
+                        chunks_raw = self._doc_repo.list_chunks_for_version(
+                            conn, version_uuid, limit=200
+                        )
+                timeline_rows = self._proc_repo.list_logs_for_document_filename(
+                    conn,
+                    filename=str(doc.get("source_filename") or ""),
+                    limit=120,
+                )
+                conn.commit()
+        except Exception as exc:
+            return {"error": "load_failed", "message": str(exc)}
+
+        path = Path(str(doc.get("storage_path") or ""))
+        if not path.is_file():
+            alt = self._documents_dir / str(doc.get("source_filename") or "")
+            if alt.is_file():
+                path = alt
+        file_size_bytes: int | None = None
+        try:
+            if path.is_file():
+                file_size_bytes = int(path.stat().st_size)
+        except OSError:
+            file_size_bytes = None
+        text_preview = _read_kb_text_preview(path, 12000)
+        declared = int((selected or {}).get("chunk_count") or 0)
+        doc_id_str = str(doc.get("document_id") or "")
+        chunk_sync_ok = True
+        if selected and version_uuid:
+            chunk_sync_ok = chunks_in_db == declared
+
+        sel_vid_str = str(version_uuid) if version_uuid else None
+        chunks_sync_diagnostic: str | None = None
+        if selected and version_uuid:
+            if chunks_in_db == 0 and declared > 0:
+                parts = [
+                    f"В document_versions заявлено {declared} чанков, но строк в "
+                    f"document_chunks для version_id={sel_vid_str} не найдено "
+                    f"(document_id={doc_id_str})."
+                ]
+                other_parts: list[str] = []
+                for row in chunk_counts_by_version:
+                    vid = str(row.get("version_id") or "")
+                    if vid and vid != sel_vid_str:
+                        other_parts.append(
+                            f"{vid}: {int(row.get('row_count') or 0)}"
+                        )
+                if other_parts:
+                    parts.append(
+                        " Обнаружены строки у других версий этого документа: "
+                        + ", ".join(other_parts)
+                        + "."
+                    )
+                else:
+                    parts.append(
+                        " Действие: выполните «Переиндексировать документ» "
+                        "(метаданные чанков записываются в document_chunks при индексации)."
+                    )
+                chunks_sync_diagnostic = "".join(parts)
+            elif chunks_in_db > 0 and declared != chunks_in_db:
+                chunks_sync_diagnostic = (
+                    f"Заявлено в версии: {declared}; найдено в document_chunks: "
+                    f"{chunks_in_db} (version_id={sel_vid_str}). "
+                    "Рекомендуется переиндексировать документ."
+                )
+
+        active_row = next((v for v in versions if v.get("is_active")), None)
+        active_out: dict[str, Any] | None = None
+        if active_row:
+            active_out = dict(active_row)
+            ix = active_out.get("indexed_at")
+            if isinstance(ix, datetime):
+                active_out["indexed_at"] = ix.astimezone(timezone.utc).isoformat()
+
+        last_err: str | None = None
+        for ev in timeline_rows:
+            st = str(ev.get("status") or "")
+            et = ev.get("error_text")
+            if st == "error" or et:
+                t = str(et).strip() if et else None
+                if t:
+                    last_err = t
+                elif st == "error":
+                    last_err = "error (no message)"
+
+        doc_out = dict(doc)
+        for key in ("created_at", "updated_at"):
+            v = doc_out.get(key)
+            if isinstance(v, datetime):
+                doc_out[key] = v.astimezone(timezone.utc).isoformat()
+
+        versions_out = []
+        for v in versions:
+            vo = dict(v)
+            ix = vo.get("indexed_at")
+            if isinstance(ix, datetime):
+                vo["indexed_at"] = ix.astimezone(timezone.utc).isoformat()
+            versions_out.append(vo)
+        sel_out = dict(selected) if selected else None
+        if sel_out:
+            ix = sel_out.get("indexed_at")
+            if isinstance(ix, datetime):
+                sel_out["indexed_at"] = ix.astimezone(timezone.utc).isoformat()
+
+        chunks_out: list[dict[str, Any]] = []
+        for c in chunks_raw:
+            co = dict(c)
+            ca = co.get("created_at")
+            if isinstance(ca, datetime):
+                co["created_at"] = ca.astimezone(timezone.utc).isoformat()
+            chunks_out.append(co)
+
+        cfg = self._config
+        embed_model = getattr(cfg, "openai_embedding_model", None) or "—"
+
+        cc_norm = [
+            {
+                "version_id": str(r.get("version_id") or ""),
+                "row_count": int(r.get("row_count") or 0),
+            }
+            for r in chunk_counts_by_version
+        ]
+
+        return {
+            "document": doc_out,
+            "versions": versions_out,
+            "selected_version": sel_out,
+            "active_version": active_out,
+            "selected_version_id": sel_vid_str,
+            "chunks": chunks_out,
+            "chunks_in_db": chunks_in_db,
+            "chunk_count_declared": declared,
+            "chunks_sync_ok": chunk_sync_ok,
+            "chunks_sync_diagnostic": chunks_sync_diagnostic,
+            "chunk_counts_by_version": cc_norm,
+            "text_preview": text_preview,
+            "preview_available": text_preview is not None,
+            "embedding_model": embed_model,
+            "file_size_bytes": file_size_bytes,
+            "timeline_rows": timeline_rows,
+            "last_error_message": last_err,
+        }
 
     def get_overview_insights(self) -> OverviewInsights:
         """Counts and last event from processing_logs for dashboard (24h window)."""

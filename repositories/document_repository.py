@@ -8,6 +8,7 @@ from typing import Any
 
 from psycopg import Connection
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 
 class DocumentRepository:
@@ -238,6 +239,7 @@ class DocumentRepository:
             cur.execute(
                 """
                 SELECT
+                    id AS version_id,
                     version_number,
                     is_active,
                     chunk_count,
@@ -248,6 +250,131 @@ class DocumentRepository:
                 ORDER BY version_number ASC
                 """,
                 (document_id,),
+            )
+            return list(cur.fetchall())
+
+    def get_document(self, conn: Connection, document_id: uuid.UUID) -> dict[str, Any] | None:
+        """Single documents row."""
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    id AS document_id,
+                    title,
+                    source_filename,
+                    storage_path,
+                    content_type,
+                    description,
+                    status,
+                    uploaded_by,
+                    created_at,
+                    updated_at
+                FROM documents
+                WHERE id = %s
+                """,
+                (document_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def count_chunks_by_version_for_document(
+        self, conn: Connection, document_id: uuid.UUID
+    ) -> list[dict[str, Any]]:
+        """Chunk row counts grouped by document_version_id (diagnostics)."""
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT document_version_id::text AS version_id, COUNT(*)::bigint AS row_count
+                FROM document_chunks
+                WHERE document_id = %s
+                GROUP BY document_version_id
+                ORDER BY document_version_id
+                """,
+                (document_id,),
+            )
+            return list(cur.fetchall())
+
+    def insert_document_chunk(
+        self,
+        conn: Connection,
+        *,
+        document_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        chunk_index: int,
+        chunk_text_preview: str | None,
+        token_count: int | None,
+        chroma_collection: str,
+        chroma_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        meta = metadata if metadata is not None else {}
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO document_chunks (
+                    document_version_id,
+                    document_id,
+                    chunk_index,
+                    chunk_text_preview,
+                    token_count,
+                    chroma_collection,
+                    chroma_id,
+                    metadata
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    document_version_id,
+                    document_id,
+                    chunk_index,
+                    chunk_text_preview,
+                    token_count,
+                    chroma_collection,
+                    chroma_id,
+                    Json(meta),
+                ),
+            )
+
+    def count_chunks_for_version(
+        self, conn: Connection, document_version_id: uuid.UUID
+    ) -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint
+                FROM document_chunks
+                WHERE document_version_id = %s
+                """,
+                (document_version_id,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def list_chunks_for_version(
+        self,
+        conn: Connection,
+        document_version_id: uuid.UUID,
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        lim = max(1, min(int(limit), 500))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    chunk_index,
+                    chunk_text_preview,
+                    token_count,
+                    chroma_collection,
+                    chroma_id,
+                    metadata,
+                    created_at
+                FROM document_chunks
+                WHERE document_version_id = %s
+                ORDER BY chunk_index ASC
+                LIMIT %s
+                """,
+                (document_version_id, lim),
             )
             return list(cur.fetchall())
 
