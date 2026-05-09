@@ -3,9 +3,21 @@ import { fetchRecentLogs, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  formatDurationMs,
+  formatTimestampMsk,
+  routeLabelRu,
+  sessionAvgStepLatencyMs,
+  sessionMaxStepLatencyMs,
+  sessionWallDurationMs,
+  stageToActionRu,
+  statusLabelRu,
+} from "../utils/operationalLabels";
 
-const INITIAL_LIMIT = 120;
-const LIMIT_STEP = 120;
+const BASE_LOG_LIMIT = 120;
+const EXTENDED_LOG_LIMIT = 200; // backend /api/logs/recent Query le=200
+const INITIAL_VISIBLE_SESSIONS = 50;
+const VISIBLE_STEP = 50;
 const WINDOW_OPTIONS: Array<{ label: string; ms: number }> = [
   { label: "24h", ms: 24 * 60 * 60 * 1000 },
   { label: "48h", ms: 48 * 60 * 60 * 1000 },
@@ -21,20 +33,31 @@ interface SessionView {
   startedAt: number;
   lastAt: number;
   route: RouteFilter;
+  routeKey: string;
   status: string;
   preview: string;
   providerModel: string | null;
-  latencyMs: number | null;
+  wallDurationMs: number | null;
+  maxStageLatencyMs: number | null;
+  avgStageLatencyMs: number | null;
   stageCount: number;
+  pipelineSummary: string;
   userInput: string | null;
   transcript: string | null;
   assistantOutput: string | null;
   generatedPrompt: string | null;
+  imageAnswer: string | null;
+  ragAnswer: string | null;
+  ragFallback: string | null;
 }
 
 export function LogsPage() {
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [items, setItems] = useState<LogItem[]>([]);
+  const [visibleSessions, setVisibleSessions] = useState(INITIAL_VISIBLE_SESSIONS);
+  const [rowsOffset, setRowsOffset] = useState(0);
+  const [hasMoreRows, setHasMoreRows] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState<RouteFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -42,15 +65,27 @@ export function LogsPage() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const fetchLimit = windowLabel === "24h" ? BASE_LOG_LIMIT : EXTENDED_LOG_LIMIT;
+  const sinceHours = windowLabelToHours(windowLabel);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
+      setPageError(null);
+      setRowsOffset(0);
+      setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
       try {
-        const res = await fetchRecentLogs(limit);
-        if (!cancelled) setItems(res.items ?? []);
+        const res = await fetchRecentLogs({
+          limit: fetchLimit,
+          offset: 0,
+          sinceHours,
+        });
+        if (cancelled) return;
+        const batch = res.items ?? [];
+        setItems(batch);
+        setHasMoreRows(batch.length >= fetchLimit);
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : "Не удалось загрузить логи");
@@ -61,7 +96,7 @@ export function LogsPage() {
     return () => {
       cancelled = true;
     };
-  }, [limit]);
+  }, [fetchLimit, sinceHours]);
 
   const sessions = useMemo(() => buildSessions(items), [items]);
   const filtered = useMemo(
@@ -75,25 +110,62 @@ export function LogsPage() {
       ),
     [routeFilter, search, sessions, statusFilter, windowLabel]
   );
+  const visible = useMemo(
+    () => filtered.slice(0, visibleSessions),
+    [filtered, visibleSessions]
+  );
+  useEffect(() => {
+    setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
+  }, [routeFilter, statusFilter, search]);
 
   useEffect(() => {
-    if (!filtered.length) {
+    if (!visible.length) {
       setSelectedId(null);
       return;
     }
-    if (!selectedId || !filtered.some((s) => s.id === selectedId)) {
-      setSelectedId(filtered[0].id);
+    if (!selectedId || !visible.some((s) => s.id === selectedId)) {
+      setSelectedId(visible[0].id);
     }
-  }, [filtered, selectedId]);
+  }, [visible, selectedId]);
 
-  const selected = filtered.find((s) => s.id === selectedId) ?? null;
-  const canLoadMore = items.length >= limit;
+  const selected = visible.find((s) => s.id === selectedId) ?? null;
+
+  async function loadMoreRows() {
+    if (loadingMore || !hasMoreRows) return;
+    setLoadingMore(true);
+    setPageError(null);
+    const nextOffset = rowsOffset + fetchLimit;
+    try {
+      const res = await fetchRecentLogs({
+        limit: fetchLimit,
+        offset: nextOffset,
+        sinceHours,
+      });
+      const batch = res.items ?? [];
+      setRowsOffset(nextOffset);
+      setHasMoreRows(batch.length >= fetchLimit);
+      setItems((prev) => mergeRows(prev, batch));
+      setVisibleSessions((v) => v + VISIBLE_STEP);
+    } catch (e) {
+      setPageError(
+        e instanceof Error ? e.message : "Не удалось догрузить следующую страницу"
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function resetRows() {
+    setRowsOffset(0);
+    setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
+    setHasMoreRows(items.length >= fetchLimit);
+  }
 
   return (
     <div className="page logs-page">
       <h1 className="page__title">Логи</h1>
-      <p className="page__lead muted">
-        Operational trace console · <code>/api/logs/recent</code>
+      <p className="page__lead logs-lead">
+        ЖУРНАЛ EXECUTION-СЕССИЙ · <code>/api/logs/recent</code> · время: МСК
       </p>
 
       {loading ? (
@@ -104,7 +176,7 @@ export function LogsPage() {
         </div>
       ) : items.length === 0 ? (
         <section className="card">
-          <EmptyState message="Нет log entries returned for this request." />
+          <EmptyState message="Нет записей журнала для этого запроса." />
         </section>
       ) : (
         <div className="logs-console">
@@ -115,6 +187,7 @@ export function LogsPage() {
                   className="logs-select"
                   value={windowLabel}
                   onChange={(e) => setWindowLabel(e.target.value)}
+                  aria-label="Окно времени"
                 >
                   {WINDOW_OPTIONS.map((w) => (
                     <option key={w.label} value={w.label}>
@@ -126,164 +199,236 @@ export function LogsPage() {
                   className="logs-select"
                   value={routeFilter}
                   onChange={(e) => setRouteFilter(e.target.value as RouteFilter)}
+                  aria-label="Фильтр маршрута"
                 >
-                  <option value="all">route: all</option>
+                  <option value="all">все маршруты</option>
                   <option value="text">text</option>
                   <option value="rag">rag</option>
                   <option value="image">image</option>
                   <option value="audio">audio</option>
-                  <option value="other">other</option>
+                  <option value="other">прочее</option>
                 </select>
                 <select
                   className="logs-select"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                  aria-label="Фильтр статуса"
                 >
-                  <option value="all">статус: все</option>
+                  <option value="all">все статусы</option>
                   <option value="success">success</option>
                   <option value="error">error</option>
-                  <option value="other">other</option>
+                  <option value="other">прочие</option>
                 </select>
               </div>
               <input
                 className="logs-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="поиск execution_id / stage / text"
+                placeholder="Поиск: execution_id, этап, текст…"
               />
-              <div className="logs-quick-row">
-                {(["audio", "image", "rag"] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    className={`logs-chip ${routeFilter === r ? "logs-chip--active" : ""}`}
-                    onClick={() =>
-                      setRouteFilter((cur) => (cur === r ? "all" : r))
-                    }
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
               <div className="logs-filter-meta muted">
-                sessions {filtered.length} / исходных строк {items.length}
+                Сессий: {filtered.length} · показано: {Math.min(visible.length, filtered.length)} · строк журнала:{" "}
+                {items.length}
               </div>
+              <div className="logs-page-controls">
+                <button
+                  type="button"
+                  className="logs-page-btn"
+                  onClick={() =>
+                    setVisibleSessions((v) =>
+                      Math.max(INITIAL_VISIBLE_SESSIONS, v - VISIBLE_STEP)
+                    )
+                  }
+                  disabled={visibleSessions <= INITIAL_VISIBLE_SESSIONS}
+                >
+                  ← Назад
+                </button>
+                <button
+                  type="button"
+                  className="logs-page-btn"
+                  onClick={loadMoreRows}
+                  disabled={!hasMoreRows || loadingMore}
+                >
+                  {loadingMore ? "Загрузка…" : "Загрузить ещё"}
+                </button>
+                <button
+                  type="button"
+                  className="logs-page-btn logs-page-btn--muted"
+                  onClick={resetRows}
+                  disabled={rowsOffset === 0}
+                >
+                  Сброс
+                </button>
+              </div>
+              {pageError ? <div className="panel panel--error logs-page-error">{pageError}</div> : null}
             </div>
 
             <div className="logs-list">
               {filtered.length === 0 ? (
-                <div className="panel panel--muted">Нет sessions match filters.</div>
+                <div className="panel panel--muted">Нет сессий по фильтрам.</div>
               ) : (
-                filtered.map((s) => (
+                visible.map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     className={`logs-item ${selectedId === s.id ? "logs-item--selected" : ""}`}
                     onClick={() => setSelectedId(s.id)}
                   >
-                    <div className="logs-item__row">
-                      <span className="mono">{fmtTs(s.lastAt)}</span>
-                      <span className="mini-badge">{s.route}</span>
-                      <StatusBadge status={s.status} />
+                    <div className="logs-item__row logs-item__row--tight">
+                      <span className="mono logs-item__ts">
+                        {formatTimestampMsk(s.lastAt)}
+                      </span>
+                      <span className="logs-item__route-status">
+                        {routeLabelRu(s.routeKey).toUpperCase()} ·{" "}
+                        {statusLabelRu(s.status).toUpperCase()}
+                      </span>
                     </div>
                     <div className="logs-item__preview">{s.preview || "—"}</div>
                     <div className="logs-item__row logs-item__meta muted">
-                      <span className="mono">{shortId(s.id)}</span>
-                      <span>stages {s.stageCount}</span>
-                      <span>{s.latencyMs != null ? `${s.latencyMs} ms` : "— ms"}</span>
-                      <span className="mono truncate">{s.providerModel ?? "—/—"}</span>
+                      <span className="mono" title={s.id}>
+                        {shortId(s.id)}
+                      </span>
+                      <span>этапов: {s.stageCount}</span>
+                      <span title="Общая длительность (старт → конец)">
+                        {formatDurationMs(s.wallDurationMs)}
+                      </span>
+                      <span title="Макс. длительность этапа из details">
+                        макс. этап: {formatDurationMs(s.maxStageLatencyMs)}
+                      </span>
+                      <span className="mono truncate" title={s.providerModel ?? ""}>
+                        {s.providerModel ?? "н/д"}
+                      </span>
                     </div>
                   </button>
                 ))
               )}
             </div>
 
-            {canLoadMore ? (
-              <div className="logs-loadmore-wrap">
-                <button
-                  type="button"
-                  className="admin-shell__refresh"
-                  onClick={() => setLimit((v) => v + LIMIT_STEP)}
-                >
-                  Загрузить ещё (+{LIMIT_STEP})
-                </button>
-              </div>
-            ) : null}
           </section>
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState message="Выберите a session to inspect execution trace." />
+              <EmptyState message="Выберите сессию для трассировки execution." />
             ) : (
               <div className="logs-detail">
                 <div className="logs-detail__head">
-                  <h2 className="card__title">Сводка сессии</h2>
+                  <div>
+                    <h2 className="card__title logs-detail__title">
+                      Трассировка execution-сессии
+                    </h2>
+                    <p className="logs-detail__sub muted">Время: МСК</p>
+                  </div>
                   <StatusBadge status={selected.status} />
                 </div>
-                <dl className="kv">
-                  <dt>execution_id</dt>
-                  <dd className="mono break-all">{selected.id}</dd>
-                  <dt>route</dt>
-                  <dd>
-                    <span className="mini-badge">{selected.route}</span>
-                  </dd>
-                  <dt>started_at</dt>
-                  <dd className="mono">{fmtTs(selected.startedAt)}</dd>
-                  <dt>latency</dt>
-                  <dd>{selected.latencyMs != null ? `${selected.latencyMs} ms` : "—"}</dd>
-                  <dt>provider/model</dt>
-                  <dd className="mono">{selected.providerModel ?? "—"}</dd>
-                </dl>
 
-                <div className="logs-detail-grid page__mt">
+                <div className="logs-detail__route-line">
+                  {routeLabelRu(selected.routeKey).toUpperCase()} ·{" "}
+                  {statusLabelRu(selected.status).toUpperCase()}
+                </div>
+
+                <div className="logs-summary-grid">
+                  <div className="logs-summary-col">
+                    <dl className="kv logs-detail-kv">
+                      <dt>execution_id</dt>
+                      <dd className="mono break-all">{selected.id}</dd>
+                      <dt>route</dt>
+                      <dd className="mono">{selected.routeKey}</dd>
+                      <dt>Статус</dt>
+                      <dd>
+                        <StatusBadge status={selected.status} />
+                      </dd>
+                      <dt>provider / model</dt>
+                      <dd className="mono">{selected.providerModel ?? "н/д"}</dd>
+                      <dt>Событий в трассе</dt>
+                      <dd>{selected.stageCount}</dd>
+                    </dl>
+                  </div>
+                  <div className="logs-summary-col">
+                    <dl className="kv logs-detail-kv">
+                      <dt>Начало</dt>
+                      <dd className="mono">{formatTimestampMsk(selected.startedAt)}</dd>
+                      <dt>Последняя активность</dt>
+                      <dd className="mono">{formatTimestampMsk(selected.lastAt)}</dd>
+                      <dt>Общая длительность</dt>
+                      <dd>{formatDurationMs(selected.wallDurationMs)}</dd>
+                      <dt>Макс. длительность этапа</dt>
+                      <dd>{formatDurationMs(selected.maxStageLatencyMs)}</dd>
+                      <dt>Средняя длительность этапа</dt>
+                      <dd>{formatDurationMs(selected.avgStageLatencyMs)}</dd>
+                    </dl>
+                  </div>
+                </div>
+
+                <div className="logs-pipeline">
+                  <div className="logs-pipeline__label muted">Цепочка этапов</div>
+                  <div className="logs-pipeline__flow" title={selected.pipelineSummary}>
+                    {selected.pipelineSummary || "—"}
+                  </div>
+                </div>
+
+                <div className="logs-detail-grid page__mt logs-detail-grid--dense">
                   <div className="logs-detail-block">
-                    <h3 className="card__title">User input</h3>
+                    <h3 className="logs-detail-block__title">
+                      ЧТО СПРОСИЛ ПОЛЬЗОВАТЕЛЬ
+                    </h3>
                     <pre className="logs-pre mono">{selected.userInput ?? "—"}</pre>
-                    <details className="page__mt-sm">
-                      <summary className="log-details__summary mono">
-                        transcript preview
+                    <details className="logs-details-inline">
+                      <summary className="log-details__summary">
+                        {detailLabels(selected.routeKey).left}
                       </summary>
                       <pre className="log-details__json mono">
-                        {selected.transcript ?? "—"}
+                        {detailValue(selected, "left")}
                       </pre>
                     </details>
                   </div>
                   <div className="logs-detail-block">
-                    <h3 className="card__title">Assistant output</h3>
+                    <h3 className="logs-detail-block__title">
+                      ЧТО ОТВЕТИЛА СИСТЕМА
+                    </h3>
                     <pre className="logs-pre mono">
-                      {selected.assistantOutput ?? "—"}
+                      {detailValue(selected, "right")}
                     </pre>
-                    <details className="page__mt-sm">
-                      <summary className="log-details__summary mono">
-                        generated image prompt
+                    <details className="logs-details-inline">
+                      <summary className="log-details__summary">
+                        {detailLabels(selected.routeKey).right}
                       </summary>
                       <pre className="log-details__json mono">
-                        {selected.generatedPrompt ?? "—"}
+                        {detailValue(selected, "right")}
                       </pre>
                     </details>
                   </div>
                 </div>
 
-                <h3 className="card__title page__mt">Timeline</h3>
+                <h3 className="logs-timeline-heading">Таймлайн pipeline</h3>
                 <div className="logs-timeline">
                   {selected.rows.map((row, i) => {
                     const prev = i > 0 ? toTs(selected.rows[i - 1].created_at) : null;
                     const cur = toTs(row.created_at);
                     const delta =
                       prev != null && cur != null ? Math.max(0, cur - prev) : null;
+                    const stageRaw = String(row.stage ?? "").trim();
+                    const label = stageToActionRu(row.stage, row.details);
                     return (
-                      <div key={`${row.stage ?? "unknown"}-${i}`} className="logs-stage">
+                      <div
+                        key={`${stageRaw}-${i}`}
+                        className="logs-stage logs-stage--compact"
+                        title={stageRaw ? `stage: ${stageRaw}` : undefined}
+                      >
                         <div className="logs-stage__top">
-                          <span className="mono">{fmtTime(row.created_at)}</span>
-                          <span className="mini-badge">{row.stage ?? "—"}</span>
+                          <span className="mono logs-stage__time">
+                            {formatTimestampMsk(row.created_at)}
+                          </span>
+                          <span className="logs-stage__label">{label}</span>
                           <StatusBadge status={row.status ?? "—"} />
                           {delta != null ? (
-                            <span className="muted mono">+{delta} ms</span>
+                            <span className="muted mono logs-stage__delta">
+                              +{delta} мс
+                            </span>
                           ) : null}
                         </div>
-                        <details>
-                          <summary className="log-details__summary mono">
-                            {previewСводка(row.details)}
+                        <details className="logs-stage__details">
+                          <summary className="log-details__summary">
+                            {previewSummary(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatDetailsJson(row.details)}
@@ -294,11 +439,11 @@ export function LogsPage() {
                   })}
                 </div>
 
-                <details className="page__mt">
-                  <summary className="log-details__summary mono">
-                    raw JSON сессии ({selected.rows.length} rows)
+                <details className="logs-raw-session page__mt">
+                  <summary className="logs-raw-session__summary">
+                    Технический снимок сессии (JSON) · {selected.rows.length} строк
                   </summary>
-                  <pre className="log-details__json mono">
+                  <pre className="log-details__json mono logs-raw-session__body">
                     {JSON.stringify(selected.rows, null, 2)}
                   </pre>
                 </details>
@@ -311,19 +456,18 @@ export function LogsPage() {
   );
 }
 
-function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toISOString().replace("T", " ").slice(0, 19) + "Z";
-  } catch {
-    return iso.slice(0, 19);
-  }
-}
-
 function shortId(id: string | null | undefined): string {
   if (!id) return "—";
   return id.length > 12 ? id.slice(0, 8) + "…" : id;
+}
+
+function pickRouteKey(rows: LogItem[]): string {
+  const f = pickRoute(rows);
+  if (f === "image") return "image_generation";
+  if (f === "audio") return "audio";
+  if (f === "rag") return "rag";
+  if (f === "text") return "text";
+  return "unknown";
 }
 
 function buildSessions(rows: LogItem[]): SessionView[] {
@@ -337,16 +481,19 @@ function buildSessions(rows: LogItem[]): SessionView[] {
   }
   const out: SessionView[] = [];
   for (const [id, chunk] of grouped) {
-    const ordered = [...chunk].sort((a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0));
+    const ordered = [...chunk].sort(
+      (a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0)
+    );
     const latest = ordered[ordered.length - 1];
     const first = ordered[0];
     const detailsPool = ordered
       .map((r) => asRecord(r.details))
       .filter((d): d is Record<string, unknown> => d !== null);
     const route = pickRoute(ordered);
+    const routeKey = pickRouteKey(ordered);
     const status = String(latest.status || "—");
     const providerModel = pickProviderModel(detailsPool);
-    const userInput = pickТекст(detailsPool, [
+    const userInput = pickText(detailsPool, [
       "user_input",
       "query_preview",
       "query",
@@ -354,34 +501,77 @@ function buildSessions(rows: LogItem[]): SessionView[] {
       "input_text",
       "text",
     ]);
-    const transcript = pickТекст(detailsPool, ["transcript_preview", "transcript"]);
-    const assistantOutput = pickТекст(detailsPool, [
+    const transcript = pickText(detailsPool, ["transcript_preview", "transcript"]);
+    const assistantOutputBase = pickText(detailsPool, [
       "assistant_response",
       "response_text",
       "answer_preview",
       "answer",
       "output_text",
+      "final_answer",
+      "rag_answer",
     ]);
-    const generatedPrompt = pickТекст(detailsPool, [
+    const generatedPrompt = pickText(detailsPool, [
       "generated_prompt",
       "image_prompt",
       "prompt_enriched",
     ]);
+    const imageAnswer = pickTextByPaths(detailsPool, [
+      "enhanced_prompt",
+      "image_prompt",
+      "generated_prompt",
+      "provider_prompt",
+      "final_prompt",
+      "prompt_enriched",
+      "description",
+      "answer",
+      "response_text",
+    ]);
+    const ragAnswer = pickTextByPaths(detailsPool, [
+      "answer",
+      "answer_text",
+      "response_text",
+      "assistant_response",
+      "output_text",
+      "final_answer",
+      "rag_answer",
+      "details.answer",
+      "details.answer_preview",
+    ]);
+    const ragFallback = buildRagFallback(detailsPool);
+    const tsList = ordered
+      .map((r) => toTs(r.created_at))
+      .filter((t): t is number => t != null);
+    const wallDurationMs = sessionWallDurationMs(tsList);
+    const deltaStats = computeTimelineDeltaStats(ordered);
+    const maxStageLatencyMs = sessionMaxStepLatencyMs(detailsPool) ?? deltaStats.max;
+    const avgStageLatencyMs = sessionAvgStepLatencyMs(detailsPool) ?? deltaStats.avg;
+    const pipelineSummary = ordered
+      .map((r) => stageToActionRu(r.stage, r.details))
+      .join(" → ");
+
     out.push({
       id,
       rows: ordered,
       startedAt: toTs(first.created_at) ?? 0,
       lastAt: toTs(latest.created_at) ?? 0,
       route,
+      routeKey,
       status,
-      preview: userInput || assistantOutput || previewСводка(latest.details),
+      preview: userInput || assistantOutputBase || imageAnswer || ragAnswer || previewSummary(latest.details),
       providerModel,
-      latencyMs: pickLatency(detailsPool),
+      wallDurationMs,
+      maxStageLatencyMs,
+      avgStageLatencyMs,
       stageCount: ordered.length,
+      pipelineSummary,
       userInput,
       transcript,
-      assistantOutput,
+      assistantOutput: assistantOutputBase,
       generatedPrompt,
+      imageAnswer,
+      ragAnswer,
+      ragFallback,
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
@@ -409,12 +599,17 @@ function filterSessions(
     const searchHay = [
       s.id,
       s.route,
+      s.routeKey,
       s.status,
       s.preview,
       s.providerModel,
       s.userInput,
       s.assistantOutput,
-      ...s.rows.map((r) => `${r.stage ?? ""} ${previewСводка(r.details)}`),
+      s.pipelineSummary,
+      ...s.rows.map(
+        (r) =>
+          `${r.stage ?? ""} ${stageToActionRu(r.stage, r.details)} ${previewSummary(r.details)}`
+      ),
     ]
       .join(" ")
       .toLowerCase();
@@ -458,18 +653,67 @@ function pickProviderModel(detailsPool: Record<string, unknown>[]): string | nul
   return null;
 }
 
-function pickLatency(detailsPool: Record<string, unknown>[]): number | null {
+function pickTextByPaths(
+  detailsPool: Record<string, unknown>[],
+  paths: string[]
+): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
-    const d = detailsPool[i];
-    for (const k of ["latency_ms", "duration_ms", "elapsed_ms"]) {
-      const v = Number(d[k]);
-      if (Number.isFinite(v)) return Math.round(v);
+    for (const p of paths) {
+      const v = getPath(detailsPool[i], p);
+      if (typeof v === "string" && v.trim()) {
+        return v.trim().slice(0, 2400);
+      }
     }
   }
   return null;
 }
 
-function pickТекст(detailsPool: Record<string, unknown>[], keys: string[]): string | null {
+function getPath(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const part of parts) {
+    if (cur === null || typeof cur !== "object" || Array.isArray(cur)) {
+      return undefined;
+    }
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+function computeTimelineDeltaStats(rows: LogItem[]): { max: number | null; avg: number | null } {
+  const deltas: number[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const prev = toTs(rows[i - 1].created_at);
+    const cur = toTs(rows[i].created_at);
+    if (prev == null || cur == null) continue;
+    deltas.push(Math.max(0, cur - prev));
+  }
+  if (!deltas.length) return { max: null, avg: null };
+  const max = Math.round(Math.max(...deltas));
+  const avg = Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length);
+  return { max, avg };
+}
+
+function buildRagFallback(detailsPool: Record<string, unknown>[]): string | null {
+  for (let i = detailsPool.length - 1; i >= 0; i--) {
+    const d = detailsPool[i];
+    const hasAny =
+      d.retrieved_count != null ||
+      d.context_chars != null ||
+      d.fallback_reason != null;
+    if (!hasAny) continue;
+    const rc = d.retrieved_count ?? "н/д";
+    const cc = d.context_chars ?? "н/д";
+    const fr = d.fallback_reason ?? "нет";
+    return `RAG-ответ построен; retrieved_count=${rc}, context_chars=${cc}, fallback_reason=${fr}`;
+  }
+  return null;
+}
+
+function pickText(
+  detailsPool: Record<string, unknown>[],
+  keys: string[]
+): string | null {
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     for (const k of keys) {
@@ -495,17 +739,18 @@ function toTs(iso: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function fmtTs(ts: number): string {
-  if (!Number.isFinite(ts) || ts <= 0) return "—";
-  return new Date(ts).toISOString().replace("T", " ").slice(0, 19) + "Z";
-}
-
 function windowLabelToMs(label: string): number {
   return WINDOW_OPTIONS.find((x) => x.label === label)?.ms ?? WINDOW_OPTIONS[0].ms;
 }
 
-function previewСводка(d: LogItem["details"]): string {
-  if (d == null) return "∅ empty";
+function windowLabelToHours(label: string): number {
+  if (label === "48h") return 48;
+  if (label === "7d") return 24 * 7;
+  return 24;
+}
+
+function previewSummary(d: LogItem["details"]): string {
+  if (d == null) return "пусто";
   if (typeof d === "string") return d.length > 56 ? d.slice(0, 56) + "…" : d;
   try {
     const s = JSON.stringify(d);
@@ -523,4 +768,63 @@ function formatDetailsJson(d: LogItem["details"]): string {
   } catch {
     return String(d);
   }
+}
+
+function detailLabels(routeKey: string): { left: string; right: string } {
+  if (routeKey === "audio") {
+    return {
+      left: "Расшифровка речи (STT)",
+      right: "Аудио-ответ / синтез речи (TTS)",
+    };
+  }
+  if (routeKey === "image_generation") {
+    return {
+      left: "Промпт генерации",
+      right: "Обогащённый промпт / описание изображения",
+    };
+  }
+  if (routeKey === "rag") {
+    return {
+      left: "RAG-запрос",
+      right: "RAG-ответ / контекст retrieval",
+    };
+  }
+  return {
+    left: "Текст запроса",
+    right: "Ответ модели",
+  };
+}
+
+function detailValue(
+  session: SessionView,
+  side: "left" | "right"
+): string {
+  if (session.routeKey === "audio") {
+    if (side === "left") return session.transcript ?? session.userInput ?? "—";
+    return session.assistantOutput ?? "н/д";
+  }
+  if (session.routeKey === "image_generation") {
+    if (side === "left") return session.userInput ?? "—";
+    return session.imageAnswer ?? session.generatedPrompt ?? session.assistantOutput ?? "н/д";
+  }
+  if (session.routeKey === "rag") {
+    if (side === "left") return session.userInput ?? "—";
+    return session.ragAnswer ?? session.ragFallback ?? session.assistantOutput ?? "н/д";
+  }
+  if (side === "left") return session.userInput ?? "—";
+  return session.assistantOutput ?? "н/д";
+}
+
+function mergeRows(prev: LogItem[], next: LogItem[]): LogItem[] {
+  const seen = new Set<string>();
+  const out: LogItem[] = [];
+  for (const r of [...prev, ...next]) {
+    const key = `${r.execution_id ?? ""}|${r.stage ?? ""}|${r.created_at ?? ""}|${
+      typeof r.details === "string" ? r.details : JSON.stringify(r.details ?? null)
+    }`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
 }

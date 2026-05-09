@@ -483,13 +483,24 @@ class AdminService:
         """Manual safe retry: eligible failed/retry_scheduled -> queued."""
         return self._async_jobs.retry_job(job_id)
 
-    def get_recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
+    def get_recent_logs(
+        self,
+        limit: int = 50,
+        *,
+        offset: int = 0,
+        since_hours: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Last rows from processing_logs (requires DATABASE_URL and schema v2)."""
         if not (os.getenv("DATABASE_URL") or "").strip():
             return []
         try:
             with get_connection() as conn:
-                rows = self._proc_repo.list_recent(conn, limit=limit)
+                rows = self._proc_repo.list_recent(
+                    conn,
+                    limit=limit,
+                    offset=offset,
+                    since_hours=since_hours,
+                )
                 conn.commit()
             return rows
         except Exception:

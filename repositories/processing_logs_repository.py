@@ -209,18 +209,34 @@ class ProcessingLogsRepository:
         conn: Connection,
         *,
         limit: int = 50,
+        offset: int = 0,
+        since_hours: int | None = None,
     ) -> list[dict[str, Any]]:
         lim = max(1, min(int(limit), 500))
+        off = max(0, int(offset))
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                """
-                SELECT execution_id, stage, status, details, created_at
-                FROM processing_logs
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (lim,),
-            )
+            if since_hours is None:
+                cur.execute(
+                    """
+                    SELECT execution_id, stage, status, details, created_at
+                    FROM processing_logs
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (lim, off),
+                )
+            else:
+                h = _sanitize_hours(since_hours)
+                cur.execute(
+                    """
+                    SELECT execution_id, stage, status, details, created_at
+                    FROM processing_logs
+                    WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (h, lim, off),
+                )
             return list(cur.fetchall())
 
     def list_recent_rag_events(

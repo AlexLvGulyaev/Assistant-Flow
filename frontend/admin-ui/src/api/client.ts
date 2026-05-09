@@ -45,8 +45,20 @@ export async function fetchSummary(hours = 24): Promise<SummaryResponse> {
   return parseJson<SummaryResponse>(res);
 }
 
-export async function fetchRecentLogs(limit = 20): Promise<LogsRecentResponse> {
-  const q = new URLSearchParams({ limit: String(limit) });
+export async function fetchRecentLogs(
+  options:
+    | number
+    | { limit?: number; offset?: number; sinceHours?: number } = 20
+): Promise<LogsRecentResponse> {
+  const opts =
+    typeof options === "number" ? { limit: options } : options ?? {};
+  const q = new URLSearchParams({ limit: String(opts.limit ?? 20) });
+  if (opts.offset != null) {
+    q.set("offset", String(opts.offset));
+  }
+  if (opts.sinceHours != null) {
+    q.set("since_hours", String(opts.sinceHours));
+  }
   const res = await fetch(
     `${getApiBaseUrl()}/api/logs/recent?${q.toString()}`
   );
@@ -158,6 +170,7 @@ export interface LogItem {
 
 export interface LogsRecentResponse {
   limit?: number;
+  offset?: number;
   count?: number;
   items?: LogItem[];
 }
