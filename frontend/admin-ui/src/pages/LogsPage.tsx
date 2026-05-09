@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchRecentLogs, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -14,10 +14,13 @@ import {
   statusLabelRu,
 } from "../utils/operationalLabels";
 
-const BASE_LOG_LIMIT = 120;
-const EXTENDED_LOG_LIMIT = 200; // backend /api/logs/recent Query le=200
-const INITIAL_VISIBLE_SESSIONS = 50;
-const VISIBLE_STEP = 50;
+const LOG_LIMIT_BY_WINDOW: Record<string, number> = {
+  "24h": 400,
+  "48h": 900,
+  "7d": 1800,
+};
+/** ~один экран списка без длинного скролла внутри страницы */
+const PAGE_SIZE = 10;
 const WINDOW_OPTIONS: Array<{ label: string; ms: number }> = [
   { label: "24h", ms: 24 * 60 * 60 * 1000 },
   { label: "48h", ms: 48 * 60 * 60 * 1000 },
@@ -53,11 +56,7 @@ interface SessionView {
 
 export function LogsPage() {
   const [items, setItems] = useState<LogItem[]>([]);
-  const [visibleSessions, setVisibleSessions] = useState(INITIAL_VISIBLE_SESSIONS);
-  const [rowsOffset, setRowsOffset] = useState(0);
-  const [hasMoreRows, setHasMoreRows] = useState(false);
-  const [pageError, setPageError] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState<RouteFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -65,7 +64,10 @@ export function LogsPage() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const fetchLimit = windowLabel === "24h" ? BASE_LOG_LIMIT : EXTENDED_LOG_LIMIT;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  /** Фокус на карточке только после явной навигации по списку (не при смене фильтра в поле ввода). */
+  const pendingListFocusRef = useRef(false);
+  const fetchLimit = LOG_LIMIT_BY_WINDOW[windowLabel] ?? LOG_LIMIT_BY_WINDOW["24h"];
   const sinceHours = windowLabelToHours(windowLabel);
 
   useEffect(() => {
@@ -73,19 +75,15 @@ export function LogsPage() {
     (async () => {
       setLoading(true);
       setError(null);
-      setPageError(null);
-      setRowsOffset(0);
-      setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
+      setCurrentPage(0);
       try {
         const res = await fetchRecentLogs({
           limit: fetchLimit,
-          offset: 0,
           sinceHours,
         });
         if (cancelled) return;
         const batch = res.items ?? [];
         setItems(batch);
-        setHasMoreRows(batch.length >= fetchLimit);
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : "Не удалось загрузить логи");
@@ -110,56 +108,123 @@ export function LogsPage() {
       ),
     [routeFilter, search, sessions, statusFilter, windowLabel]
   );
-  const visible = useMemo(
-    () => filtered.slice(0, visibleSessions),
-    [filtered, visibleSessions]
+  const totalPagesRaw = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageIndex = Math.min(currentPage, Math.max(0, totalPagesRaw - 1));
+  const pageSessions = useMemo(
+    () =>
+      filtered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [filtered, pageIndex]
   );
-  useEffect(() => {
-    setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
-  }, [routeFilter, statusFilter, search]);
 
   useEffect(() => {
-    if (!visible.length) {
+    setCurrentPage(0);
+  }, [routeFilter, statusFilter, search, windowLabel]);
+
+  useEffect(() => {
+    if (currentPage !== pageIndex) {
+      setCurrentPage(pageIndex);
+    }
+  }, [currentPage, pageIndex]);
+
+  useEffect(() => {
+    if (!pageSessions.length) {
       setSelectedId(null);
       return;
     }
-    if (!selectedId || !visible.some((s) => s.id === selectedId)) {
-      setSelectedId(visible[0].id);
+    if (!selectedId || !filtered.some((s) => s.id === selectedId)) {
+      setSelectedId(pageSessions[0].id);
+      return;
     }
-  }, [visible, selectedId]);
-
-  const selected = visible.find((s) => s.id === selectedId) ?? null;
-
-  async function loadMoreRows() {
-    if (loadingMore || !hasMoreRows) return;
-    setLoadingMore(true);
-    setPageError(null);
-    const nextOffset = rowsOffset + fetchLimit;
-    try {
-      const res = await fetchRecentLogs({
-        limit: fetchLimit,
-        offset: nextOffset,
-        sinceHours,
-      });
-      const batch = res.items ?? [];
-      setRowsOffset(nextOffset);
-      setHasMoreRows(batch.length >= fetchLimit);
-      setItems((prev) => mergeRows(prev, batch));
-      setVisibleSessions((v) => v + VISIBLE_STEP);
-    } catch (e) {
-      setPageError(
-        e instanceof Error ? e.message : "Не удалось догрузить следующую страницу"
-      );
-    } finally {
-      setLoadingMore(false);
+    if (!pageSessions.some((s) => s.id === selectedId)) {
+      setSelectedId(pageSessions[0].id);
     }
+  }, [filtered, pageSessions, selectedId]);
+
+  const selected = pageSessions.find((s) => s.id === selectedId) ?? null;
+
+  function resetPagination() {
+    pendingListFocusRef.current = true;
+    setCurrentPage(0);
+    const first = filtered.slice(0, PAGE_SIZE)[0];
+    if (first) setSelectedId(first.id);
   }
 
-  function resetRows() {
-    setRowsOffset(0);
-    setVisibleSessions(INITIAL_VISIBLE_SESSIONS);
-    setHasMoreRows(items.length >= fetchLimit);
+  const lastPageIndex = Math.max(0, totalPagesRaw - 1);
+
+  function goPrevPage() {
+    pendingListFocusRef.current = true;
+    const np = Math.max(0, pageIndex - 1);
+    setCurrentPage(np);
+    const slice = filtered.slice(np * PAGE_SIZE, (np + 1) * PAGE_SIZE);
+    const pick = slice[slice.length - 1] ?? slice[0];
+    if (pick) setSelectedId(pick.id);
   }
+
+  function goNextPage() {
+    pendingListFocusRef.current = true;
+    const np = Math.min(lastPageIndex, pageIndex + 1);
+    setCurrentPage(np);
+    const slice = filtered.slice(np * PAGE_SIZE, (np + 1) * PAGE_SIZE);
+    if (slice[0]) setSelectedId(slice[0].id);
+  }
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const list = listRef.current;
+    if (!list) return;
+    const safeId =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(selectedId)
+        : selectedId.replace(/"/g, '\\"');
+    const row = list.querySelector<HTMLButtonElement>(
+      `[data-session-id="${safeId}"]`
+    );
+    if (!row) return;
+    row.scrollIntoView({ block: "nearest" });
+    const listHasFocus =
+      document.activeElement instanceof Node && list.contains(document.activeElement);
+    const shouldFocus = pendingListFocusRef.current || listHasFocus;
+    pendingListFocusRef.current = false;
+    if (!shouldFocus) return;
+    const id = window.requestAnimationFrame(() => {
+      row.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [selectedId, pageIndex]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.closest("input") ||
+          t.closest("textarea") ||
+          t.closest("select") ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (!filtered.length) return;
+      const curIdx = selectedId
+        ? filtered.findIndex((s) => s.id === selectedId)
+        : pageIndex * PAGE_SIZE;
+      if (curIdx < 0) return;
+      const nextIdx =
+        e.key === "ArrowDown"
+          ? Math.min(filtered.length - 1, curIdx + 1)
+          : Math.max(0, curIdx - 1);
+      if (nextIdx === curIdx) return;
+      e.preventDefault();
+      const next = filtered[nextIdx];
+      if (!next) return;
+      pendingListFocusRef.current = true;
+      setCurrentPage(Math.floor(nextIdx / PAGE_SIZE));
+      setSelectedId(next.id);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filtered, selectedId, pageIndex]);
 
   return (
     <div className="page logs-page">
@@ -227,52 +292,52 @@ export function LogsPage() {
                 placeholder="Поиск: execution_id, этап, текст…"
               />
               <div className="logs-filter-meta muted">
-                Сессий: {filtered.length} · показано: {Math.min(visible.length, filtered.length)} · строк журнала:{" "}
-                {items.length}
+                Страница {filtered.length === 0 ? 0 : pageIndex + 1} из{" "}
+                {totalPagesRaw || 0} · всего сессий: {filtered.length} · показано:{" "}
+                {pageSessions.length}
               </div>
               <div className="logs-page-controls">
                 <button
                   type="button"
                   className="logs-page-btn"
-                  onClick={() =>
-                    setVisibleSessions((v) =>
-                      Math.max(INITIAL_VISIBLE_SESSIONS, v - VISIBLE_STEP)
-                    )
-                  }
-                  disabled={visibleSessions <= INITIAL_VISIBLE_SESSIONS}
+                  onClick={goPrevPage}
+                  disabled={pageIndex <= 0 || filtered.length === 0}
                 >
-                  ← Назад
+                  ← Предыдущая
                 </button>
                 <button
                   type="button"
                   className="logs-page-btn"
-                  onClick={loadMoreRows}
-                  disabled={!hasMoreRows || loadingMore}
+                  onClick={goNextPage}
+                  disabled={pageIndex >= lastPageIndex || filtered.length === 0}
                 >
-                  {loadingMore ? "Загрузка…" : "Загрузить ещё"}
+                  Следующая →
                 </button>
                 <button
                   type="button"
                   className="logs-page-btn logs-page-btn--muted"
-                  onClick={resetRows}
-                  disabled={rowsOffset === 0}
+                  onClick={resetPagination}
+                  disabled={pageIndex === 0}
                 >
                   Сброс
                 </button>
               </div>
-              {pageError ? <div className="panel panel--error logs-page-error">{pageError}</div> : null}
             </div>
 
-            <div className="logs-list">
+            <div className="logs-list" ref={listRef}>
               {filtered.length === 0 ? (
                 <div className="panel panel--muted">Нет сессий по фильтрам.</div>
               ) : (
-                visible.map((s) => (
+                pageSessions.map((s) => (
                   <button
                     key={s.id}
                     type="button"
+                    data-session-id={s.id}
                     className={`logs-item ${selectedId === s.id ? "logs-item--selected" : ""}`}
-                    onClick={() => setSelectedId(s.id)}
+                    onClick={() => {
+                      pendingListFocusRef.current = true;
+                      setSelectedId(s.id);
+                    }}
                   >
                     <div className="logs-item__row logs-item__row--tight">
                       <span className="mono logs-item__ts">
@@ -815,16 +880,3 @@ function detailValue(
   return session.assistantOutput ?? "н/д";
 }
 
-function mergeRows(prev: LogItem[], next: LogItem[]): LogItem[] {
-  const seen = new Set<string>();
-  const out: LogItem[] = [];
-  for (const r of [...prev, ...next]) {
-    const key = `${r.execution_id ?? ""}|${r.stage ?? ""}|${r.created_at ?? ""}|${
-      typeof r.details === "string" ? r.details : JSON.stringify(r.details ?? null)
-    }`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(r);
-  }
-  return out;
-}
