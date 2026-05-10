@@ -1,50 +1,144 @@
-# Architecture — Assistant Flow / Career Knowledge Assistant
+# Архитектура Assistant Flow
 
-This document describes how the system is split between user-facing flows, admin flows, and data stores. Runtime code lives under `core/`, `services/`, `providers/`, `interfaces/`, `utils/`; it does **not** import from `legacy/pem09_source/` (that tree is reference-only).
+Документ дополняет [README.md](../README.md): здесь тот же инженерный уровень детализации, но с акцентом на границы компонентов, потоки данных и модели развёртывания. Рантайм живёт в `core/`, `services/`, `providers/`, `interfaces/`, `utils/`, `repositories/`. Каталог `legacy/pem09_source/` **не импортируется** в рантайме — только справочный материал.
 
-## User contour (Telegram)
+---
 
-- **Entry:** `interfaces/telegram_bot.py` (polling, `pyTelegramBotAPI`).
-- **Modes:** `text` (default) and `rag`, stored in memory per Telegram `user_id` (`utils/telegram_user_state.py`). A future step is to persist mode and history in PostgreSQL (`chat_sessions`, `chat_messages`) per `database/db_contract.md`.
-- **Text mode:** `core/orchestrator.PromptOrchestrator` — GigaChat for answers, keyword routing for image generation, `services/image_generation_service.py` for images.
-- **RAG mode:** `services/rag_query_service.py` — read-only retrieval from Chroma + OpenAI-compatible chat for grounded answers; sources are appended in the reply.
-- **Read-only knowledge:** Users **cannot** upload documents via Telegram. They only **query** what was already indexed by an administrator.
+## Общая идея
 
-## Admin contour (CLI)
+Система разделена на **пользовательский контур** и **операционный контур**.
 
-- **Indexing:** `scripts/admin_index_documents.py` with `services/admin_knowledge_indexer.py` — scans `RAG_DOCUMENTS_DIR` (recursive `.pdf` / `.txt` / `.md`), chunks documents, writes vectors to Chroma.
-- **Optional metadata:** If `DATABASE_URL` is set and `--no-postgres` is not passed, each file run updates `documents`, `document_versions`, and `indexing_jobs` via `repositories/document_repository.py`.
-- **Smoke test (dev):** `scripts/rag_smoke_test.py` — one-shot index + question for local checks (see `docs/RAG_SMOKE_TEST.md`).
+- **Telegram** — единственный канал для конечного пользователя: диалог, смена режимов, запросы без прямой загрузки корпуса в чат.
+- **Административная консоль** (**React Admin UI** + **FastAPI Admin API**) — обзор здоровья, телеметрия, документы, диагностика **RAG** и модальностей; это не «второй чат», а панель оператора.
+- **PostgreSQL** — контракт жизненного цикла: документы, версии, метаданные чанков, события intake, `processing_logs`, вспомогательные таблицы (включая очередь `async_jobs` для задела под фоновые задачи). Векторы в **PostgreSQL** не хранятся.
+- **ChromaDB** — слой retrieval: эмбеддинги и поиск по коллекции; синхронизация с метаданными в **PostgreSQL** выполняется при индексации и админ-операциях, а не «магически».
+- **Runtime** (бот, оркестратор, **RAG**, аудио/картинки) отделён от **индексации** (CLI `scripts/admin_index_documents.py`, загрузка через **Admin API**): пользователь не пополняет базу знаний через **Telegram**.
+- **Multimodal routing** — в одном процессе бота выбирается ветка (текст, **RAG**, изображение, голос) по типу сообщения и режиму пользователя.
+- **Execution tracing** — сквозной идентификатор обработки и записи в `processing_logs` (где включён **PostgreSQL**), плюс отдельный технический слой **SQLite** `logs.db` для части провайдерских вызовов.
+- **Health / degraded** — явные пробы **PostgreSQL**, **Chroma**, готовности **RAG** и снимков конфигурации **LLM**; агрегат `GET /api/health` помечает `ok` или `degraded`, не «падая» без необходимости.
 
-## PostgreSQL as source of truth
+---
 
-- **Schema:** `database/schema.sql`; rules: `database/db_contract.md`.
-- **Role:** Canonical records for users (future full wiring), documents, versions, indexing jobs, chat/session/message contracts, request/error logs (tables exist; not all are fully used by runtime yet).
-- **Access:** Application code should use repositories/services, not raw SQL from Telegram handlers. Repositories use `DATABASE_URL` (`repositories/connection.py`).
+## Основные компоненты
 
-## ChromaDB as vector index
+### Telegram bot
 
-- **Persistence:** Directory `CHROMA_PERSIST_DIR` (default `data/chroma_db`), collection `assistant_flow_rag` (`services/rag_chroma_store.py`).
-- **Embeddings:** OpenAI-compatible API (`providers/rag_embeddings.py`); same credential pattern as RAG chat (`OPENAI_API_KEY` or `PROXY_API_KEY`, optional `OPENAI_BASE_URL` / proxy base URL).
-- **Separation:** Vector payloads live in Chroma; PostgreSQL holds document metadata and job status when admin indexing is enabled.
+- Файл: `interfaces/telegram_bot.py`, **long polling**, библиотека **pyTelegramBotAPI**.
+- Режимы `text` и `rag` хранятся в памяти на пользователя (`utils/telegram_user_state.py`); персистентность сессий в **PostgreSQL** (`chat_sessions`, `chat_messages`) описана в контракте и остаётся направлением развития.
+- При плейсхолдере **Telegram**-токена (portfolio) бот не вызывает polling и остаётся в ожидании — см. `run_polling()` в том же модуле.
 
-## Request flow (simplified)
+### Orchestrator
 
-```text
-Telegram (user)
-  → handlers (interfaces/telegram_bot.py)
-  → text mode: orchestrator → services/providers → GigaChat / image APIs
-  → rag mode: RagQueryService → Chroma + OpenAI-compatible LLM
+- `core/orchestrator.py` — **PromptOrchestrator**: маршрутизация текстовых запросов, усиление промпта, вызов **GigaChat** через `GigaChatService`, ветка генерации изображений через `ImageGenerationService`.
+- Связан с `RequestLogger` (**SQLite** `logs.db`) на части путей изображений и оркестрации.
 
-Admin
-  → admin_index_documents.py → AdminKnowledgeIndexer → Chroma (+ optional PostgreSQL)
-```
+### RAG services
 
-## Logging and analytics (separate from Postgres contract)
+- `services/rag_query_service.py` — retrieval в **Chroma** + ответ **OpenAI**-совместимым чатом, формирование источников и диагностики (`services/rag_types.py`).
+- `services/rag_chroma_store.py` — **HttpClient** или локальный **PersistentClient** **Chroma**, коллекция по умолчанию `assistant_flow_rag`.
+- Индексация корпуса: `services/admin_knowledge_indexer.py` + `scripts/admin_index_documents.py` (опционально запись в **PostgreSQL** через `repositories/document_repository.py`).
 
-- **SQLite `logs.db`:** Technical provider logs (`utils/request_logger.py`) for orchestrator and image flows; `dashboard.py` reads this file.
-- **PostgreSQL `request_logs` / `error_logs`:** Defined in `schema.sql` for product-level auditing; integration can be extended without changing the high-level split above.
+### FastAPI Admin API
 
-## Legacy reference (PEm09)
+- Каталог `admin_api/`, вход `run_admin_api.py` (**Uvicorn**, порт по умолчанию **8600**).
+- Маршруты с префиксом `/api`: `health`, `overview`, `summary`, `logs/recent`, `documents`, `assets/preview` и др. Аутентификация на уровне приложения **не** реализована — см. [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
-- **`legacy/pem09_source/`** — donor educational project (async bot, LangChain RAG patterns). **Not imported at runtime.** Ideas were manually adapted into this codebase; keep the folder for comparison and coursework reporting only.
+### React Admin UI
+
+- `frontend/admin-ui/` — **Vite** + **React**, страницы по модальностям и документам; обращается к **Admin API** по базовому URL из сборки (`VITE_ADMIN_API_BASE_URL`).
+
+### PostgreSQL
+
+- Схема: `database/schema.sql`, правила и смысл полей: `database/db_contract.md`.
+- Доступ из приложения через `repositories/connection.py` и сервисы/репозитории, а не произвольный SQL из хендлеров **Telegram**.
+
+### ChromaDB
+
+- Переменные `CHROMA_*`, `RAG_*`; эмбеддинги через `providers/rag_embeddings.py` (**OpenAI**-совместимый API, в т.ч. через **ProxyAPI** при настройке).
+
+### Providers
+
+- `providers/` — **GigaChat**, **OpenAI**-совместимый чат, эмбеддинги, изображения (**ProxyAPI** / прямой **OpenAI**), **STT**/**TTS** с заглушками `disabled`.
+
+### Asset storage
+
+- Абстракция репозитория ассетов (`services/asset_repository_factory.py`, реализации под файловую систему): превью изображений/аудио через **Admin API** с ограничением префиксов.
+
+### Docker Compose
+
+- **Portfolio**: `docker-compose.portfolio.yml` — изолированная сеть, **PostgreSQL**, **Chroma**, контейнер бота, **admin-api**, **admin-ui** (**nginx** со статикой).
+- **Server**: `docker-compose.assistant.yml` — привязка к внешним сетям инфраструктуры, **Streamlit**-админка; переменные из `.env.server`.
+
+---
+
+## Потоки обработки
+
+### Text flow
+
+Пользователь пишет текст в **Telegram** в режиме `text`. Сообщение попадает в хендлеры бота → **PromptOrchestrator** выбирает маршрут (в т.ч. запрос картинки по ключевым признакам) → ответ формируется через **GigaChat** (и сопутствующие сервисы). При наличии **PostgreSQL** часть этапов может логироваться в lifecycle-сервисе.
+
+### RAG flow
+
+В режиме `rag` запрос не должен изменять корпус: **RagQueryService** выполняет поиск в **Chroma**, собирает контекст, вызывает **LLM** для ответа с опорой на источники, возвращает диагностику (чанки, расстояния, причины **fallback**). В **Telegram** пользователь видит ответ и перечень источников в текущей реализации форматтера.
+
+### Image flow
+
+Текст интерпретируется оркестратором как запрос изображения → `ImageGenerationService` обращается к настроенному image-провайдеру → результат сохраняется как ассет и отправляется в чат. Сбои отражаются в сообщениях пользователю и могут попасть в телеметрию.
+
+### Audio flow
+
+Голосовые сообщения: загрузка → при включённом **STT** распознавание → дальше тот же текстовый или **RAG**-контур; при **TTS** ответ может быть озвучен. Отключённые провайдеры дают деградированный старт с сообщением в логах.
+
+### Document indexing flow
+
+Администратор кладёт файлы в каталог или загружает через **Admin API** → индексатор режет на чанки, пишет векторы в **Chroma**, при включённом **DATABASE_URL** обновляет `documents`, `document_versions`, `document_chunks` и связанные статусы. Пользовательский **Telegram** этот путь не использует.
+
+---
+
+## Наблюдаемость и телеметрия
+
+### processing_logs и execution_id
+
+Таблица `processing_logs` (**PostgreSQL**) хранит стадии обработки, статусы и **JSON**-детали (часто усечённые на границе **API**). Связь с бизнес-событием идёт через `execution_id` и при необходимости `intake_event_id` — это основа **execution tracing** в админке (**Logs**, модальные страницы).
+
+### Два слоя логов
+
+- **PostgreSQL** — продуктовый контур lifecycle и `processing_logs` для консоли.
+- **SQLite** `logs.db` (`utils/request_logger.py`) — технические записи по провайдерам в части оркестратора/изображений; не смешивать со схемой `processing_logs` без явной маппинга.
+
+### Health и degraded mode
+
+`services/healthcheck_service.py` и агрегат `GET /api/health`: отдельно **postgres**, **chroma**, **rag**, снимки **LLM**. Отказ **PostgreSQL** или ошибка **RAG** переводит общий статус в `degraded`, но сервис остаётся отвечающим **JSON**.
+
+### Страницы консоли
+
+- **Overview** (`/api/overview`) — срез зависимостей и счётчиков базы знаний.
+- **Summary** (`/api/summary`) — агрегаты по времени для операторской сводки.
+- **Logs** (`/api/logs/recent`) — последние строки `processing_logs` с пагинацией и фильтрами по времени.
+- Модальные экраны (**Text**, **RAG**, **Images**, **Audio**, **Documents**) используют те же источники данных и фильтрацию на стороне **AdminService**.
+
+---
+
+## Модели развёртывания
+
+### Portfolio compose
+
+`docker-compose.portfolio.yml` рассчитан на **clone-and-up**: одна пользовательская сеть **Docker**, без внешних `network: external`, публикация портов на **хост** (**8080** / **8600** / **5433** / **8001** в текущей конфигурации). Подходит для демонстрации и локальной отладки.
+
+### Server compose
+
+`docker-compose.assistant.yml` предполагает уже согласованную инфраструктуру (внешние сети, отдельный **Chroma**, **Streamlit** на **8501**, `env_file: .env.server`). Это ближе к серверу, где маршрутизация и **TLS** вынесены за пределы репозитория.
+
+Различие не в «качестве кода», а в **топологии**: portfolio — автономный стек; server — встраивание в существующие сети и секреты.
+
+---
+
+## Ограничения
+
+- **Прототип**, не готовый мультиарендный **SaaS**.
+- **Single-tenant** в смысле модели данных и отсутствия изоляции «клиентов» на уровне приложения.
+- **Admin API** без **auth** / **RBAC**: любой, кто достучится до порта, получает те же **endpoints**.
+- Телеметрия и восстановление после частичных сбоев — **best-effort**; деградация описана в коде, но не сертифицирована как в регламентированном продакшене.
+- **Chroma**: потеря тома = потеря индекса до полной переиндексации.
+
+Подробнее о рисках: [SECURITY_NOTES.md](SECURITY_NOTES.md). Операционные шаги: [OPERATIONS.md](OPERATIONS.md).
