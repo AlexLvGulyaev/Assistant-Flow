@@ -13,3 +13,7 @@ tmp_chroma_test_312/
 logs.db
 outputs/
 legacy/
+_test_chroma/
+frontend/admin-ui/node_modules/
+frontend/admin-ui/dist/
+frontend/admin-ui/.vite/

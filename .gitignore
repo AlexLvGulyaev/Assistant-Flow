@@ -1,11 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
 .env
 .env.*
+!.env.example
+!.env.server.example
+
+# Virtualenvs (local)
 .venv/
 .venv312/
-__pycache__/
-*.pyc
+venv/
+
+# Frontend
+frontend/admin-ui/node_modules/
+frontend/admin-ui/dist/
+frontend/admin-ui/.vite/
+
+# Runtime data
 data/
 outputs/
+logs.db
+*.sqlite3
+_test_chroma/
+
+# Asset storage
 storage/assets/audio/
+storage/assets/images/
+storage/assets/documents/
+storage/assets/.browser_audio_preview/
+
+# Archives / local bundles
 *.zip
 *.tar.gz
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
