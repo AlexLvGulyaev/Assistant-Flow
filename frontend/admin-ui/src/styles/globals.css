@@ -1358,6 +1358,30 @@ code {
   grid-template-columns: 1fr 1fr 84px;
 }
 
+.text-page .logs-filter-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.text-page .text-ops-summary.modality-ops-panels {
+  max-height: min(32vh, 320px);
+}
+
+.text-page__empty-hint {
+  padding: 0.65rem 0.75rem;
+}
+
+.text-page__empty-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.text-page__empty-sub {
+  margin: 0 0 0.5rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .mini-badge--rag {
   border-color: rgba(147, 112, 219, 0.45);
   color: #c6a7ff;
