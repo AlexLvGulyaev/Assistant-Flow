@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import concurrent.futures
+import time
 from typing import Sequence
 
 from langchain_core.documents import Document
 
 from providers.openai_chat_provider import OpenAIChatProvider
-from services.rag_chroma_store import ChromaRagStore
+from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME, ChromaRagStore
 from services.rag_types import (
     RagQueryResult,
     RagRequestDiagnostics,
@@ -20,6 +21,28 @@ from utils.config import AppConfig
 _LLM_TIMEOUT_SEC = 30
 _QUERY_PREVIEW_MAX = 200
 _CHUNK_PREVIEW_MAX = 500
+
+
+def _chat_llm_usage_triplet(chat: OpenAIChatProvider) -> tuple[int | None, int | None, int | None]:
+    """Map last OpenAI chat.usage into (input, output, total) token counts, if API returned them."""
+    getter = getattr(chat, "get_last_llm_usage_for_log", None)
+    if not callable(getter):
+        return None, None, None
+    raw = getter()
+    if not isinstance(raw, dict):
+        return None, None, None
+
+    def _ix(key: str) -> int | None:
+        v = raw.get(key)
+        if v is None:
+            return None
+        try:
+            n = int(v)
+            return n if n >= 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    return _ix("prompt_tokens"), _ix("completion_tokens"), _ix("total_tokens")
 
 
 def _query_preview_for_logs(query: str, max_len: int = _QUERY_PREVIEW_MAX) -> str:
@@ -121,6 +144,16 @@ def _build_diagnostics(
     chunks_missing_score: int,
     context_chars: int,
     fallback_reason: str,
+    retrieval_latency_ms: int | None = None,
+    llm_latency_ms: int | None = None,
+    rag_pipeline_wall_ms: int | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    embedding_model: str | None = None,
+    chroma_collection: str | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
@@ -141,6 +174,16 @@ def _build_diagnostics(
             raw,
             max_distance=relevance_threshold,
         ),
+        retrieval_latency_ms=retrieval_latency_ms,
+        llm_latency_ms=llm_latency_ms,
+        rag_pipeline_wall_ms=rag_pipeline_wall_ms,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        embedding_model=embedding_model,
+        chroma_collection=chroma_collection,
     )
 
 
@@ -308,7 +351,9 @@ class RagQueryService:
     ) -> tuple[RagSourceChunk, ...]:
         """Similarity search only (read-only)."""
         k = top_k if top_k is not None else self._config.rag_top_k
+        t0 = time.monotonic()
         raw = self._retrieve_raw(query, k)
+        retrieval_ms = int((time.monotonic() - t0) * 1000)
         thr = float(self._config.rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
         if not raw:
@@ -317,6 +362,9 @@ class RagQueryService:
             fb = "low_relevance"
         else:
             fb = "none"
+        emb_model = (self._config.openai_embedding_model or "").strip() or None
+        llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
+        llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
         _build_diagnostics(
             query=query,
             top_k=k,
@@ -326,6 +374,11 @@ class RagQueryService:
             chunks_missing_score=miss,
             context_chars=0,
             fallback_reason=fb,
+            retrieval_latency_ms=retrieval_ms,
+            embedding_model=emb_model,
+            chroma_collection=RAG_CHROMA_COLLECTION_NAME,
+            llm_provider=llm_prov,
+            llm_model=llm_mod,
         ).emit_stdout()
         return _sources_from_results(filtered)
 
@@ -345,13 +398,25 @@ class RagQueryService:
         if not normalized:
             raise ValueError("query must not be empty")
 
+        t_answer0 = time.monotonic()
+
+        def wall_ms() -> int:
+            return int((time.monotonic() - t_answer0) * 1000)
+
         k = top_k if top_k is not None else self._config.rag_top_k
         print("[assistant-flow] rag answer: before retrieval", flush=True)
+        t_ret0 = time.monotonic()
         raw = self._retrieve_raw(normalized, k)
+        retrieval_latency_ms = int((time.monotonic() - t_ret0) * 1000)
         print("[assistant-flow] rag answer: after retrieval", flush=True)
 
         thr = float(self._config.rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
+
+        emb_model = (self._config.openai_embedding_model or "").strip() or None
+        chroma_coll = RAG_CHROMA_COLLECTION_NAME
+        llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
+        llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
 
         if not raw:
             diagnostics = _build_diagnostics(
@@ -363,6 +428,12 @@ class RagQueryService:
                 chunks_missing_score=0,
                 context_chars=0,
                 fallback_reason="empty_retrieval",
+                retrieval_latency_ms=retrieval_latency_ms,
+                rag_pipeline_wall_ms=wall_ms(),
+                embedding_model=emb_model,
+                chroma_collection=chroma_coll,
+                llm_provider=llm_prov,
+                llm_model=llm_mod,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -382,6 +453,12 @@ class RagQueryService:
                 chunks_missing_score=miss,
                 context_chars=0,
                 fallback_reason="low_relevance",
+                retrieval_latency_ms=retrieval_latency_ms,
+                rag_pipeline_wall_ms=wall_ms(),
+                embedding_model=emb_model,
+                chroma_collection=chroma_coll,
+                llm_provider=llm_prov,
+                llm_model=llm_mod,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -402,6 +479,7 @@ class RagQueryService:
             fb_reason = "empty_context"
 
         print("[assistant-flow] rag answer: before LLM call", flush=True)
+        t_llm0 = time.monotonic()
         try:
             answer = self._rag_llm(normalized, context, history=conversation_history)
         except Exception as exc:
@@ -411,7 +489,10 @@ class RagQueryService:
             )
             answer = "Не удалось получить ответ от модели. Попробуйте позже."
             fb_reason = "llm_error"
+        llm_latency_ms = int((time.monotonic() - t_llm0) * 1000)
         print("[assistant-flow] rag answer: after LLM call", flush=True)
+
+        inp_t, out_t, tot_t = _chat_llm_usage_triplet(self._chat)
 
         diagnostics = _build_diagnostics(
             query=normalized,
@@ -422,6 +503,16 @@ class RagQueryService:
             chunks_missing_score=miss,
             context_chars=ctx_len,
             fallback_reason=fb_reason,
+            retrieval_latency_ms=retrieval_latency_ms,
+            llm_latency_ms=llm_latency_ms,
+            rag_pipeline_wall_ms=wall_ms(),
+            llm_provider=llm_prov,
+            llm_model=llm_mod,
+            input_tokens=inp_t,
+            output_tokens=out_t,
+            total_tokens=tot_t,
+            embedding_model=emb_model,
+            chroma_collection=chroma_coll,
         )
         diagnostics.emit_stdout()
 
