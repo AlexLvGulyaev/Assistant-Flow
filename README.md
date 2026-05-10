@@ -1,84 +1,223 @@
 # Assistant Flow
 
-**Portfolio-grade прототип** платформы операций вокруг мультимодального AI-ассистента: Telegram как канал для пользователей, **RAG** по администрируемой базе знаний (**Chroma**), контракт данных в **PostgreSQL**, операционная **FastAPI Admin API** и **React/Vite** консоль.
-
-Это **single-tenant** демонстрационный проект: **нет публичной аутентификации и RBAC** для Admin API. Не выставляйте Admin API в интернет без reverse proxy, TLS и своей модели доступа.
+Прототип мультимодальной AI-платформы с упором на **управляемость пайплайнов** и **наблюдаемость**: один пользовательский канал (**Telegram**), отдельная административная консоль (**React** + **FastAPI**), данные и телеметрия в **PostgreSQL**, векторный индекс в **ChromaDB**. Репозиторий оформлен как инженерный **portfolio**-проект: здесь видно, как устроены маршрутизация запросов, **RAG**, жизненный цикл документов и диагностика сессий — без претензии на готовый SaaS.
 
 ---
 
-## Что внутри
+## Бизнес-сценарий и идея
 
-| Область | Описание |
-|--------|----------|
-| Пользователи | Telegram-бот: режимы text / RAG, опционально изображения и аудио по конфигурации |
-| Знания | Индексация документов администратором (CLI), векторы в Chroma |
-| Данные | PostgreSQL: документы, версии, логи обработки и др. (см. `database/schema.sql`) |
-| Операции | FastAPI (`run_admin_api.py`), React admin UI, legacy Streamlit (`docker-compose.assistant.yml`) |
+Во многих командах знания размазаны по документам, а «общий чатбот» либо игнорирует внутренние материалы, либо даёт ответы без опоры на источники. **Assistant Flow** демонстрирует другой контур: **база знаний под контролем администратора**, запросы пользователей через **Telegram**, ответы с явным разделением режимов (например, свободный текст и **RAG** только для чтения из индекса).
 
-Подробная архитектура: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Проект показывает практические вещи, которые важны в операциях вокруг **LLM**:
 
----
+- **Управляемость** — какие режимы включены, откуда берётся контекст, какие провайдеры задействованы.
+- **Наблюдаемость** — что произошло в рамках обработки запроса, какие стадии прошёл пайплайн.
+- **Диагностика RAG** — retrieval, чанки, признаки деградации, а не только финальный текст.
+- **Жизненный цикл документов** — загрузка, версии, индексация, согласованность с векторным хранилищем.
+- **Трассировка execution** — связка событий и логов обработки для разбора инцидентов.
+- **Multimodal routing** — текст, **RAG**, изображения, опционально **STT**/**TTS** по конфигурации, с отображением в консоли.
 
-## Быстрый старт (portfolio Docker)
-
-Проверено smoke-тестом: `docker compose -f docker-compose.portfolio.yml` поднимает Postgres (с авто-init схемы), Chroma, `assistant-flow` (standby без реального Telegram token), Admin API и статический Admin UI.
-
-1. Скопировать окружение (ключи провайдеров можно оставить placeholder для проверки UI/API):
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Запуск:
-
-   ```bash
-   docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
-   ```
-
-   Флаг `--remove-orphans` убирает контейнеры, которых больше нет в этом compose-файле. Если в одном каталоге параллельно поднимали `docker-compose.assistant.yml`, у обоих по умолчанию одинаковый **project name** — задайте уникальный, например:  
-   `COMPOSE_PROJECT_NAME=assistant-flow-portfolio docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans`.
-
-3. Проверки: `http://localhost:8080` (UI), `http://localhost:8600/api/health` (API). Chroma с хоста: `http://localhost:8001` (внутри compose — `chroma:8000`). PostgreSQL с хоста: `localhost:5433`.
-
-4. **Telegram:** значение `your_telegram_bot_token` из шаблона не запускает polling — контейнер не падает. Для живого бота задайте токен вида `123456:AA...` и перезапустите сервис `assistant-flow`.
-
-5. **Индексация RAG / LLM:** ключи GigaChat/OpenAI/Proxy и загрузка документов — отдельно (см. [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md)); без них часть провайдеров в health будет `degraded` / не настроено.
-
-**Серверный** сценарий: `docker-compose.assistant.yml`, `.env.server.example`.
-
-**TODO (публичный README):** при смене портов или хоста пересобрать образ `admin-ui` с нужным `VITE_ADMIN_API_BASE_URL`.
+Это **прототип** для портфолио и экспериментов с архитектурой, а не готовый коммерческий продукт.
 
 ---
 
-## Документация
+## Возможности платформы
 
-| Файл | Назначение |
-|------|------------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура и потоки данных |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Запуск, порты, порядок действий |
-| [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) | Риски и границы доверия |
-| [docs/GITHUB_PREP.md](docs/GITHUB_PREP.md) | План очистки репозитория перед публичным GitHub |
-| [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md) | Индексация базы знаний |
-| [docs/RAG_SMOKE_TEST.md](docs/RAG_SMOKE_TEST.md) | Локальная проверка RAG |
-| [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Демо-сценарии |
-
----
-
-## Шаблоны окружения
-
-- **`.env.example`** — локальный/portfolio сценарий (имена сервисов `postgres`, `chroma` из `docker-compose.portfolio.yml`).
-- **`.env.server.example`** — сервер: внешний Postgres, имена хостов как в вашей инфраструктуре, плейсхолдеры без секретов.
+- Текстовые ответы в **Telegram** (оркестрация через настраиваемых провайдеров).
+- **RAG** по администрируемой базе знаний (**ChromaDB** + **PostgreSQL** для метаданных и контракта).
+- Генерация изображений (провайдеры **OpenAI**-совместимые / **ProxyAPI** — по конфигурации).
+- Опционально голос: **STT** / **TTS** при включённых провайдерах и ключах.
+- Загрузка документов и переиндексация через **Admin API** / существующие сценарии индексации (см. `docs/ADMIN_INDEXING.md`).
+- **Execution tracing** и недавние логи обработки в консоли и через `GET /api/logs/recent`.
+- **Health** и **degraded**-состояния зависимостей (`GET /api/health`).
+- Административная консоль на **React** (**Vite**-сборка) поверх **FastAPI Admin API**.
 
 ---
 
-## Ограничения прототипа
+## Архитектура
 
-- Один арендатор, упрощённая модель угроз для демо.
-- Admin API без встроенного auth — см. [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md).
-- Часть телеметрии и degraded-mode поведения — best-effort; том Chroma не удалять без осознанного reindex.
+Пользовательский трафик идёт в **Telegram-бот** (`interfaces/telegram_bot.py`): оттуда вызываются оркестратор текста/изображений (`core/`), сервис **RAG** (`services/rag_query_service.py`, `services/rag_chroma_store.py`) и при необходимости аудио-пайплайн. **PostgreSQL** хранит пользователей, документы, версии, чанки (метаданные), события intake, `processing_logs` и связанные таблицы. **ChromaDB** хранит эмбеддинги и обеспечивает поиск по коллекции.
+
+Оператор смотрит состояние системы через **React Admin UI** (статическая сборка или dev-сервер) и JSON-**Admin API** (`admin_api/`, запуск `run_admin_api.py`): обзор, сводки, логи, документы, превью ассетов. Провайдеры (**GigaChat**, **OpenAI**-совместимый чат и эмбеддинги, **ProxyAPI** для изображений и т.д.) подключаются через слой `providers/` и настройки окружения.
+
+Для локального и portfolio-развёртывания используется **`docker-compose.portfolio.yml`** (**PostgreSQL**, **Chroma**, контейнер бота, **admin-api**, **admin-ui** на **nginx**). Серверный вариант с внешними сетями и **Streamlit**-админкой остаётся в `docker-compose.assistant.yml`.
+
+```mermaid
+flowchart TB
+  subgraph user["Пользователь"]
+    TG[Telegram]
+  end
+  subgraph app["Приложение"]
+    BOT[Telegram bot]
+    ORC[Orchestrator]
+    RAG[RAG service]
+  end
+  subgraph data["Данные"]
+    PG[(PostgreSQL)]
+    CH[(ChromaDB)]
+  end
+  subgraph ops["Операции"]
+    UI[React Admin UI]
+    API[FastAPI Admin API]
+  end
+  TG --> BOT
+  BOT --> ORC
+  BOT --> RAG
+  ORC --> PG
+  RAG --> CH
+  RAG --> PG
+  UI --> API
+  API --> PG
+  API --> CH
+```
 
 ---
 
-## Легаси
+## Консоль мониторинга
 
-Каталог **`legacy/pem09_source/`** — справочный материал, **не импортируется** в рантайме.
+Ниже — проход по экранам консоли и паре сценариев в **Telegram**. Для каждого блока сначала краткий смысл экрана, затем скриншот.
+
+### Обзор платформы
+
+Страница **Overview** даёт срез состояния: доступность **PostgreSQL** и **Chroma**, параметры **RAG**, флаги провайдеров и модальностей. Удобно для первичной проверки после деплоя и для сравнения «что должно работать» с фактическими зависимостями.
+
+![Обзор платформы в Admin UI](docs/screenshots/overview-adm.png)
+
+### Сводка телеметрии
+
+**Summary** агрегирует активность за выбранный горизонт времени: объёмы по маршрутам и стадиям, ошибки, базовая операционная картина без ручного разбора сырых логов.
+
+![Сводка телеметрии](docs/screenshots/summary-adm.png)
+
+### Execution tracing и логи
+
+**Logs** показывает недавние записи `processing_logs`: стадии, статусы, укороченные **JSON**-детали. Это опора для разбора конкретной сессии и поиска аномалий в пайплайне.
+
+![Логи обработки и трассировка](docs/screenshots/logs-adm.png)
+
+### RAG pipeline — административная консоль
+
+Экран **RAG** в консоли раскладывает запрос: retrieval, чанки, параметры поиска, признаки **fallback**. Полезно отлаживать качество ответа и понимать, сработал ли контур базы знаний.
+
+![RAG в Admin UI](docs/screenshots/rag-adm.png)
+
+### RAG pipeline — Telegram-интерфейс
+
+В **Telegram** пользователь получает ответ с опорой на источники в режиме **RAG** (форматирование и список источников зависят от реализации бота).
+
+![RAG в Telegram](docs/screenshots/rag-tg.png)
+
+### Аудио pipeline (STT / TTS) — административная консоль
+
+Экран **Audio** отражает голосовой контур: распознавание, синтез, ссылки на ассеты, метаданные — когда **STT**/**TTS** включены и сконфигурированы.
+
+![Аудио в Admin UI](docs/screenshots/audio-adm.png)
+
+### Аудио pipeline — Telegram-интерфейс
+
+В **Telegram** отображаются голосовые сообщения и ответы при включённом аудио-пайплайне.
+
+![Аудио в Telegram](docs/screenshots/audio-tg.png)
+
+### Генерация изображений — административная консоль
+
+Страница **Images** показывает цепочку промптов, параметры генерации и телеметрию по обращению к image-провайдеру.
+
+![Изображения в Admin UI](docs/screenshots/image-adm.png)
+
+### Генерация изображений — Telegram-интерфейс
+
+Пользователь запрашивает картинку в чате; результат приходит сообщением **Telegram** (в зависимости от настроек провайдера и политик).
+
+![Изображения в Telegram](docs/screenshots/image-tg.png)
+
+### Текстовый pipeline — административная консоль
+
+**Text** в консоли обобщает текстовые запросы: маршрут, модель, токены, задержки — для сопоставления с тем, что видит пользователь в чате.
+
+![Текст в Admin UI](docs/screenshots/text-adm.png)
+
+### Текстовый pipeline — Telegram-интерфейс
+
+Диалог в **Telegram** в текстовом режиме без обязательного **RAG**.
+
+![Текст в Telegram](docs/screenshots/text-tg.png)
+
+### Управление документами
+
+**Documents** — точка контроля над базой знаний: загрузка, статусы индексации, версии, чанки, согласованность с **Chroma**, превью содержимого. Это как раз тот слой, который отделяет «набросали в чат» от «зафиксировали корпус и поддерживаем его жизненный цикл».
+
+![Документы и жизненный цикл в Admin UI](docs/screenshots/documents-adm.png)
+
+---
+
+## Быстрый старт
+
+Проверенная последовательность для portfolio-стека (**без** ручного запуска **FastAPI** и **Vite** на хосте):
+
+```bash
+git clone <repo-url>
+cd assistant-flow
+cp .env.example .env
+docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
+```
+
+Дальше в браузере: **Admin UI** — [http://localhost:8080](http://localhost:8080), проверка API — [http://localhost:8600/api/health](http://localhost:8600/api/health).
+
+**Порты на хосте** (чтобы не пересекаться с уже запущенным **Postgres** / **Chroma**):
+
+| Сервис | Порт на хосте | Примечание |
+|--------|---------------|------------|
+| **PostgreSQL** | **5433** | внутри compose-сети: `postgres:5432` |
+| **Chroma** | **8001** | внутри сети: `chroma:8000` |
+| **FastAPI Admin API** | **8600** | `GET /api/health`, `GET /api/overview`, … |
+| **React Admin UI** | **8080** | статика через **nginx** в образе |
+
+При первом создании тома **PostgreSQL** применяются скрипты из `docker-compose.portfolio.yml` (**schema** + **async_jobs**). Если том уже существовал без init — см. [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+**Переменные окружения:** в `.env` нужно заменить плейсхолдер **`TELEGRAM_BOT_TOKEN`** на токен вида `123456:AA...`, если требуется живой бот. Значение `your_telegram_bot_token` из `.env.example` оставляет контейнер бота в режиме ожидания — **Admin API** и консоль при этом работают. Аналогично для реальных вызовов **LLM** / **ProxyAPI** подставьте рабочие ключи вместо шаблонных строк в `.env`.
+
+**Имя проекта Compose:** если в том же каталоге уже поднимали `docker-compose.assistant.yml`, задайте отдельное имя, чтобы не смешивать контейнеры:
+
+```bash
+COMPOSE_PROJECT_NAME=assistant-flow-portfolio docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
+```
+
+Если **Admin UI** открывается с другого хоста/порта, чем `http://localhost:8080`, пересоберите образ `admin-ui` с нужным `VITE_ADMIN_API_BASE_URL` и согласуйте `ADMIN_API_CORS_ORIGINS` в `.env` (см. [docs/OPERATIONS.md](docs/OPERATIONS.md)).
+
+Дополнительно: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md), [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md).
+
+---
+
+## Структура проекта
+
+| Каталог / файл | Назначение |
+|----------------|------------|
+| `interfaces/` | Точка входа **Telegram** |
+| `core/` | Оркестрация текст/изображения |
+| `services/` | **RAG**, индексация, lifecycle, healthcheck, админ-логика |
+| `providers/` | **GigaChat**, **OpenAI**-совместимые клиенты, эмбеддинги, изображения, **STT**/**TTS** |
+| `admin_api/` | **FastAPI**: `/api/health`, `/api/overview`, логи, документы, ассеты |
+| `frontend/admin-ui/` | **React** + **Vite** операционная консоль |
+| `admin_ui/` | Legacy **Streamlit** (в т.ч. `docker-compose.assistant.yml`) |
+| `database/` | `schema.sql`, миграции, контракты |
+| `docs/` | Архитектура, операции, безопасность, сценарии, скриншоты |
+| `docker-compose.portfolio.yml` | Самодостаточный стек для портфолио |
+| `docker-compose.assistant.yml` | Серверный compose с внешними сетями |
+| `legacy/pem09_source/` | Справочный код курса, **не** используется в рантайме |
+
+---
+
+## Ограничения
+
+- Это **прототип** для демонстрации инженерных решений, не завершённый продукт.
+- **Single-tenant**: нет модели мультиарендности и изоляции данных между организациями.
+- **Admin API** открыт на уровне сети: **нет встроенного auth / RBAC**; не публикуйте его в интернет без своего контура защиты (**TLS**, **reverse proxy**, **VPN** и т.д.). Подробнее: [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md).
+- Часть телеметрии и переходов в **degraded**-режим носит **best-effort** характер; при сбоях **PostgreSQL** или **Chroma** поведение документировано в коде и `docs/`, но не гарантируется как в управляемом SaaS.
+- Нет готовой «коробочной» **production RBAC** и политик соответствия — их нужно проектировать отдельно, если репозиторий станет основой боевой системы.
+
+---
+
+## Технологии
+
+**Python**, **FastAPI**, **Uvicorn**, **PostgreSQL**, **ChromaDB**, **Docker**, **Docker Compose**, **React**, **TypeScript**, **Vite**, **nginx**, **Telegram Bot API** (**pyTelegramBotAPI**), **Streamlit** (legacy admin), **GigaChat**, **OpenAI**-совместимые API, **ProxyAPI**, **RAG**, **STT**, **TTS**.
