@@ -1,10 +1,15 @@
+import hashlib
 import os
 import sys
+import threading
 import time
 import traceback
 import uuid
 from pathlib import Path
 from typing import Any
+
+"""Сериализация voice download → save → STT (защита от гонок в pyTelegramBotAPI / потоках)."""
+_VOICE_AUDIO_PIPELINE_LOCK = threading.Lock()
 
 import telebot
 
@@ -218,22 +223,42 @@ def _safe_query_preview_for_log(text: str, max_len: int = 200) -> str:
     return t[:max_len] + "..."
 
 
-def _guess_audio_filename(file_path: str | None, content_type: str | None) -> str:
-    p = str(file_path or "").strip()
+def _voice_storage_filename(
+    execution_id: str,
+    *,
+    telegram_file_path: str | None,
+    voice_file_unique_id: str | None,
+    mime_type: str | None,
+) -> str:
+    """
+    Уникальное имя файла на execution + Telegram unique id (не общий voice_input.* на все сообщения).
+    """
+    exec_prefix = (execution_id or "").replace("-", "")[:12]
+    p = str(telegram_file_path or "").strip()
     if p:
         name = Path(p).name
-        if "." in name:
-            return name
-    c = (content_type or "").lower()
-    if "ogg" in c or "opus" in c:
-        return "voice_input.ogg"
+        if name and "." in name:
+            safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)[-120:]
+            return f"{exec_prefix}_{safe}"
+    uid = str(voice_file_unique_id or "").strip()
+    safe_uid = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in uid)[:48]
+    c = (mime_type or "").lower()
     if "mpeg" in c or "mp3" in c:
-        return "voice_input.mp3"
-    if "wav" in c:
-        return "voice_input.wav"
-    if "m4a" in c or "mp4" in c:
-        return "voice_input.m4a"
-    return "voice_input.bin"
+        ext = ".mp3"
+    elif "wav" in c:
+        ext = ".wav"
+    elif "m4a" in c or "mp4" in c:
+        ext = ".m4a"
+    elif "ogg" in c or "opus" in c:
+        ext = ".ogg"
+    else:
+        ext = ".bin"
+    tail = safe_uid or "voice"
+    return f"{exec_prefix}_{tail}{ext}"
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def build_stt_provider(config: AppConfig) -> tuple[STTProvider, str | None]:
@@ -510,172 +535,218 @@ def create_bot() -> telebot.TeleBot:
                 )
                 return
 
-            file_info = bot.get_file(voice.file_id)
-            raw_bytes = bot.download_file(file_info.file_path)
-            size_bytes = len(raw_bytes)
-            if size_bytes > max(1, int(config.audio_max_bytes)):
-                err = f"audio too large after download: {size_bytes} > {config.audio_max_bytes}"
+            voice_fid = str(getattr(voice, "file_id", "") or "")
+            voice_uid = str(getattr(voice, "file_unique_id", "") or "")
+
+            with _VOICE_AUDIO_PIPELINE_LOCK:
+                file_info = bot.get_file(voice.file_id)
+                raw_dl = bot.download_file(file_info.file_path)
+                audio_payload = bytes(raw_dl)
+                size_bytes = len(audio_payload)
+                if size_bytes > max(1, int(config.audio_max_bytes)):
+                    err = f"audio too large after download: {size_bytes} > {config.audio_max_bytes}"
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="voice_processing_error",
+                        status="error",
+                        details={
+                            "mode": "voice",
+                            "route": "voice",
+                            "input_type": "voice",
+                            "size_bytes": size_bytes,
+                            "audio_max_bytes": int(config.audio_max_bytes),
+                            "telegram_file_id": voice_fid,
+                            "telegram_file_unique_id": voice_uid or None,
+                        },
+                        error_text=err,
+                    )
+                    bot.send_message(
+                        message.chat.id,
+                        "Голосовое сообщение слишком большое. Попробуйте файл меньшего размера.",
+                    )
+                    return
+
+                filename = _voice_storage_filename(
+                    execution_id,
+                    telegram_file_path=file_info.file_path,
+                    voice_file_unique_id=voice_uid,
+                    mime_type=mime_type,
+                )
+                dl_sha256 = _sha256_hex(audio_payload)
+                input_asset = audio_pipeline.save_input_audio(
+                    audio_payload,
+                    filename=filename,
+                    content_type=mime_type,
+                )
+                input_path = audio_pipeline.resolve_audio_asset_path(asset_ref=input_asset.asset_ref)
+                if input_asset.sha256 != dl_sha256:
+                    print(
+                        f"[assistant-flow] voice: downloaded SHA256 != saved asset SHA256 "
+                        f"execution_id={execution_id}",
+                        flush=True,
+                    )
+                stt_input_sha256 = _sha256_hex(audio_payload)
+                voice_diag = {
+                    "telegram_file_id": voice_fid,
+                    "telegram_file_unique_id": voice_uid or None,
+                    "downloaded_size_bytes": size_bytes,
+                    "downloaded_sha256": dl_sha256,
+                    "input_asset_ref": input_asset.asset_ref,
+                    "input_asset_sha256": input_asset.sha256,
+                    "input_asset_path": str(input_path) if input_path else None,
+                    "converted_audio_path": None,
+                    "stt_input_sha256": stt_input_sha256,
+                    "stt_input_size_bytes": size_bytes,
+                    "stt_provider": config.stt_provider,
+                    "stt_model": config.stt_model,
+                }
+                stt_start_ts = time.monotonic()
                 lifecycle.log_processing_event(
                     execution_id=execution_id,
                     intake_event_id=intake_id,
-                    stage="voice_processing_error",
-                    status="error",
+                    stage="stt_started",
+                    status="started",
                     details={
                         "mode": "voice",
                         "route": "voice",
                         "input_type": "voice",
-                        "size_bytes": size_bytes,
-                        "audio_max_bytes": int(config.audio_max_bytes),
+                        "filename": input_asset.filename,
+                        "mime_type": input_asset.content_type,
+                        "duration_sec": duration_sec,
+                        "size_bytes": input_asset.size_bytes,
+                        "asset_ref": input_asset.asset_ref,
+                        "input_asset_ref": input_asset.asset_ref,
+                        "audio_path": str(input_path) if input_path else None,
+                        "provider": config.stt_provider,
+                        "model": config.stt_model,
+                        **voice_diag,
                     },
-                    error_text=err,
                 )
-                bot.send_message(
-                    message.chat.id,
-                    "Голосовое сообщение слишком большое. Попробуйте файл меньшего размера.",
+
+                stt_result = stt_provider.transcribe(
+                    audio_payload,
+                    filename=input_asset.filename,
+                    content_type=input_asset.content_type,
+                    metadata={
+                        "execution_id": execution_id,
+                        "telegram_chat_id": message.chat.id,
+                        "telegram_user_id": message.from_user.id,
+                    },
                 )
-                return
-
-            filename = _guess_audio_filename(file_info.file_path, mime_type)
-            input_asset = audio_pipeline.save_input_audio(
-                raw_bytes,
-                filename=filename,
-                content_type=mime_type,
-            )
-            input_path = audio_pipeline.resolve_audio_asset_path(asset_ref=input_asset.asset_ref)
-            stt_start_ts = time.monotonic()
-            lifecycle.log_processing_event(
-                execution_id=execution_id,
-                intake_event_id=intake_id,
-                stage="stt_started",
-                status="started",
-                details={
-                    "mode": "voice",
-                    "route": "voice",
-                    "input_type": "voice",
-                    "filename": input_asset.filename,
-                    "mime_type": input_asset.content_type,
-                    "duration_sec": duration_sec,
-                    "size_bytes": input_asset.size_bytes,
-                    "asset_ref": input_asset.asset_ref,
-                    "audio_path": str(input_path) if input_path else None,
-                    "provider": config.stt_provider,
-                    "model": config.stt_model,
-                },
-            )
-
-            stt_result = stt_provider.transcribe(
-                raw_bytes,
-                filename=input_asset.filename,
-                content_type=input_asset.content_type,
-                metadata={
-                    "execution_id": execution_id,
-                    "telegram_chat_id": message.chat.id,
-                    "telegram_user_id": message.from_user.id,
-                },
-            )
-            stt_latency_ms = stt_result.latency_ms
-            if stt_latency_ms is None:
-                stt_latency_ms = int((time.monotonic() - stt_start_ts) * 1000)
-            stt_norm = AudioTranscriptionResult(
-                ok=stt_result.ok,
-                transcript=stt_result.transcript,
-                provider=stt_result.provider,
-                model=stt_result.model,
-                latency_ms=stt_latency_ms,
-                error=stt_result.error,
-                disabled=stt_result.disabled,
-                input_tokens=(
-                    int(stt_result.usage.get("input_tokens"))
-                    if isinstance(stt_result.usage, dict)
-                    and stt_result.usage.get("input_tokens") is not None
-                    else None
-                ),
-                output_tokens=(
-                    int(stt_result.usage.get("output_tokens"))
-                    if isinstance(stt_result.usage, dict)
-                    and stt_result.usage.get("output_tokens") is not None
-                    else None
-                ),
-                total_tokens=(
-                    int(stt_result.usage.get("total_tokens"))
-                    if isinstance(stt_result.usage, dict)
-                    and stt_result.usage.get("total_tokens") is not None
-                    else None
-                ),
-                cost_usd=(
-                    float(stt_result.usage.get("cost_usd"))
-                    if isinstance(stt_result.usage, dict)
-                    and stt_result.usage.get("cost_usd") is not None
-                    else None
-                ),
-            )
-            stt_details = audio_pipeline.build_audio_event_details(
-                input_asset=input_asset,
-                transcription=stt_norm,
-                metadata={
-                    "mode": "voice",
-                    "route": "voice",
-                    "input_type": "voice",
-                    "filename": input_asset.filename,
-                    "mime_type": input_asset.content_type,
-                    "duration_sec": duration_sec,
-                    "size_bytes": input_asset.size_bytes,
-                    "audio_path": str(input_path) if input_path else None,
-                },
-            )
-            stt_details["transcript"] = stt_norm.transcript
-            stt_details["asset_ref"] = input_asset.asset_ref
-            stt_details["audio_path"] = str(input_path) if input_path else None
-            stt_details["provider"] = stt_norm.provider
-            stt_details["model"] = stt_norm.model
-            stt_details["latency_ms"] = stt_norm.latency_ms
-            stt_details["size_bytes"] = input_asset.size_bytes
-            stt_details["mime_type"] = input_asset.content_type
-            lifecycle.log_processing_event(
-                execution_id=execution_id,
-                intake_event_id=intake_id,
-                stage="stt_completed",
-                status="success" if stt_norm.ok else "error",
-                details=stt_details,
-                error_text=(stt_norm.error or None),
-            )
-
-            if not stt_norm.ok:
+                stt_latency_ms = stt_result.latency_ms
+                if stt_latency_ms is None:
+                    stt_latency_ms = int((time.monotonic() - stt_start_ts) * 1000)
+                stt_norm = AudioTranscriptionResult(
+                    ok=stt_result.ok,
+                    transcript=stt_result.transcript,
+                    provider=stt_result.provider,
+                    model=stt_result.model,
+                    latency_ms=stt_latency_ms,
+                    error=stt_result.error,
+                    disabled=stt_result.disabled,
+                    input_tokens=(
+                        int(stt_result.usage.get("input_tokens"))
+                        if isinstance(stt_result.usage, dict)
+                        and stt_result.usage.get("input_tokens") is not None
+                        else None
+                    ),
+                    output_tokens=(
+                        int(stt_result.usage.get("output_tokens"))
+                        if isinstance(stt_result.usage, dict)
+                        and stt_result.usage.get("output_tokens") is not None
+                        else None
+                    ),
+                    total_tokens=(
+                        int(stt_result.usage.get("total_tokens"))
+                        if isinstance(stt_result.usage, dict)
+                        and stt_result.usage.get("total_tokens") is not None
+                        else None
+                    ),
+                    cost_usd=(
+                        float(stt_result.usage.get("cost_usd"))
+                        if isinstance(stt_result.usage, dict)
+                        and stt_result.usage.get("cost_usd") is not None
+                        else None
+                    ),
+                )
+                stt_details = audio_pipeline.build_audio_event_details(
+                    input_asset=input_asset,
+                    transcription=stt_norm,
+                    metadata={
+                        "mode": "voice",
+                        "route": "voice",
+                        "input_type": "voice",
+                        "filename": input_asset.filename,
+                        "mime_type": input_asset.content_type,
+                        "duration_sec": duration_sec,
+                        "size_bytes": input_asset.size_bytes,
+                        "audio_path": str(input_path) if input_path else None,
+                    },
+                )
+                stt_details["transcript"] = stt_norm.transcript
+                stt_details["asset_ref"] = input_asset.asset_ref
+                stt_details["input_asset_ref"] = input_asset.asset_ref
+                stt_details["audio_path"] = str(input_path) if input_path else None
+                stt_details["provider"] = stt_norm.provider
+                stt_details["model"] = stt_norm.model
+                stt_details["latency_ms"] = stt_norm.latency_ms
+                stt_details["size_bytes"] = input_asset.size_bytes
+                stt_details["mime_type"] = input_asset.content_type
+                stt_details.update(voice_diag)
+                stt_details["transcript"] = stt_norm.transcript
                 lifecycle.log_processing_event(
                     execution_id=execution_id,
                     intake_event_id=intake_id,
-                    stage="voice_processing_error",
-                    status="error",
+                    stage="stt_completed",
+                    status="success" if stt_norm.ok else "error",
                     details=stt_details,
-                    error_text=stt_norm.error,
+                    error_text=(stt_norm.error or None),
                 )
-                if stt_norm.disabled:
-                    bot.send_message(
-                        message.chat.id,
-                        "Распознавание голоса временно отключено.",
+
+                if not stt_norm.ok:
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="voice_processing_error",
+                        status="error",
+                        details=stt_details,
+                        error_text=stt_norm.error,
                     )
-                else:
+                    if stt_norm.disabled:
+                        bot.send_message(
+                            message.chat.id,
+                            "Распознавание голоса временно отключено.",
+                        )
+                    else:
+                        bot.send_message(
+                            message.chat.id,
+                            "Не удалось распознать голосовое сообщение. Попробуйте позже.",
+                        )
+                    return
+
+                transcript = (stt_norm.transcript or "").strip()
+                if not transcript:
+                    lifecycle.log_processing_event(
+                        execution_id=execution_id,
+                        intake_event_id=intake_id,
+                        stage="voice_processing_error",
+                        status="error",
+                        details=stt_details,
+                        error_text="empty transcript",
+                    )
                     bot.send_message(
                         message.chat.id,
                         "Не удалось распознать голосовое сообщение. Попробуйте позже.",
                     )
-                return
+                    return
 
-            transcript = (stt_norm.transcript or "").strip()
-            if not transcript:
-                lifecycle.log_processing_event(
-                    execution_id=execution_id,
-                    intake_event_id=intake_id,
-                    stage="voice_processing_error",
-                    status="error",
-                    details=stt_details,
-                    error_text="empty transcript",
+                print(
+                    f"[assistant-flow] voice STT ok execution_id={execution_id} "
+                    f"telegram_file_id={voice_fid} downloaded_sha256={dl_sha256} "
+                    f"input_asset_ref={input_asset.asset_ref} transcript_chars={len(transcript)}",
+                    flush=True,
                 )
-                bot.send_message(
-                    message.chat.id,
-                    "Не удалось распознать голосовое сообщение. Попробуйте позже.",
-                )
-                return
 
             lifecycle.log_processing_event(
                 execution_id=execution_id,
@@ -688,6 +759,7 @@ def create_bot() -> telebot.TeleBot:
                     "query_preview": _safe_query_preview_for_log(transcript, max_len=200),
                     "transcript": transcript,
                     "asset_ref": input_asset.asset_ref,
+                    "input_asset_ref": input_asset.asset_ref,
                     "audio_path": str(input_path) if input_path else None,
                 },
             )
@@ -724,6 +796,7 @@ def create_bot() -> telebot.TeleBot:
                 "transcript": transcript,
                 "query_preview": _safe_query_preview_for_log(transcript, max_len=200),
                 "asset_ref": input_asset.asset_ref,
+                "input_asset_ref": input_asset.asset_ref,
                 "audio_path": str(input_path) if input_path else None,
                 "filename": input_asset.filename,
                 "mime_type": input_asset.content_type,

@@ -19,12 +19,34 @@ from services.admin_knowledge_indexer import AdminKnowledgeIndexer
 from services.asset_repository import AssetNotFoundError, AssetValidationError
 from services.asset_repository_factory import create_asset_repository
 from services.async_job_service import AsyncJob, AsyncJobService
+from services.audio_browser_preview import ensure_mp3_browser_preview, needs_browser_mp3_preview
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _sniff_audio_content_type(path: Path) -> str | None:
+    """Best-effort magic sniff when filename mime guess fails (voice assets)."""
+    try:
+        head = path.read_bytes()[:32]
+    except OSError:
+        return None
+    if len(head) >= 3 and head[:3] == b"ID3":
+        return "audio/mpeg"
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return "audio/mpeg"
+    if head.startswith(b"OggS"):
+        return "audio/ogg"
+    if head.startswith(b"RIFF") and b"WAVE" in head[:12]:
+        return "audio/wav"
+    if head.startswith(b"fLaC"):
+        return "audio/flac"
+    if head.startswith(b"\x1aE\xdf\xa3"):
+        return "audio/webm"
+    return None
 
 
 def _read_kb_text_preview(path: Path, max_chars: int = 12000) -> str | None:
@@ -538,9 +560,27 @@ class AdminService:
             if not path.is_file():
                 raise ValueError("asset not found")
             guessed = (mimetypes.guess_type(path.name)[0] or "").lower()
+            ref_norm = ref.replace("\\", "/").lower()
+            under_audio_ns = "/audio/" in f"/{ref_norm}/" or ref_norm.startswith("audio/")
             if not any(guessed.startswith(prefix) for prefix in allowed_prefixes):
-                raise ValueError("asset type is not allowed")
-            return path, guessed
+                sniffed = _sniff_audio_content_type(path)
+                if sniffed and any(sniffed.startswith(prefix) for prefix in allowed_prefixes):
+                    guessed = sniffed
+                elif under_audio_ns and "audio/" in allowed_prefixes:
+                    guessed = sniffed or "audio/ogg"
+                else:
+                    raise ValueError("asset type is not allowed")
+            serve_path, serve_ct = path, guessed
+            if any(p.startswith("audio/") for p in allowed_prefixes) and guessed.startswith(
+                "audio/"
+            ):
+                if needs_browser_mp3_preview(path, guessed):
+                    mp3_p = ensure_mp3_browser_preview(
+                        path, cache_root=Path(self._config.asset_storage_dir)
+                    )
+                    if mp3_p is not None:
+                        serve_path, serve_ct = mp3_p, "audio/mpeg"
+            return serve_path, serve_ct
         except (AssetValidationError, AssetNotFoundError) as exc:
             raise ValueError("invalid asset_ref") from exc
 

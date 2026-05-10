@@ -1374,6 +1374,18 @@ code {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.audio-page .logs-filter-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.audio-page .audio-ops-summary.modality-ops-panels {
+  max-height: min(32vh, 300px);
+}
+
+.audio-io-grid .audio-io-cta-head {
+  margin-top: 0.35rem;
+}
+
 /* Modality detail cards: title + overview + operational panels (reuse Text/Image/Audio/RAG) */
 .logs-detail.rag-modality-detail {
   display: flex;

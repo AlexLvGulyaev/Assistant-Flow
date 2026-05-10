@@ -24,5 +24,11 @@ def api_asset_preview(
         if "not found" in msg:
             raise HTTPException(status_code=404, detail="asset_not_found") from exc
         raise HTTPException(status_code=400, detail="invalid_asset_ref") from exc
-    return FileResponse(path=path, media_type=content_type, filename=path.name)
+    # filename= без inline даёт Content-Disposition: attachment — HTML5 <audio> часто не играет такой ответ.
+    return FileResponse(
+        path=path,
+        media_type=content_type,
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 

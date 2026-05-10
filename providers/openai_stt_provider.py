@@ -43,6 +43,7 @@ class OpenAISTTProvider(STTProvider):
         name = (filename or "voice_input.ogg").strip() or "voice_input.ogg"
         audio_file = io.BytesIO(bytes(audio_bytes))
         audio_file.name = name
+        audio_file.seek(0)
         started = time.monotonic()
         try:
             response = self._client.audio.transcriptions.create(

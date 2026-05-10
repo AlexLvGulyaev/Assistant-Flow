@@ -131,8 +131,8 @@ export async function postDocumentsReindex(
 }
 
 export function getAssetPreviewUrl(assetRef: string): string {
-  const q = new URLSearchParams({ asset_ref: assetRef });
-  return `${getApiBaseUrl()}/api/assets/preview?${q.toString()}`;
+  const enc = encodeURIComponent(assetRef.trim());
+  return `${getApiBaseUrl()}/api/assets/preview?asset_ref=${enc}`;
 }
 
 /** Mirrors admin_api/schemas — keep loose for API evolution */
