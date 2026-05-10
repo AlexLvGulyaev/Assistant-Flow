@@ -11,6 +11,8 @@ import {
 } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
+import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -23,6 +25,13 @@ const READINESS_KEYS: { key: string; label: string }[] = [
   { key: "chroma_use_http", label: "Chroma HTTP" },
 ];
 
+/** Окно для блока «AI-активность» (данные /api/summary?hours=…). */
+const OVERVIEW_SUMMARY_WINDOWS: Array<{ label: string; hours: number }> = [
+  { label: "24h", hours: 24 },
+  { label: "48h", hours: 48 },
+  { label: "7d", hours: 168 },
+];
+
 export function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -31,6 +40,10 @@ export function OverviewPage() {
   const [healthWarn, setHealthWarn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [summaryWindowLabel, setSummaryWindowLabel] = useState("24h");
+  const summaryHours =
+    OVERVIEW_SUMMARY_WINDOWS.find((w) => w.label === summaryWindowLabel)?.hours ?? 24;
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +55,7 @@ export function OverviewPage() {
         const [oRes, hRes, sRes, dRes] = await Promise.allSettled([
           fetchOverview(),
           fetchHealth(),
-          fetchSummary(24),
+          fetchSummary(summaryHours),
           fetchDocuments(200),
         ]);
         if (cancelled) return;
@@ -79,14 +92,48 @@ export function OverviewPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshNonce, summaryHours]);
+
+  const overviewHead = (
+    <div className="overview-page__head">
+      <div>
+        <h1 className="page__title">Обзор</h1>
+        <p className="page__lead muted overview-lead">
+          Конфигурационный снимок <code>/api/overview</code> + live-проверки{" "}
+          <code>/api/health</code>
+        </p>
+      </div>
+      <div className="summary-head__actions">
+        <label className="summary-hours">
+          <span className="muted">Период</span>
+          <select
+            className="summary-hours__select"
+            value={summaryWindowLabel}
+            onChange={(e) => setSummaryWindowLabel(e.target.value)}
+            aria-label="Период операционной сводки на обзоре"
+            disabled={loading}
+          >
+            {OVERVIEW_SUMMARY_WINDOWS.map((w) => (
+              <option key={w.label} value={w.label}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <OperationalRefreshButton
+          loading={loading}
+          onClick={() => setRefreshNonce((n) => n + 1)}
+        />
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
-      <div className="page">
-        <h1 className="page__title">Обзор</h1>
+      <div className="page overview-page">
+        {overviewHead}
         <LoadingState label="Загрузка обзора…" />
-        <div className="skeleton-grid page__mt">
+        <div className="skeleton-grid overview-tight">
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
           <div className="skeleton skeleton--card" />
@@ -97,20 +144,26 @@ export function OverviewPage() {
 
   if (error) {
     return (
-      <div className="page">
-        <h1 className="page__title">Обзор</h1>
-        <div className="panel panel--error page__mt" role="alert">
+      <div className="page overview-page">
+        {overviewHead}
+        <div className="panel panel--error overview-tight" role="alert">
           {error}
         </div>
+        <p className="muted overview-tight metric-sub">
+          Проверьте доступность бэкенда и сети, затем нажмите «Обновить».
+        </p>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="page">
-        <h1 className="page__title">Обзор</h1>
-        <EmptyState message="Нет данных обзора от API." />
+      <div className="page overview-page">
+        {overviewHead}
+        <OperationalSessionEmptyHint
+          title="Данные обзора от API не получены."
+          hint="Проверьте /api/overview и нажмите «Обновить»."
+        />
       </div>
     );
   }
@@ -148,11 +201,7 @@ export function OverviewPage() {
   });
   return (
     <div className="page overview-page">
-      <h1 className="page__title">Обзор</h1>
-      <p className="page__lead muted overview-lead">
-        Конфигурационный снимок <code>/api/overview</code> + live-проверки{" "}
-        <code>/api/health</code>
-      </p>
+      {overviewHead}
 
       {warnings.length > 0 ? (
         <div className="overview-warnings-strip">
@@ -236,7 +285,7 @@ export function OverviewPage() {
       <div className="page__grid overview-tight">
         <SectionCard
         title="AI-активность"
-        description="Операционные метрики маршрутов и телеметрии за 24 часа."
+        description="Операционные метрики маршрутов и телеметрии"
       >
           <dl className="kv overview-kv">
             <dt>Text</dt>
@@ -466,7 +515,7 @@ function buildOverviewWarnings(args: {
     out.push("LLM-ключи не настроены.");
   }
   if ((args.summary?.events?.error ?? 0) > 0) {
-    out.push("За 24ч есть ошибки в processing logs.");
+    out.push("В сводке за выбранный период есть ошибки (processing logs).");
   }
   return out.slice(0, 6);
 }

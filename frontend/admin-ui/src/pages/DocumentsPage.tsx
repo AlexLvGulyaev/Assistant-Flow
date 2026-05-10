@@ -17,6 +17,8 @@ import {
 } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
+import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   formatDurationMs,
@@ -161,10 +163,10 @@ export function DocumentsPage() {
   );
   const lastPageIndex = Math.max(0, totalPagesRaw - 1);
 
-  const selected = useMemo(
-    () => pageDocs.find((d) => d.document_id === selectedId) ?? null,
-    [pageDocs, selectedId]
-  );
+  const selected =
+    pageDocs.find((d) => d.document_id === selectedId) ??
+    filtered.find((d) => d.document_id === selectedId) ??
+    null;
 
   const timelineWithDelta = useMemo(() => {
     const raw = detail?.timeline ?? [];
@@ -206,6 +208,11 @@ export function DocumentsPage() {
       return;
     }
     if (!pageDocs.some((d) => d.document_id === selectedId)) {
+      const idx = filtered.findIndex((d) => d.document_id === selectedId);
+      if (idx >= 0) {
+        setCurrentPage(Math.floor(idx / PAGE_SIZE));
+        return;
+      }
       setSelectedId(pageDocs[0].document_id);
     }
   }, [filtered, pageDocs, selectedId]);
@@ -471,10 +478,11 @@ export function DocumentsPage() {
             className="docs-action-btn docs-action-btn--ghost"
             onClick={onRefresh}
             disabled={loading}
+            aria-busy={loading || undefined}
           >
-            Обновить список
+            {loading ? "Обновление…" : "Обновить"}
           </button>
-          {!loading && !error && items.length > 0 ? (
+          {!loading && !error ? (
             <>
               <div className="docs-toolbar__pop-anchor" ref={summaryPopRef}>
                 <button
@@ -567,21 +575,11 @@ export function DocumentsPage() {
       </div>
 
       <div className="docs-main-split">
-      {loading ? (
-        <div className="docs-split-fill-center">
-          <LoadingState label="Загрузка документов…" />
-        </div>
-      ) : error ? (
+      {error ? (
         <div className="docs-split-fill-center">
           <div className="panel panel--error" role="alert">
             {error}
           </div>
-        </div>
-      ) : items.length === 0 ? (
-        <div className="docs-split-fill-center">
-          <section className="card">
-            <EmptyState message="Нет документов в каталоге (PostgreSQL пуст или недоступен)." />
-          </section>
         </div>
       ) : (
         <div className="logs-console docs-console docs-console--fill">
@@ -625,7 +623,7 @@ export function DocumentsPage() {
               <div className="logs-filter-meta muted">
                 Страница {filtered.length === 0 ? 0 : pageIndex + 1} из{" "}
                 {totalPagesRaw || 0} · всего документов: {filtered.length} · показано:{" "}
-                {pageDocs.length}
+                {items.length === 0 ? 0 : pageDocs.length}
               </div>
               <div className="logs-page-controls">
                 <button
@@ -661,7 +659,14 @@ export function DocumentsPage() {
             </div>
 
             <div className="logs-list" ref={listRef}>
-              {filtered.length === 0 ? (
+              {loading && items.length === 0 ? (
+                <LoadingState label="Загрузка документов…" />
+              ) : items.length === 0 ? (
+                <OperationalSessionEmptyHint
+                  title="Документы не найдены."
+                  hint="Загрузите документ или обновите список."
+                />
+              ) : filtered.length === 0 ? (
                 <div className="panel panel--muted">Нет документов по фильтрам.</div>
               ) : (
                 pageDocs.map((d) => (
@@ -926,22 +931,20 @@ export function DocumentsPage() {
                           )}
                         </div>
                       </div>
-                      <details className="docs-tech-strip docs-tech-strip--in-body">
-                        <summary>Технические детали</summary>
-                        <pre className="docs-tech-strip__body mono">
-                          {formatJson({
-                            document: detail.document,
-                            versions: detail.versions,
-                            active_version: detail.active_version,
-                            selected_version: detail.selected_version,
-                            selected_version_id: detail.selected_version_id,
-                            chunk_counts_by_version: detail.chunk_counts_by_version,
-                            chunks_sync_diagnostic: detail.chunks_sync_diagnostic,
-                            chunks_sample: (detail.chunks ?? []).slice(0, 5),
-                            timeline: detail.timeline,
-                          })}
-                        </pre>
-                      </details>
+                      <SessionJsonSnapshot
+                        className="session-json-snapshot--in-body"
+                        body={formatJson({
+                          document: detail.document,
+                          versions: detail.versions,
+                          active_version: detail.active_version,
+                          selected_version: detail.selected_version,
+                          selected_version_id: detail.selected_version_id,
+                          chunk_counts_by_version: detail.chunk_counts_by_version,
+                          chunks_sync_diagnostic: detail.chunks_sync_diagnostic,
+                          chunks_sample: (detail.chunks ?? []).slice(0, 5),
+                          timeline: detail.timeline,
+                        })}
+                      />
                     </div>
                   </div>
                 </section>
@@ -969,10 +972,10 @@ export function DocumentsPage() {
                           {ev.error_text ? (
                             <div className="logs-stage__details mono">{ev.error_text}</div>
                           ) : null}
-                          <details className="docs-timeline__raw">
-                            <summary>техн. детали</summary>
-                            <pre className="logs-pre mono">{formatJson(ev.details)}</pre>
-                          </details>
+                          <SessionJsonSnapshot
+                            className="session-json-snapshot--timeline"
+                            body={formatJson(ev.details)}
+                          />
                         </div>
                       ))
                     )}

@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 import { fetchRecentLogs, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
+import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
+import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   formatDurationMs,
@@ -125,6 +128,7 @@ export function TextPage() {
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [windowLabel, setWindowLabel] = useState("24h");
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [modelFilter, setModelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
@@ -142,7 +146,6 @@ export function TextPage() {
     (async () => {
       setLoading(true);
       setError(null);
-      setCurrentPage(0);
       try {
         const res = await fetchRecentLogs({ limit: fetchLimit, sinceHours });
         if (!cancelled) setItems(res.items ?? []);
@@ -157,7 +160,7 @@ export function TextPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchLimit, sinceHours]);
+  }, [fetchLimit, sinceHours, refreshNonce]);
 
   useEffect(() => {
     setFullTextModal(null);
@@ -245,11 +248,19 @@ export function TextPage() {
       return;
     }
     if (!pageSessions.some((s) => s.executionId === selectedId)) {
+      const idx = filtered.findIndex((s) => s.executionId === selectedId);
+      if (idx >= 0) {
+        setCurrentPage(Math.floor(idx / PAGE_SIZE));
+        return;
+      }
       setSelectedId(pageSessions[0].executionId);
     }
   }, [filtered, pageSessions, selectedId]);
 
-  const selected = pageSessions.find((s) => s.executionId === selectedId) ?? null;
+  const selected =
+    pageSessions.find((s) => s.executionId === selectedId) ??
+    filtered.find((s) => s.executionId === selectedId) ??
+    null;
 
   function resetPagination() {
     pendingListFocusRef.current = true;
@@ -338,9 +349,7 @@ export function TextPage() {
         Операционная консоль текстовых ответов · <code>/api/logs/recent</code> · время: МСК
       </p>
 
-      {loading ? (
-        <LoadingState label="Загрузка текстовых сессий…" />
-      ) : error ? (
+      {error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
@@ -392,9 +401,15 @@ export function TextPage() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Поиск: execution_id, запрос, ответ, модель, этап…"
               />
-              <div className="logs-filter-meta muted">
-                Страница {filtered.length === 0 ? 0 : pageIndex + 1} из {totalPagesRaw || 0} · всего
-                сессий: {filtered.length} · показано: {pageSessions.length}
+              <div className="logs-filter-meta logs-filter-meta--with-refresh muted">
+                <span>
+                  Страница {filtered.length === 0 ? 0 : pageIndex + 1} из {totalPagesRaw || 0} · всего
+                  сессий: {filtered.length} · показано: {pageSessions.length}
+                </span>
+                <OperationalRefreshButton
+                  loading={loading}
+                  onClick={() => setRefreshNonce((n) => n + 1)}
+                />
               </div>
               <div className="logs-page-controls">
                 <button
@@ -425,24 +440,15 @@ export function TextPage() {
             </div>
 
             <div className="logs-list" ref={listRef}>
-              {sessions.length === 0 ? (
-                <div className="panel panel--muted text-page__empty-hint">
-                  <p className="text-page__empty-title">
-                    За выбранный период text-сессии не найдены.
-                  </p>
-                  <p className="text-page__empty-sub muted">
-                    Попробуйте увеличить период до 48h или 7d.
-                  </p>
-                  {windowLabel === "24h" ? (
-                    <button
-                      type="button"
-                      className="logs-page-btn page__mt-sm"
-                      onClick={() => setWindowLabel("7d")}
-                    >
-                      Показать за 7 дней
-                    </button>
-                  ) : null}
-                </div>
+              {loading && items.length === 0 ? (
+                <LoadingState label="Загрузка текстовых сессий…" />
+              ) : sessions.length === 0 ? (
+                <OperationalSessionEmptyHint
+                  title="За выбранный период text-сессии не найдены."
+                  hint="Попробуйте увеличить период или изменить фильтры."
+                  showExpand7d={windowLabel === "24h"}
+                  onExpand7d={() => setWindowLabel("7d")}
+                />
               ) : filtered.length === 0 ? (
                 <div className="panel panel--muted">
                   <p>Нет сессий по текущим фильтрам или окну времени.</p>
@@ -494,13 +500,7 @@ export function TextPage() {
 
           <section className="logs-right card">
             {!selected ? (
-              <EmptyState
-                message={
-                  sessions.length === 0
-                    ? "Нет text-сессий в загруженной выборке. Расширьте период или измените фильтры слева."
-                    : "Выберите текстовую сессию в списке слева."
-                }
-              />
+              <EmptyState message="Выберите текстовую сессию в списке слева." />
             ) : (
               <>
                 <div className="logs-detail rag-modality-detail">
@@ -779,14 +779,10 @@ export function TextPage() {
                     </div>
                   </details>
 
-                  <details className="logs-raw-session page__mt">
-                    <summary className="logs-raw-session__summary">
-                      Технический JSON snapshot · {selected.rows.length} строк
-                    </summary>
-                    <pre className="log-details__json mono logs-raw-session__body">
-                      {JSON.stringify(selected.rows, null, 2)}
-                    </pre>
-                  </details>
+                  <SessionJsonSnapshot
+                    className="page__mt"
+                    body={JSON.stringify(selected.rows, null, 2)}
+                  />
                 </div>
 
                 {typeof document !== "undefined" && fullTextModal

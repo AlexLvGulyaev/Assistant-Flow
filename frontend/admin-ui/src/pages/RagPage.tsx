@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 import { fetchRecentLogs, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
+import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
+import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   formatDurationMs,
@@ -99,6 +102,7 @@ export function RagPage() {
   const [hasResultsOnly, setHasResultsOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [windowLabel, setWindowLabel] = useState("24h");
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -117,7 +121,6 @@ export function RagPage() {
     (async () => {
       setLoading(true);
       setError(null);
-      setCurrentPage(0);
       try {
         const res = await fetchRecentLogs({ limit: fetchLimit, sinceHours });
         if (!cancelled) setItems(res.items ?? []);
@@ -132,7 +135,7 @@ export function RagPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchLimit, sinceHours]);
+  }, [fetchLimit, sinceHours, refreshNonce]);
 
   useEffect(() => {
     setChunkFullTextModal(null);
@@ -200,11 +203,19 @@ export function RagPage() {
       return;
     }
     if (!pageSessions.some((s) => s.executionId === selectedId)) {
+      const idx = filtered.findIndex((s) => s.executionId === selectedId);
+      if (idx >= 0) {
+        setCurrentPage(Math.floor(idx / PAGE_SIZE));
+        return;
+      }
       setSelectedId(pageSessions[0].executionId);
     }
   }, [filtered, pageSessions, selectedId]);
 
-  const selected = pageSessions.find((s) => s.executionId === selectedId) ?? null;
+  const selected =
+    pageSessions.find((s) => s.executionId === selectedId) ??
+    filtered.find((s) => s.executionId === selectedId) ??
+    null;
 
   function resetPagination() {
     pendingListFocusRef.current = true;
@@ -292,16 +303,10 @@ export function RagPage() {
       <p className="page__lead rag-page__lead muted">
         Операционная диагностика retrieval · <code>/api/logs/recent</code> · время: МСК
       </p>
-      {loading ? (
-        <LoadingState label="Загрузка RAG-сессий…" />
-      ) : error ? (
+      {error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
         </div>
-      ) : sessions.length === 0 ? (
-        <section className="card">
-          <EmptyState message="В выборке нет RAG-сессий (маршрут rag в логах)." />
-        </section>
       ) : (
         <div className="logs-console">
           <section className="logs-left card">
@@ -360,9 +365,15 @@ export function RagPage() {
                   Только с результатами retrieval
                 </button>
               </div>
-              <div className="logs-filter-meta muted">
-                Страница {filtered.length === 0 ? 0 : pageIndex + 1} из {totalPagesRaw || 0} ·
-                сессий: {filtered.length} · показано: {pageSessions.length}
+              <div className="logs-filter-meta logs-filter-meta--with-refresh muted">
+                <span>
+                  Страница {filtered.length === 0 ? 0 : pageIndex + 1} из {totalPagesRaw || 0} ·
+                  сессий: {filtered.length} · показано: {pageSessions.length}
+                </span>
+                <OperationalRefreshButton
+                  loading={loading}
+                  onClick={() => setRefreshNonce((n) => n + 1)}
+                />
               </div>
               <div className="logs-page-controls">
                 <button
@@ -399,8 +410,17 @@ export function RagPage() {
               </div>
             </div>
             <div className="logs-list" ref={listRef}>
-              {filtered.length === 0 ? (
-                <div className="panel panel--muted">Нет сессий по фильтрам.</div>
+              {loading && items.length === 0 ? (
+                <LoadingState label="Загрузка RAG-сессий…" />
+              ) : sessions.length === 0 ? (
+                <OperationalSessionEmptyHint
+                  title="За выбранный период RAG-сессии не найдены."
+                  hint="Попробуйте увеличить период или изменить фильтры."
+                  showExpand7d={windowLabel === "24h"}
+                  onExpand7d={() => setWindowLabel("7d")}
+                />
+              ) : filtered.length === 0 ? (
+                <div className="panel panel--muted">Нет сессий по текущим фильтрам или окну времени.</div>
               ) : (
                 pageSessions.map((s) => (
                   <button
@@ -813,14 +833,10 @@ export function RagPage() {
                   </div>
                 </details>
 
-                <details className="logs-raw-session page__mt">
-                  <summary className="logs-raw-session__summary">
-                    Технический снимок сессии (JSON) · {selected.rows.length} строк
-                  </summary>
-                  <pre className="log-details__json mono logs-raw-session__body">
-                    {JSON.stringify(selected.rows, null, 2)}
-                  </pre>
-                </details>
+                <SessionJsonSnapshot
+                  className="page__mt"
+                  body={JSON.stringify(selected.rows, null, 2)}
+                />
                 </div>
                 {typeof document !== "undefined" && chunkFullTextModal
                   ? createPortal(

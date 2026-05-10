@@ -3,8 +3,9 @@ import {
   fetchSummary,
   type SummaryResponse,
 } from "../api/client";
-import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
+import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -15,6 +16,7 @@ export function SummaryPage() {
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +37,40 @@ export function SummaryPage() {
     return () => {
       cancelled = true;
     };
-  }, [hours]);
+  }, [hours, refreshNonce]);
+
+  const summaryHead = (
+    <div className="summary-head">
+      <div>
+        <h1 className="page__title">Сводка</h1>
+        <p className="page__lead muted">
+          Скользящее окно <code>/api/summary</code> · метрики из логов
+        </p>
+      </div>
+      <div className="summary-head__actions">
+        <label className="summary-hours">
+          <span className="muted">Период</span>
+          <select
+            className="summary-hours__select"
+            value={hours}
+            onChange={(e) => setHours(Number(e.target.value))}
+            aria-label="Период в часах"
+            disabled={loading}
+          >
+            {HOUR_OPTIONS.map((h) => (
+              <option key={h} value={h}>
+                {h === 168 ? "7d" : `${h}h`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <OperationalRefreshButton
+          loading={loading}
+          onClick={() => setRefreshNonce((n) => n + 1)}
+        />
+      </div>
+    </div>
+  );
 
   const eventsChecksum = useMemo(() => {
     const ev = data?.events;
@@ -50,8 +85,8 @@ export function SummaryPage() {
 
   if (loading) {
     return (
-      <div className="page">
-        <h1 className="page__title">Сводка</h1>
+      <div className="page summary-page">
+        {summaryHead}
         <LoadingState label="Загрузка сводки…" />
       </div>
     );
@@ -59,20 +94,26 @@ export function SummaryPage() {
 
   if (error) {
     return (
-      <div className="page">
-        <h1 className="page__title">Сводка</h1>
-        <div className="panel panel--error page__mt" role="alert">
+      <div className="page summary-page">
+        {summaryHead}
+        <div className="panel panel--error overview-tight" role="alert">
           {error}
         </div>
+        <p className="muted overview-tight metric-sub">
+          Проверьте доступность API и выбранный период, затем нажмите «Обновить».
+        </p>
       </div>
     );
   }
 
   if (!data?.events || !data.sessions || !data.routes) {
     return (
-      <div className="page">
-        <h1 className="page__title">Сводка</h1>
-        <EmptyState message="Неполный payload сводки." />
+      <div className="page summary-page">
+        {summaryHead}
+        <OperationalSessionEmptyHint
+          title="Сводка получена не полностью."
+          hint="Ответ /api/summary не содержит ожидаемых блоков. Попробуйте другой период или нажмите «Обновить»."
+        />
       </div>
     );
   }
@@ -92,29 +133,7 @@ export function SummaryPage() {
 
   return (
     <div className="page summary-page">
-      <div className="summary-head">
-        <div>
-          <h1 className="page__title">Сводка</h1>
-          <p className="page__lead muted">
-            Скользящее окно <code>/api/summary</code> · метрики из логов
-          </p>
-        </div>
-        <label className="summary-hours">
-          <span className="muted">Период</span>
-          <select
-            className="summary-hours__select"
-            value={hours}
-            onChange={(e) => setHours(Number(e.target.value))}
-            aria-label="Период в часах"
-          >
-            {HOUR_OPTIONS.map((h) => (
-              <option key={h} value={h}>
-                {h === 168 ? "7d" : `${h}h`}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {summaryHead}
 
       <div className="page__grid summary-panel-grid">
         <SectionCard

@@ -294,6 +294,30 @@ code {
   margin-bottom: 0.25rem;
 }
 
+.summary-head__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.overview-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.overview-page__head .page__title {
+  margin-bottom: 0.35rem;
+}
+
+.overview-page__head .overview-lead {
+  margin-bottom: 0;
+}
+
 .summary-hours {
   display: inline-flex;
   align-items: center;
@@ -991,6 +1015,58 @@ code {
   font-size: 0.72rem;
 }
 
+.logs-filter-meta--with-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.logs-filter-meta--with-refresh > span:first-child {
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.ops-refresh-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.ops-refresh-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+
+.ops-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ops-session-empty-hint {
+  padding: 0.65rem 0.75rem;
+}
+
+.ops-session-empty-hint__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.ops-session-empty-hint__sub {
+  margin: 0 0 0.5rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .logs-page-controls {
   margin-top: 0.3rem;
   display: flex;
@@ -1292,28 +1368,60 @@ code {
   padding-left: 0.1rem;
 }
 
-.logs-raw-session {
-  border: 1px solid var(--accent-dim);
+/* Сырой JSON сессии — единый стиль на всех modality-страницах */
+.session-json-snapshot {
+  margin: 0;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgba(91, 141, 239, 0.06);
-  padding: 0.35rem 0.45rem;
+  background: var(--bg-elevated);
+  padding: 0.32rem 0.42rem 0.4rem;
 }
 
-.logs-raw-session__summary {
+.session-json-snapshot__summary {
   cursor: pointer;
   font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--accent);
+  font-weight: 650;
+  color: var(--text-muted);
   list-style: none;
+  user-select: none;
 }
 
-.logs-raw-session__summary::-webkit-details-marker {
+.session-json-snapshot__summary::-webkit-details-marker {
   display: none;
 }
 
-.logs-raw-session__body {
-  margin-top: 0.4rem;
+.session-json-snapshot__summary::before {
+  content: "▶ ";
+  font-size: 0.65em;
+  opacity: 0.85;
+}
+
+.session-json-snapshot[open] .session-json-snapshot__summary::before {
+  content: "▼ ";
+}
+
+.session-json-snapshot__pre {
+  margin: 0.4rem 0 0;
+  padding: 0.45rem 0.55rem;
   max-height: min(48vh, 420px);
+  overflow: auto;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.session-json-snapshot--in-body {
+  flex: 0 0 auto;
+  margin-top: 0.12rem;
+}
+
+.session-json-snapshot--timeline {
+  margin-top: 0.2rem;
 }
 
 .images-console .logs-filter-row {
@@ -2155,11 +2263,6 @@ code {
   margin-bottom: 0;
 }
 
-.docs-tech-strip--in-body {
-  flex: 0 0 auto;
-  margin-top: 0.12rem;
-}
-
 .docs-panel-lifecycle {
   min-height: 0;
   overflow: hidden;
@@ -2414,35 +2517,6 @@ code {
   color: #e3b341;
   max-height: 6rem;
   overflow-y: auto;
-}
-
-.docs-tech-strip {
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-hover);
-  font-size: 0.78rem;
-}
-
-.docs-tech-strip summary {
-  cursor: pointer;
-  padding: 0.22rem 0.4rem;
-  list-style: none;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.docs-tech-strip summary::-webkit-details-marker {
-  display: none;
-}
-
-.docs-tech-strip__body {
-  margin: 0;
-  max-height: min(36vh, 320px);
-  overflow: auto;
-  padding: 0.35rem 0.45rem;
-  font-size: 0.68rem;
-  border-top: 1px solid var(--border);
 }
 
 .docs-toolbar__pop-anchor {
@@ -3154,16 +3228,6 @@ code {
 .docs-timeline .logs-stage--compact {
   padding: 0.28rem 0.32rem;
   margin-bottom: 0.28rem;
-}
-
-.docs-timeline__raw {
-  margin-top: 0.2rem;
-  font-size: 0.72rem;
-}
-
-.docs-timeline__raw summary {
-  cursor: pointer;
-  color: var(--text-muted);
 }
 
 .docs-preview-body {
