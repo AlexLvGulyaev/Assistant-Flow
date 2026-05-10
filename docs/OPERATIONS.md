@@ -8,8 +8,8 @@
 
 | Сервис | Роль | Порт на хосте (по умолчанию) |
 |--------|------|------------------------------|
-| `postgres` | PostgreSQL 16 | 5432 |
-| `chroma` | ChromaDB HTTP | 8000 |
+| `postgres` | PostgreSQL 16 | **5433** (на хосте; внутри compose — `postgres:5432`) |
+| `chroma` | ChromaDB HTTP | **8001** (на хосте; внутри — `chroma:8000`) |
 | `assistant-flow` | Telegram-бот | — (без публикации порта) |
 | `admin-api` | FastAPI Admin API | 8600 |
 | `admin-ui` | Статика React (nginx после Vite build) | 8080 |
@@ -27,8 +27,18 @@
 
 ## PostgreSQL: первичная настройка
 
-1. Убедиться, что контейнер `postgres` healthy.
-2. Применить **`database/schema.sql`** к базе `assistant_flow` (и при необходимости файлы из `database/migrations/` в согласованном порядке — уточняйте для своей среды).
+### Portfolio compose (`docker-compose.portfolio.yml`)
+
+При **первом** создании тома `portfolio_pg_data` образ `postgres` выполняет скрипты из `/docker-entrypoint-initdb.d/`:
+
+- `database/schema.sql` — основная схема;
+- `database/migrations/004_async_jobs_foundation.sql` — таблица `async_jobs` (используется админкой).
+
+Если том уже существовал **до** добавления init-скриптов, автоматический прогон не повторится: либо удалите том (`docker volume rm …`, **потеря данных**), либо примените SQL вручную к существующей БД.
+
+### Прочие среды
+
+Вручную: **`database/schema.sql`** и при необходимости миграции из `database/migrations/` в согласованном порядке.
 
 Без схемы часть функций Admin API и lifecycle-логирования будет недоступна или будет деградировать.
 

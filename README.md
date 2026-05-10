@@ -21,26 +21,32 @@
 
 ## Быстрый старт (portfolio Docker)
 
-1. Скопировать переменные окружения и заполнить секреты:
+Проверено smoke-тестом: `docker compose -f docker-compose.portfolio.yml` поднимает Postgres (с авто-init схемы), Chroma, `assistant-flow` (standby без реального Telegram token), Admin API и статический Admin UI.
+
+1. Скопировать окружение (ключи провайдеров можно оставить placeholder для проверки UI/API):
 
    ```bash
    cp .env.example .env
    ```
 
-2. Поднять стек (локальный Postgres + Chroma + бот + Admin API + статический UI):
+2. Запуск:
 
    ```bash
-   docker compose -f docker-compose.portfolio.yml up -d --build
+   docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
    ```
 
-3. Открыть в браузере:
+   Флаг `--remove-orphans` убирает контейнеры, которых больше нет в этом compose-файле. Если в одном каталоге параллельно поднимали `docker-compose.assistant.yml`, у обоих по умолчанию одинаковый **project name** — задайте уникальный, например:  
+   `COMPOSE_PROJECT_NAME=assistant-flow-portfolio docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans`.
 
-   - Admin UI: `http://localhost:8080`
-   - Admin API: `http://localhost:8600/api/health`
+3. Проверки: `http://localhost:8080` (UI), `http://localhost:8600/api/health` (API). Chroma с хоста: `http://localhost:8001` (внутри compose — `chroma:8000`). PostgreSQL с хоста: `localhost:5433`.
 
-4. Перед полноценной работой с БД применить схему PostgreSQL (см. [docs/OPERATIONS.md](docs/OPERATIONS.md)).
+4. **Telegram:** значение `your_telegram_bot_token` из шаблона не запускает polling — контейнер не падает. Для живого бота задайте токен вида `123456:AA...` и перезапустите сервис `assistant-flow`.
 
-**Серверный** сценарий с внешними сетями и Streamlit-админкой по-прежнему описан в `docker-compose.assistant.yml` и шаблоне `.env.server.example`.
+5. **Индексация RAG / LLM:** ключи GigaChat/OpenAI/Proxy и загрузка документов — отдельно (см. [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md)); без них часть провайдеров в health будет `degraded` / не настроено.
+
+**Серверный** сценарий: `docker-compose.assistant.yml`, `.env.server.example`.
+
+**TODO (публичный README):** при смене портов или хоста пересобрать образ `admin-ui` с нужным `VITE_ADMIN_API_BASE_URL`.
 
 ---
 

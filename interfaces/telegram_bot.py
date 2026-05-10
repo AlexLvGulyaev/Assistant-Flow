@@ -1428,7 +1428,46 @@ def create_bot() -> telebot.TeleBot:
     return bot
 
 
+def _telegram_token_ready_for_polling(token: str) -> bool:
+    """True only for non-placeholder tokens shaped like BotFather-issued bot tokens."""
+    t = (token or "").strip()
+    if not t:
+        return False
+    if t.lower() in frozenset(
+        {"your_telegram_bot_token", "changeme", "placeholder", "replace_me"}
+    ):
+        return False
+    # Real tokens contain ':' (numeric bot id + secret).
+    return ":" in t
+
+
 def run_polling() -> None:
+    token_env = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not _telegram_token_ready_for_polling(token_env):
+        stop = False
+
+        def _request_stop(*_args: object) -> None:
+            nonlocal stop
+            stop = True
+
+        import signal
+
+        signal.signal(signal.SIGTERM, _request_stop)
+        signal.signal(signal.SIGINT, _request_stop)
+        print(
+            "[assistant-flow] Telegram: токен не задан или это placeholder — "
+            "polling не запускается (portfolio / demo). Контейнер остаётся в ожидании.",
+            flush=True,
+        )
+        print(
+            "[assistant-flow] Задайте реальный TELEGRAM_BOT_TOKEN (формат 123456:AA...) "
+            "и перезапустите сервис assistant-flow.",
+            flush=True,
+        )
+        while not stop:
+            time.sleep(2)
+        return
+
     try:
         bot = create_bot()
     except Exception:
@@ -1439,7 +1478,6 @@ def run_polling() -> None:
         traceback.print_exc()
         raise
 
-    token_env = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     print(f"TELEGRAM_BOT_TOKEN is set: {bool(token_env)}", flush=True)
     print(f"token length: {len(bot.token)}", flush=True)
     print("bot object created", flush=True)
