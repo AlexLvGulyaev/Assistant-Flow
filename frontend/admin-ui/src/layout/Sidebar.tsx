@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { NAV_ITEMS } from "../navigation/routes";
 
 export function Sidebar() {
@@ -8,7 +8,7 @@ export function Sidebar() {
         <span className="admin-shell__brand-title">Assistant Flow</span>
         <span className="admin-shell__brand-sub">Операции</span>
       </div>
-      <nav className="admin-shell__nav">
+      <nav className="admin-shell__nav admin-shell__nav--main">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.path}
@@ -27,6 +27,11 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <div className="admin-shell__sidebar-footer">
+        <Link to="/exit" className="admin-shell__exit-link">
+          Выход
+        </Link>
+      </div>
     </aside>
   );
 }

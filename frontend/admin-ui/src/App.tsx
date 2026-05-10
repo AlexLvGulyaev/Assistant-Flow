@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { AdminLayout } from "./layout/AdminLayout";
 import { AudioPage } from "./pages/AudioPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { ExitPage } from "./pages/ExitPage";
 import { ImagesPage } from "./pages/ImagesPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -12,6 +13,7 @@ import { TextPage } from "./pages/TextPage";
 export default function App() {
   return (
     <Routes>
+      <Route path="exit" element={<ExitPage />} />
       <Route element={<AdminLayout />}>
         <Route index element={<OverviewPage />} />
         <Route path="summary" element={<SummaryPage />} />
