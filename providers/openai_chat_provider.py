@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+from typing import Any
+
 from openai import OpenAI
 
 from utils.config import AppConfig
@@ -71,4 +74,64 @@ class OpenAIChatProvider:
         text = (choice.content or "").strip()
         if not text:
             raise RuntimeError("LLM returned empty content")
+        return text
+
+    def extract_text_from_image(
+        self,
+        *,
+        image_bytes: bytes,
+        mime_type: str,
+        user_instruction: str,
+        temperature: float = 0.1,
+        max_tokens: int | None = 2048,
+    ) -> str:
+        """
+        Vision/OCR через chat.completions (модель с поддержкой image_url, напр. gpt-4o-mini).
+
+        ``user_instruction`` — текст запроса пользователя (в т.ч. фиксированный OCR-prompt).
+        """
+        if not image_bytes:
+            raise ValueError("image_bytes must not be empty")
+        mt = (mime_type or "image/jpeg").strip() or "image/jpeg"
+        if "/" not in mt:
+            mt = "image/jpeg"
+        b64 = base64.standard_b64encode(image_bytes).decode("ascii")
+        data_url = f"data:{mt};base64,{b64}"
+        limit = max_tokens if max_tokens is not None else 2048
+        self._last_usage = None
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_instruction},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url, "detail": "low"},
+                    },
+                ],
+            }
+        ]
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=limit,
+        )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            chunk: dict[str, int] = {}
+            pt = getattr(usage, "prompt_tokens", None)
+            ct = getattr(usage, "completion_tokens", None)
+            tt = getattr(usage, "total_tokens", None)
+            if pt is not None:
+                chunk["prompt_tokens"] = int(pt)
+            if ct is not None:
+                chunk["completion_tokens"] = int(ct)
+            if tt is not None:
+                chunk["total_tokens"] = int(tt)
+            self._last_usage = chunk if chunk else None
+        choice = response.choices[0].message
+        text = (choice.content or "").strip()
+        if not text:
+            raise RuntimeError("LLM returned empty content for vision request")
         return text
