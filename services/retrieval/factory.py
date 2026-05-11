@@ -38,6 +38,8 @@ def build_retrieval_backend(
             нет FAISS-индекса при RAG_BACKEND=faiss (без молчаливого fallback на Chroma).
     """
     name = normalize_rag_backend(config.rag_backend)
+    backend: RetrievalBackend
+
     if name == "chroma":
         if chroma_store is None:
             raise ValueError(
@@ -45,9 +47,9 @@ def build_retrieval_backend(
             )
         from services.retrieval.chroma_backend import ChromaBackend
 
-        return ChromaBackend(chroma_store)
+        backend = ChromaBackend(chroma_store)
 
-    if name == "faiss":
+    elif name == "faiss":
         if embeddings is None:
             raise ValueError(
                 "RAG_BACKEND=faiss: требуется передать embeddings=build_openai_embeddings(config). "
@@ -72,7 +74,7 @@ def build_retrieval_backend(
                 "python scripts/build_faiss_demo_index.py. Fallback на Chroma не выполняется."
             )
         try:
-            return FaissBackend(index_dir=index_dir, embeddings=embeddings)
+            backend = FaissBackend(index_dir=index_dir, embeddings=embeddings)
         except Exception as exc:
             raise ValueError(
                 "RAG_BACKEND=faiss: не удалось загрузить FAISS-индекс "
@@ -80,7 +82,14 @@ def build_retrieval_backend(
                 "Проверьте chunks.json и manifest; пересоберите демо-индекс при необходимости."
             ) from exc
 
-    raise ValueError(
-        f"RAG_BACKEND={name!r}: неподдерживаемый retrieval backend. "
-        f"Допустимо: chroma (по умолчанию), faiss (демо/курс, явный выбор)."
-    )
+    else:
+        raise ValueError(
+            f"RAG_BACKEND={name!r}: неподдерживаемый retrieval backend. "
+            f"Допустимо: chroma (по умолчанию), faiss (демо/курс, явный выбор)."
+        )
+
+    if getattr(config, "enable_retrieval_cache", False):
+        from services.cache.caching_retrieval_backend import CachingRetrievalBackend
+
+        return CachingRetrievalBackend(backend, config=config)
+    return backend

@@ -124,6 +124,13 @@ def main() -> int:
             print(f"    {o.error}", flush=True)
         return 3
 
+    try:
+        from services.cache.invalidate import invalidate_retrieval_cache
+
+        invalidate_retrieval_cache("admin_index_documents completed")
+    except Exception:
+        pass
+
     print("\nDone.", flush=True)
     return 0
 

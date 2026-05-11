@@ -2160,3 +2160,43 @@ Foundation для **hybrid context assembly**: `KB retrieval context` + `dialog 
 
 - Curated benchmarks, scheduled evaluation jobs, Admin UI metrics, полноценный RAGAS (judge LLM, datasets), кэш и оптимизации — после P6.5 (см. также §32 operational testing rule).
 
+---
+
+## 35. P6.6 Retrieval Optimization & Cache Foundation (append-only)
+
+### 35.1 Назначение
+
+**Локальный** слой оптимизации: SQLite cache (`storage/cache/assistant_cache.sqlite3` по умолчанию), **не** source of truth и **не** PostgreSQL. Redis / distributed cache / async workers — **намеренно отложены**.
+
+### 35.2 Поведение по умолчанию
+
+- `ENABLE_RETRIEVAL_CACHE=false`, `ENABLE_ANSWER_CACHE=false` — runtime Telegram/RAG **без** обёртки кэша retrieval и **без** answer-cache в LLM path.
+- При `ENABLE_RETRIEVAL_CACHE=true`: `CachingRetrievalBackend` в `build_retrieval_backend` — lookup перед `search`, set после **успешного непустого** результата; **не** кэшируются ошибки, **не** кэшируется пустой retrieval, **не** кэшируется hybrid memory context (обёртка только вокруг vector retrieval).
+
+### 35.3 Namespaces и ключи
+
+- Контрактные namespace: `query`, `retrieval`, `answer`, `evaluation` (`CacheNamespaces`).
+- Fingerprint retrieval: нормализованный query, `rag_backend`, `top_k`, `openai_embedding_model`, `RAG_RETRIEVAL_GENERATION` (default `unset`), флаг hybrid. **Риск:** без bump `RAG_RETRIEVAL_GENERATION` / knowledge_base_revision после reindex возможен **stale cache** — после успешного `admin_index_documents` вызывается `invalidate_retrieval_cache` (hook).
+
+### 35.4 Invalidation / TTL
+
+- `invalidate_retrieval_cache(reason)` — очистка namespace `retrieval`.
+- TTL: `RETRIEVAL_CACHE_TTL_SECONDS` / `ANSWER_CACHE_TTL_SECONDS` (default 86400); `0` или отсутствие — без истечения (expires_at NULL) при реализации set.
+
+### 35.5 Answer cache foundation
+
+- `AnswerCacheService` — контракт get/set в namespace `answer`; **не** интегрирован в `RagQueryService` на этом этапе (избежание смены семантики ответов).
+
+### 35.6 Observability
+
+- Логи retrieval cache: `[assistant-flow] cache:` с `cache_enabled`, `namespace`, `outcome` (hit / miss_set / miss), `key_hash_prefix` (16 hex), `latency_ms`, `reason_skip` при пропуске.
+
+### 35.7 Скрипты
+
+- `scripts/test_cache_foundation_smoke.py` — unit-level SQLite + fingerprint (host OK).
+- `scripts/test_retrieval_cache_smoke.py` — portfolio container, временный `CACHE_DB_PATH`, принудительно `ENABLE_RETRIEVAL_CACHE=true`.
+
+### 35.8 Future (P6.7+)
+
+- Redis, Admin UI cache stats, политика answer cache с security review, document version в fingerprint, production-grade invalidation.
+

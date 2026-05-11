@@ -63,6 +63,12 @@ class AppConfig:
     enable_ragas_evaluation: bool = False
     rag_eval_dataset_path: str = "evaluation/datasets/rag_smoke_dataset.json"
     rag_eval_output_dir: str = "outputs/evaluation"
+    # P6.6: локальный SQLite cache (не PostgreSQL SoT); retrieval/answer по умолчанию выключены.
+    cache_db_path: str = "storage/cache/assistant_cache.sqlite3"
+    enable_retrieval_cache: bool = False
+    enable_answer_cache: bool = False
+    retrieval_cache_ttl_seconds: int = 86_400
+    answer_cache_ttl_seconds: int = 86_400
     # Изолированное хранилище FAISS (не Chroma, не PostgreSQL lifecycle).
     faiss_index_dir: str = "storage/faiss"
     asset_storage_backend: str = "filesystem"
@@ -174,6 +180,14 @@ def load_config() -> AppConfig:
         rag_eval_output_dir=(
             (os.getenv("RAG_EVAL_OUTPUT_DIR") or "").strip() or "outputs/evaluation"
         ),
+        cache_db_path=(
+            (os.getenv("CACHE_DB_PATH") or "").strip()
+            or "storage/cache/assistant_cache.sqlite3"
+        ),
+        enable_retrieval_cache=_bool_env("ENABLE_RETRIEVAL_CACHE", False),
+        enable_answer_cache=_bool_env("ENABLE_ANSWER_CACHE", False),
+        retrieval_cache_ttl_seconds=_int_env("RETRIEVAL_CACHE_TTL_SECONDS", 86_400),
+        answer_cache_ttl_seconds=_int_env("ANSWER_CACHE_TTL_SECONDS", 86_400),
         faiss_index_dir=(
             (os.getenv("FAISS_INDEX_DIR") or "").strip() or "storage/faiss"
         ),
