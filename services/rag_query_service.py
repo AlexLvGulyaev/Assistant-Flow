@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from providers.openai_chat_provider import OpenAIChatProvider
 from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME
 from services.retrieval.base import RetrievalBackend
+from services.retrieval_security.context import RetrievalSecurityContext
 from services.rag_types import (
     RagQueryResult,
     RagRequestDiagnostics,
@@ -298,12 +299,16 @@ class RagQueryService:
         self,
         query: str,
         k: int,
+        *,
+        security_context: RetrievalSecurityContext | None = None,
     ) -> list[tuple[Document, float]]:
         """Run Chroma+embedding search in a worker thread (bounds local stalls)."""
 
         def run() -> list[tuple[Document, float]]:
             try:
-                results = self._retrieval.search(query, top_k=k)
+                results = self._retrieval.search(
+                    query, top_k=k, security_context=security_context
+                )
                 return [
                     (
                         Document(
@@ -356,6 +361,8 @@ class RagQueryService:
         self,
         query: str,
         k: int,
+        *,
+        security_context: RetrievalSecurityContext | None = None,
     ) -> list[tuple[Document, float]]:
         """Similarity search with diagnostics; empty list on timeout or empty query."""
         print("[assistant-flow] rag retrieve: start", flush=True)
@@ -366,7 +373,9 @@ class RagQueryService:
             "[assistant-flow] rag retrieve: before vectorstore similarity_search",
             flush=True,
         )
-        raw = self._similarity_search_with_timeout(q, k)
+        raw = self._similarity_search_with_timeout(
+            q, k, security_context=security_context
+        )
         print(
             "[assistant-flow] rag retrieve: after vectorstore similarity_search",
             flush=True,
@@ -378,11 +387,12 @@ class RagQueryService:
         query: str,
         *,
         top_k: int | None = None,
+        security_context: RetrievalSecurityContext | None = None,
     ) -> tuple[RagSourceChunk, ...]:
         """Similarity search only (read-only)."""
         k = top_k if top_k is not None else self._config.rag_top_k
         t0 = time.monotonic()
-        raw = self._retrieve_raw(query, k)
+        raw = self._retrieve_raw(query, k, security_context=security_context)
         retrieval_ms = int((time.monotonic() - t0) * 1000)
         thr = float(self._config.rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
@@ -420,6 +430,7 @@ class RagQueryService:
         conversation_history: list[dict[str, str]] | None = None,
         hybrid_session_id: str | None = None,
         hybrid_user_id: str | None = None,
+        security_context: RetrievalSecurityContext | None = None,
     ) -> RagQueryResult:
         """
         Retrieve context, then generate an answer. Empty retrieval returns a static message
@@ -438,7 +449,9 @@ class RagQueryService:
         k = top_k if top_k is not None else self._config.rag_top_k
         print("[assistant-flow] rag answer: before retrieval", flush=True)
         t_ret0 = time.monotonic()
-        raw = self._retrieve_raw(normalized, k)
+        raw = self._retrieve_raw(
+            normalized, k, security_context=security_context
+        )
         retrieval_latency_ms = int((time.monotonic() - t_ret0) * 1000)
         print("[assistant-flow] rag answer: after retrieval", flush=True)
 

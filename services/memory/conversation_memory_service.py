@@ -217,7 +217,7 @@ def persist_telegram_dialog_turn_best_effort(
             last_name=last_name,
         )
         sessions = ChatSessionService()
-        valid_modes = ("text", "rag", "voice", "image", "career", "hr_screening")
+        valid_modes = ("text", "rag", "ocr", "voice", "image", "career", "hr_screening")
         initial_mode = session_mode if session_mode in valid_modes else "text"
         sid = sessions.get_or_create_active_session(uid, mode=initial_mode)
         if session_mode in valid_modes:

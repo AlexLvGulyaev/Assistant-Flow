@@ -20,6 +20,14 @@ const EVENT_TYPE_RU: Record<string, string> = {
   route_selected: "Определён тип запроса",
   processing_done: "Обработка завершена",
   processing_error: "Ошибка обработки",
+  image_received: "Получено изображение",
+  ocr_started: "OCR запущен",
+  ocr_done: "OCR завершён",
+  ocr_error: "Ошибка OCR",
+  vision_ocr_started: "OCR запущен",
+  vision_ocr_done: "OCR завершён",
+  vision_ocr_error: "Ошибка OCR",
+  ocr_response_sent: "OCR-ответ отправлен",
   database_schema: "Служебное событие схемы БД",
   admin_document_uploaded: "Документ загружен",
   admin_reindex_started: "Переиндексация (полная) запущена",
@@ -47,12 +55,25 @@ const EVENT_TYPE_RU: Record<string, string> = {
   system_degraded: "Деградация системы",
 };
 
+/** OCR lifecycle machine names → operator RU (React primary UI). */
+const OCR_STAGE_LABEL_RU: Record<string, string> = {
+  image_received: "Получено изображение",
+  ocr_started: "OCR запущен",
+  ocr_done: "OCR завершён",
+  ocr_error: "Ошибка OCR",
+  ocr_response_sent: "OCR-ответ отправлен",
+  vision_ocr_started: "OCR запущен",
+  vision_ocr_done: "OCR завершён",
+  vision_ocr_error: "Ошибка OCR",
+};
+
 const ROUTE_ALIASES: Record<string, string> = {
   text_response: "text",
   text_answer_done: "text",
   text_query: "text",
   rag_response: "rag",
   rag_answer_done: "rag",
+  vision_ocr: "text",
   image: "image_generation",
   image_response: "image_generation",
   audio: "audio",
@@ -85,6 +106,19 @@ export type NormalizedRouteKey =
   | "audio"
   | "unknown";
 
+/** Normalize lifecycle ``stage`` / machine ids (trim, BOM, NFKC, collapse spaces → _). */
+export function normalizeMachineStage(stage: string | null | undefined): string {
+  let s = String(stage ?? "").trim();
+  if (!s) return "";
+  s = s.replace(/\uFEFF/g, "").replace(/[\u200B-\u200D]/g, "");
+  try {
+    s = s.normalize("NFKC");
+  } catch {
+    /* ignore */
+  }
+  return s.toLowerCase().replace(/\s+/g, "_");
+}
+
 export function normalizeRouteKey(route: string | null | undefined): NormalizedRouteKey {
   const raw = (route || "").trim().toLowerCase();
   if (!raw) return "unknown";
@@ -97,8 +131,9 @@ export function normalizeRouteKey(route: string | null | undefined): NormalizedR
 }
 
 export function normalizeEventType(eventType: string | null | undefined): string {
-  const raw = (eventType || "").trim().toLowerCase();
+  const raw = normalizeMachineStage(eventType);
   if (!raw) return "";
+  if (raw in OCR_STAGE_LABEL_RU) return raw;
   return EVENT_TYPE_ALIASES[raw] ?? raw;
 }
 
@@ -119,16 +154,25 @@ export function stageToActionRu(
 ): string {
   const raw = (stage || "").trim();
   if (!raw) return "—";
-  if (raw === "text_answer_done") return "Текстовый ответ построен";
-  if (raw === "rag_answer_done") return "RAG-ответ построен";
-  if (raw === "processing_done") {
+  const rawKey = normalizeMachineStage(raw);
+  const ocrLbl = OCR_STAGE_LABEL_RU[rawKey];
+  if (ocrLbl) return ocrLbl;
+  if (rawKey === "text_answer_done") return "Текстовый ответ построен";
+  if (rawKey === "rag_answer_done") return "RAG-ответ построен";
+  if (rawKey === "processing_done") {
     const dd = isRecord(details) ? details : {};
+    const rr = String(dd.downstream_route ?? dd.route ?? "")
+      .trim()
+      .toLowerCase();
+    if (rr === "vision_ocr") {
+      return "Обработка OCR завершена";
+    }
     if (normalizeRouteKey(String(dd.route ?? "")) === "image_generation") {
       if (dd.generation_completed) return "Генерация завершена";
       return "Обработка завершена (изображение)";
     }
   }
-  const norm = normalizeEventType(raw);
+  const norm = normalizeEventType(rawKey);
   if (!norm) return "—";
   const mapped = EVENT_TYPE_RU[norm];
   if (mapped) return mapped;

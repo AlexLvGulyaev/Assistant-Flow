@@ -218,6 +218,10 @@ export interface LogItem {
   created_at?: string | null;
   route?: string | null;
   mode?: string | null;
+  /** High-level modality (``text`` includes OCR). From Admin API ``log_row_to_entry``. */
+  modality?: string | null;
+  /** Logs filter bucket: ``text`` | ``rag`` | ``image`` | ``audio`` | ``other``. */
+  modality_route?: string | null;
   details?: Record<string, unknown> | string | null;
   error_text?: string | null;
 }

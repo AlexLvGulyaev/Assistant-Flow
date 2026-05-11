@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Mode = Literal["text", "rag"]
+Mode = Literal["text", "rag", "ocr"]
 
 
 @dataclass

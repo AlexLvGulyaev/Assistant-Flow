@@ -22,6 +22,9 @@ from services.retrieval.base import (
     RetrievalSearchResult,
 )
 from services.retrieval.chunk_metadata import apply_retrieval_metadata_contract
+from services.retrieval_security.context import RetrievalSecurityContext
+from services.retrieval_security.result_filter import filter_search_results_by_security
+from services.retrieval_security.telemetry import emit_retrieval_security_event
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
@@ -115,12 +118,27 @@ class FaissBackend:
             return 0
         return int(self._index.ntotal)
 
-    def search(self, query: str, top_k: int = 5) -> list[RetrievalSearchResult]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        security_context: RetrievalSecurityContext | None = None,
+    ) -> list[RetrievalSearchResult]:
         import numpy as np  # noqa: PLC0415
 
         if not (query or "").strip() or top_k <= 0:
             return []
 
+        ctx = security_context or RetrievalSecurityContext.permissive_default()
+        if not ctx.is_fully_unrestricted():
+            emit_retrieval_security_event(
+                "retrieval_scope_applied",
+                role=ctx.role,
+                retrieval_scope=ctx.retrieval_scope,
+                chroma_where=False,
+                backend="faiss",
+            )
         q = query.strip()
         vec = self._embeddings.embed_query(q)
         arr = np.array([vec], dtype=np.float32)
@@ -129,7 +147,12 @@ class FaissBackend:
                 f"FAISS: размерность запроса {arr.shape[1]} != размерность индекса {self._index.d}"
             )
 
-        k = min(int(top_k), int(self._index.ntotal))
+        ntotal = int(self._index.ntotal)
+        requested = int(top_k)
+        if not ctx.is_fully_unrestricted():
+            # FAISS без metadata-индекса: расширяем выборку, затем фильтруем до top_k.
+            requested = min(ntotal, max(requested * 8, requested))
+        k = min(requested, ntotal)
         if k <= 0:
             return []
 
@@ -156,7 +179,8 @@ class FaissBackend:
                     score=dist,
                 )
             )
-        return out
+        filtered = filter_search_results_by_security(out, ctx)
+        return filtered[: int(top_k)]
 
     def healthcheck(self) -> RetrievalHealth:
         detail_parts: list[str] = [f"index_dir={self._index_dir}"]

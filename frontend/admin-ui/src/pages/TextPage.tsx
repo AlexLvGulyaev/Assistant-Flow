@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { fetchRecentLogs, type LogItem } from "../api/client";
+import { fetchRecentLogs, getApiBaseUrl, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -76,6 +76,39 @@ interface TextSession {
   inputChars: number | null;
   outputChars: number | null;
   pipelineError: string | null;
+  /** OCR intake: asset ref для `/api/assets/preview` (image/*). */
+  intakeImageAssetRef: string | null;
+  /** OCR: метаданные ввода (mime, размер) — не для списка слева. */
+  ocrInputDiagnostics: Record<string, unknown> | null;
+  /** True если бэкенд явно отметил отсутствие usage от OpenAI-обёртки (OCR/vision). */
+  usageNotReturnedByProvider: boolean | null;
+}
+
+function sessionHasVisionOcr(rows: LogItem[]): boolean {
+  for (const row of rows) {
+    const det = row.details;
+    if (det === null || typeof det !== "object" || Array.isArray(det)) continue;
+    const d = det as Record<string, unknown>;
+    const r = String(d.route ?? "").trim().toLowerCase();
+    const dr = String(d.downstream_route ?? "").trim().toLowerCase();
+    if (r === "vision_ocr" || dr === "vision_ocr") return true;
+  }
+  return false;
+}
+
+/** Backend-normalized modality (survives truncated ``details`` in /api/logs/recent). */
+function sessionHasBackendTextModality(rows: LogItem[]): boolean {
+  for (const row of rows) {
+    const m = String(row.modality ?? "")
+      .trim()
+      .toLowerCase();
+    if (m === "text") return true;
+    const mr = String(row.modality_route ?? "")
+      .trim()
+      .toLowerCase();
+    if (mr === "text") return true;
+  }
+  return false;
 }
 
 /**
@@ -86,6 +119,12 @@ interface TextSession {
 export function isTextExecutionSession(rows: LogItem[]): boolean {
   if (!rows.length) return false;
   const ordered = [...rows].sort((a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0));
+  if (sessionHasVisionOcr(ordered)) {
+    return true;
+  }
+  if (sessionHasBackendTextModality(ordered)) {
+    return true;
+  }
 
   for (const row of ordered) {
     for (const raw of [row.route, row.mode]) {
@@ -573,33 +612,24 @@ export function TextPage() {
                           />
                           <OpsRow
                             label="Входные токены"
-                            value={
-                              hasNum(selected.inputTokens) ? (
-                                String(selected.inputTokens)
-                              ) : (
-                                <TelemetryGap kind="pipeline" />
-                              )
-                            }
+                            value={tokenCellValue(
+                              selected.inputTokens,
+                              selected.usageNotReturnedByProvider
+                            )}
                           />
                           <OpsRow
                             label="Выходные токены"
-                            value={
-                              hasNum(selected.outputTokens) ? (
-                                String(selected.outputTokens)
-                              ) : (
-                                <TelemetryGap kind="pipeline" />
-                              )
-                            }
+                            value={tokenCellValue(
+                              selected.outputTokens,
+                              selected.usageNotReturnedByProvider
+                            )}
                           />
                           <OpsRow
                             label="Всего токенов"
-                            value={
-                              hasNum(selected.totalTokens) ? (
-                                String(selected.totalTokens)
-                              ) : (
-                                <TelemetryGap kind="pipeline" />
-                              )
-                            }
+                            value={tokenCellValue(
+                              selected.totalTokens,
+                              selected.usageNotReturnedByProvider
+                            )}
                           />
                         </dl>
                       </div>
@@ -686,21 +716,57 @@ export function TextPage() {
                   <div className="logs-detail-grid logs-detail-grid--dense rag-io-grid">
                     <div className="logs-detail-block">
                       <h3 className="logs-detail-block__title">ЧТО СПРОСИЛ ПОЛЬЗОВАТЕЛЬ</h3>
+                      {selected.intakeImageAssetRef?.trim() ? (
+                        <div className="page__mt-sm">
+                          <img
+                            src={`${getApiBaseUrl()}/api/assets/preview?asset_ref=${encodeURIComponent(
+                              selected.intakeImageAssetRef.trim()
+                            )}`}
+                            alt="Входное изображение OCR"
+                            style={{
+                              maxWidth: "100%",
+                              maxHeight: 320,
+                              objectFit: "contain",
+                              borderRadius: 8,
+                              border: "1px solid var(--border, #1F2A44)",
+                            }}
+                          />
+                        </div>
+                      ) : null}
                       <pre className="logs-pre logs-pre--compact mono">
                         {clipText(selected.userInput, INLINE_PREVIEW_CHARS) ??
-                          "Текст запроса не найден в логах."}
+                          (selected.intakeImageAssetRef?.trim()
+                            ? "Подпись к изображению не указана."
+                            : "Текст запроса не найден в логах.")}
                       </pre>
+                      {selected.ocrInputDiagnostics &&
+                      Object.keys(selected.ocrInputDiagnostics).length > 0 ? (
+                        <details className="rag-diagnostics-fold page__mt-sm">
+                          <summary className="rag-diagnostics-fold__summary">
+                            Технические параметры ввода (OCR)
+                          </summary>
+                          <pre className="logs-pre logs-pre--compact mono">
+                            {JSON.stringify(selected.ocrInputDiagnostics, null, 2)}
+                          </pre>
+                        </details>
+                      ) : null}
                       <header className="rag-chunk-card__header audio-io-cta-head">
                         <div className="rag-chunk-card__meta-row">
                           <span className="muted mono">пользовательский ввод</span>
                           <button
                             type="button"
                             className="rag-chunk-card__fulltext-cta"
-                            disabled={!selected.userInput?.trim()}
+                            disabled={
+                              !selected.userInput?.trim() && !selected.intakeImageAssetRef?.trim()
+                            }
                             onClick={() =>
                               setFullTextModal({
                                 title: "Полный текст запроса",
-                                body: selected.userInput?.trim() || "—",
+                                body:
+                                  selected.userInput?.trim() ||
+                                  (selected.intakeImageAssetRef?.trim()
+                                    ? `Изображение: ${selected.intakeImageAssetRef.trim()}`
+                                    : "—"),
                               })
                             }
                           >
@@ -865,6 +931,21 @@ function hasNum(n: number | null | undefined): boolean {
   return n != null && Number.isFinite(n);
 }
 
+function tokenCellValue(
+  n: number | null,
+  usageNotReturned: boolean | null
+): ReactNode {
+  if (hasNum(n)) return String(Math.round(n as number));
+  if (usageNotReturned === true) {
+    return (
+      <span className="muted" title="usage_not_returned_by_provider_wrapper">
+        не вернул провайдер
+      </span>
+    );
+  }
+  return <TelemetryGap kind="pipeline" />;
+}
+
 function llmLine(s: TextSession): string | null {
   const p = s.llmProvider?.trim();
   const m = s.llmModel?.trim();
@@ -927,13 +1008,20 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 function isExplicitTextRouteOrMode(v: string): boolean {
   const t = v.trim().toLowerCase();
   if (!t) return false;
-  return t === "text" || t === "text_response" || t.startsWith("text_");
+  return (
+    t === "text" ||
+    t === "text_response" ||
+    t === "vision_ocr" ||
+    t === "ocr" ||
+    t.startsWith("text_")
+  );
 }
 
 /** Чужие маршруты/режимы: RAG, изображения, голос, документы админки и т.д. */
 function isForeignRouteOrMode(raw: string): boolean {
   const t = raw.trim().toLowerCase();
   if (!t) return false;
+  if (t === "vision_ocr" || t === "ocr") return false;
   if (t === "rag" || t.startsWith("rag_")) return true;
   if (t.includes("image")) return true;
   if (t === "audio" || t === "voice" || t.startsWith("voice_") || t.startsWith("audio_")) return true;
@@ -948,7 +1036,8 @@ function isForeignStage(stageRaw: string): boolean {
   const s = stageRaw.trim().toLowerCase();
   if (!s) return false;
   if (s.startsWith("rag_")) return true;
-  if (s.startsWith("image_")) return true;
+  // OCR uses `image_received` but produces text, so it must stay in TEXT modality.
+  if (s.startsWith("image_")) return s !== "image_received";
   if (s.startsWith("stt_") || s.startsWith("tts_")) return true;
   if (s.startsWith("voice_")) return true;
   if (s.startsWith("audio_generation")) return true;
@@ -1015,8 +1104,60 @@ function strFieldFromPool(pool: Record<string, unknown>[], keys: string[]): stri
   return null;
 }
 
+function pickIntakeImageAssetRef(
+  ordered: LogItem[],
+  detailsPool: Record<string, unknown>[]
+): string | null {
+  for (const row of ordered) {
+    if (String(row.stage || "").toLowerCase() !== "intake_received") continue;
+    const d = asRecord(row.details);
+    if (!d) continue;
+    const ref = strField(d, ["input_asset_ref", "intake_image_asset_ref", "asset_ref"]);
+    if (ref) return ref;
+  }
+  return strFieldFromPool(detailsPool, [
+    "input_asset_ref",
+    "intake_image_asset_ref",
+    "asset_ref",
+  ]);
+}
+
+function pickUsageNotReturnedFromPool(
+  pool: Record<string, unknown>[]
+): boolean | null {
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const v = pool[i]?.usage_not_returned_by_provider_wrapper;
+    if (typeof v === "boolean") return v;
+  }
+  return null;
+}
+
+function pickOcrInputDiagnostics(ordered: LogItem[]): Record<string, unknown> | null {
+  for (const row of ordered) {
+    if (String(row.stage || "").toLowerCase() !== "intake_received") continue;
+    const d = asRecord(row.details);
+    const raw = d?.ocr_input_diagnostics ?? d?.diagnostics;
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      return raw as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+/** Компактная строка для списка слева (без mime/size). */
+function pickListUserPreview(ordered: LogItem[], detailsPool: Record<string, unknown>[]): string | null {
+  for (const row of ordered) {
+    if (String(row.stage || "").toLowerCase() !== "intake_received") continue;
+    const d = asRecord(row.details);
+    const lp = d && strField(d, ["list_user_preview"]);
+    if (lp) return lp;
+  }
+  return strFieldFromPool(detailsPool, ["list_user_preview"]);
+}
+
 function pickAssistantOutput(detailsPool: Record<string, unknown>[]): string | null {
   return strFieldFromPool(detailsPool, [
+    "recognized_text_preview",
     "answer_text",
     "assistant_response",
     "response_text",
@@ -1064,8 +1205,8 @@ function pickProcessingDone(ordered: LogItem[]): {
   }
   return {
     latencyMs: numField(d, ["latency_ms"]),
-    inputTokens: numField(d, ["input_tokens"]),
-    outputTokens: numField(d, ["output_tokens"]),
+    inputTokens: numField(d, ["input_tokens", "prompt_tokens"]),
+    outputTokens: numField(d, ["output_tokens", "completion_tokens"]),
     totalTokens: numField(d, ["total_tokens"]),
   };
 }
@@ -1109,6 +1250,7 @@ function pickAggregatedTokens(ordered: LogItem[], detailsPool: Record<string, un
 } {
   const stages = [
     "processing_done",
+    "ocr_done",
     "text_answer_done",
     "response_generated",
     "text_response",
@@ -1134,6 +1276,7 @@ const TEXT_LATENCY_STAGES = [
   "text_answer_done",
   "response_generated",
   "text_response",
+  "ocr_done",
 ] as const;
 
 function pickResponseLatencyMs(ordered: LogItem[], detailsPool: Record<string, unknown>[]): number | null {
@@ -1217,6 +1360,10 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
 
     const userInput = pickUserInput(ordered, detailsPool);
     const assistantOutput = pickAssistantOutput(detailsPool);
+    const intakeImageAssetRef = pickIntakeImageAssetRef(ordered, detailsPool);
+    const ocrInputDiagnostics = pickOcrInputDiagnostics(ordered);
+    const usageNotReturnedByProvider = pickUsageNotReturnedFromPool(detailsPool);
+    const listUserPreview = pickListUserPreview(ordered, detailsPool);
     const { provider, model } = pickLlmFromPool(detailsPool);
     const proc = pickProcessingDone(ordered);
     const responseLatencyMs = pickResponseLatencyMs(ordered, detailsPool);
@@ -1236,6 +1383,7 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
         : numFieldFromPool(detailsPool, ["output_chars", "answer_chars", "response_chars"]);
 
     const preview =
+      clipText(listUserPreview, 200) ||
       clipText(userInput, 200) ||
       clipText(assistantOutput, 200) ||
       clipText(previewSummary(latest.details), 120) ||
@@ -1267,6 +1415,9 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
       inputChars,
       outputChars,
       pipelineError: pickPipelineError(ordered),
+      intakeImageAssetRef,
+      ocrInputDiagnostics,
+      usageNotReturnedByProvider,
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);

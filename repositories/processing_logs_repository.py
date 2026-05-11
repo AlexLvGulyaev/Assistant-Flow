@@ -101,9 +101,9 @@ class ProcessingLogsRepository:
                                  OR stage = 'rag_answer_done'
                                  OR (details->>'mode') = 'rag'
                             THEN 'rag'
-                            WHEN (details->>'route') IN ('text', 'text_response')
+                            WHEN (details->>'route') IN ('text', 'text_response', 'vision_ocr')
                                  OR stage = 'text_answer_done'
-                                 OR (details->>'mode') = 'text'
+                                 OR (details->>'mode') IN ('text', 'ocr')
                             THEN 'text'
                             WHEN (details->>'route') IN ('image_generation', 'image', 'image_response')
                             THEN 'image_generation'

@@ -260,12 +260,17 @@ class ChromaRagStore:
         self,
         embedding: list[float],
         k: int,
+        *,
+        where: dict[str, Any] | None = None,
     ) -> list[tuple[Document, float]]:
-        result = self._collection.query(
-            query_embeddings=[embedding],
-            n_results=k,
-            include=["documents", "metadatas", "distances"],
-        )
+        q_kwargs: dict[str, Any] = {
+            "query_embeddings": [embedding],
+            "n_results": k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            q_kwargs["where"] = where
+        result = self._collection.query(**q_kwargs)
 
         row_docs = result.get("documents") or []
         row_metas = result.get("metadatas") or []
@@ -353,6 +358,8 @@ class ChromaRagStore:
         self,
         query: str,
         k: int,
+        *,
+        where: dict[str, Any] | None = None,
     ) -> list[tuple[Document, float]]:
         """Query via the same collection handle used for indexing (no LangChain Chroma)."""
         if not (query or "").strip() or k <= 0:
@@ -363,7 +370,7 @@ class ChromaRagStore:
         print("native retrieval: after embed_query", flush=True)
         print("native retrieval: before collection.query", flush=True)
         try:
-            out = self._similarity_query_once(embedding, k)
+            out = self._similarity_query_once(embedding, k, where=where)
             print("native retrieval: after collection.query", flush=True)
             return out
         except Exception as exc:
@@ -378,7 +385,7 @@ class ChromaRagStore:
             print("[assistant-flow] chroma collection refreshed", flush=True)
             print("[assistant-flow] retry retrieval after refresh", flush=True)
             try:
-                out = self._similarity_query_once(embedding, k)
+                out = self._similarity_query_once(embedding, k, where=where)
                 print("native retrieval: after collection.query", flush=True)
                 return out
             except Exception as exc2:

@@ -24,7 +24,13 @@ def normalize_query_text(query: str) -> str:
     return " ".join((query or "").strip().split())
 
 
-def build_retrieval_fingerprint(config: "AppConfig", *, query: str, top_k: int) -> str:
+def build_retrieval_fingerprint(
+    config: "AppConfig",
+    *,
+    query: str,
+    top_k: int,
+    security_fingerprint_extra: str | None = None,
+) -> str:
     gen = (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip() or "unset"
     parts = [
         normalize_query_text(query),
@@ -34,6 +40,8 @@ def build_retrieval_fingerprint(config: "AppConfig", *, query: str, top_k: int) 
         gen,
         "1" if config.enable_hybrid_retrieval else "0",
     ]
+    if security_fingerprint_extra:
+        parts.append(f"retrieval_security={security_fingerprint_extra}")
     return "\n".join(parts)
 
 

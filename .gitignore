@@ -46,3 +46,8 @@ PROJECT_STATE.md
 
 # Legacy lesson source repositories are donor/reference material only
 legacy/PEr*_source/.git/
+
+# runtime/test artifacts
+.tmp/
+storage/assets/
+legacy/

@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from services.retrieval_security.context import RetrievalSecurityContext
+
 
 @dataclass(frozen=True)
 class RetrievalChunk:
@@ -74,8 +76,17 @@ class RetrievalBackend(Protocol):
         """Число записей в активной коллекции/индексе (best-effort)."""
         ...
 
-    def search(self, query: str, top_k: int = 5) -> list[RetrievalSearchResult]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        security_context: RetrievalSecurityContext | None = None,
+    ) -> list[RetrievalSearchResult]:
         """Similarity search; пустой query → пустой список (как у ChromaRagStore).
+
+        ``security_context`` — P6.7: фильтрация до/после vector query по backend;
+        ``None`` — permissive default (как до P6.7).
 
         Scores в результатах — в шкале конкретного backend (см. RetrievalSearchResult).
         """

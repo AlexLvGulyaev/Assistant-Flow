@@ -289,6 +289,14 @@ _EVENT_TYPE_RU: dict[str, str] = {
     "route_selected": "Определён тип запроса",
     "processing_done": "Обработка завершена",
     "processing_error": "Ошибка обработки",
+    "image_received": "Получено изображение",
+    "ocr_started": "OCR запущен",
+    "ocr_done": "OCR завершён",
+    "ocr_error": "Ошибка OCR",
+    "vision_ocr_started": "OCR запущен",
+    "vision_ocr_done": "OCR завершён",
+    "vision_ocr_error": "Ошибка OCR",
+    "ocr_response_sent": "OCR-ответ отправлен",
     "database_schema": "Служебное событие схемы БД",
     "admin_document_uploaded": "Загрузка документа (админка)",
     "admin_reindex_started": "Переиндексация запущена",
@@ -316,6 +324,7 @@ _ROUTE_ALIASES: dict[str, str] = {
     "text_query": "text",
     "rag_response": "rag",
     "rag_answer_done": "rag",
+    "vision_ocr": "text",
     "image": "image_generation",
     "image_response": "image_generation",
     "audio": "audio",
@@ -354,6 +363,8 @@ def _stage_to_action(stage: str | None, details: Any = None) -> str:
         return "RAG-ответ построен"
     if raw == "processing_done":
         dd = details if isinstance(details, dict) else {}
+        if str(dd.get("downstream_route") or dd.get("route") or "").strip().lower() == "vision_ocr":
+            return "Обработка OCR завершена"
         if normalize_route(str(dd.get("route") or "")) == "image_generation":
             if dd.get("generation_completed"):
                 return "Генерация завершена"

@@ -23,6 +23,9 @@ def apply_retrieval_metadata_contract(
     Обязательные ключи после вызова: source, chunk_id, backend.
     Опционально добавляется retrieval_timestamp (UTC ISO), если ключа ещё не было.
     document_id, version_id, tags — пробрасываются как есть, если уже есть в meta.
+
+    P6.7: заготовки полей metadata для security filtering (значения по умолчанию не
+    меняют семантику существующих индексов — только ``setdefault``).
     """
     out: dict[str, Any] = dict(meta)
 
@@ -41,5 +44,9 @@ def apply_retrieval_metadata_contract(
     out["backend"] = backend
 
     out.setdefault("retrieval_timestamp", datetime.now(timezone.utc).isoformat())
+
+    out.setdefault("document_type", "unspecified")
+    out.setdefault("visibility", "unspecified")
+    out.setdefault("tags", [])
 
     return out

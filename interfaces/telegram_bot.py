@@ -28,16 +28,27 @@ from services.audio_pipeline_service import (
 )
 from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
+from services.asset_repository import AssetRef, AssetRepository
 from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import ChromaRagStore, count_chroma_chunks
 from services.retrieval.factory import build_retrieval_backend
 from services.rag_query_service import RagQueryService
 from services.rag_types import RagQueryResult
-from services.runtime_lifecycle_service import RuntimeLifecycleService
+from services.runtime_lifecycle_service import (
+    RuntimeLifecycleService,
+    truncate_for_lifecycle_log,
+)
+from services.vision_ocr_service import (
+    VisionOcrService,
+    build_ocr_user_instruction,
+    caption_requests_ocr,
+)
 from utils.config import AppConfig, load_config
 from utils.request_logger import RequestLogger
 from utils.telegram_formatter import format_for_telegram
 from utils.telegram_user_state import InMemoryTelegramUserStore, Mode
+
+_MAX_TELEGRAM_IMAGE_BYTES = 12 * 1024 * 1024
 
 _KNOWN_COMMAND_PREFIXES = frozenset(
     {"/start", "/help", "/mode", "/stats", "/reset"}
@@ -254,6 +265,355 @@ def _safe_query_preview_for_log(text: str, max_len: int = 200) -> str:
     return t[:max_len] + "..."
 
 
+def _ocr_input_asset_fields(ref: AssetRef) -> dict[str, Any]:
+    """Incoming OCR image as first-class asset (aligned with audio input_asset_* pattern)."""
+    rp = ref.relative_path
+    return {
+        "intake_image_asset_ref": rp,
+        "input_asset_ref": rp,
+        "input_asset_filename": ref.filename,
+        "input_asset_content_type": ref.content_type,
+        "input_asset_size_bytes": ref.size_bytes,
+        "input_asset_sha256": ref.sha256,
+    }
+
+
+def _ocr_vision_telemetry(
+    *,
+    chat: OpenAIChatProvider,
+    vision_latency_ms: int,
+) -> dict[str, Any]:
+    """Token + latency fields compatible with Text page / processing_done schema."""
+    out: dict[str, Any] = {
+        "response_latency_ms": vision_latency_ms,
+        "llm_latency_ms": vision_latency_ms,
+        "vision_call_latency_ms": vision_latency_ms,
+    }
+    usage = chat.get_last_llm_usage_for_log()
+    if not usage:
+        out["usage_not_returned_by_provider_wrapper"] = True
+        return out
+    out["usage_not_returned_by_provider_wrapper"] = False
+    pt = usage.get("prompt_tokens")
+    ct = usage.get("completion_tokens")
+    tt = usage.get("total_tokens")
+    if pt is not None:
+        out["prompt_tokens"] = int(pt)
+        out["input_tokens"] = int(pt)
+    if ct is not None:
+        out["completion_tokens"] = int(ct)
+        out["output_tokens"] = int(ct)
+    if tt is not None:
+        out["total_tokens"] = int(tt)
+    elif pt is not None and ct is not None:
+        out["total_tokens"] = int(pt) + int(ct)
+    out["usage"] = {k: int(v) for k, v in usage.items() if isinstance(v, (int, float))}
+    return out
+
+
+def try_init_ocr_chat_provider(config: AppConfig, ocr_holder: dict[str, Any]) -> None:
+    """Ленивая инициализация OpenAI для OCR (vision); при ошибке — только лог/holder."""
+    if ocr_holder.get("provider") is not None:
+        return
+    try:
+        ocr_holder["provider"] = OpenAIChatProvider(config)
+        ocr_holder["last_error"] = None
+    except Exception as exc:
+        ocr_holder["provider"] = None
+        ocr_holder["last_error"] = f"{type(exc).__name__}: {exc}"
+
+
+def run_telegram_ocr_flow(
+    *,
+    bot: telebot.TeleBot,
+    message: telebot.types.Message,
+    image_bytes: bytes,
+    mime_type: str,
+    caption: str,
+    filename: str | None,
+    lifecycle: RuntimeLifecycleService,
+    user_store: InMemoryTelegramUserStore,
+    ocr_holder: dict[str, Any],
+    config: AppConfig,
+    content_kind: str,
+    asset_repository: AssetRepository,
+) -> None:
+    """
+    OCR изображения из Telegram: vision API, без RAG и без локальных OCR-библиотек.
+
+    Логи: только длина и preview распознанного текста (не полный payload).
+    """
+    from services.memory.conversation_memory_service import (
+        persist_telegram_dialog_turn_best_effort,
+    )
+
+    uid = message.from_user.id
+    mode: Mode = user_store.get_mode(uid)
+    cap = (caption or "").strip()
+    wants_ocr = mode == "ocr" or caption_requests_ocr(cap)
+
+    t0 = time.monotonic()
+    execution_id = str(uuid.uuid4())
+    intake_id: uuid.UUID | None = None
+
+    if not wants_ocr:
+        bot.send_message(
+            message.chat.id,
+            "Чтобы распознать текст с фото:\n"
+            "• включите режим **/mode ocr** и отправьте изображение, или\n"
+            "• добавьте подпись: «распознай текст», «OCR», «прочитай изображение» и т.п.\n\n"
+            "Режим RAG по изображению без OCR здесь не выполняется.",
+        )
+        return
+
+    try_init_ocr_chat_provider(config, ocr_holder)
+    chat = ocr_holder.get("provider")
+    if chat is None:
+        err = str(ocr_holder.get("last_error") or "OpenAI недоступен")
+        print(f"[assistant-flow] ocr: провайдер недоступен: {err}", flush=True)
+        bot.send_message(
+            message.chat.id,
+            "Распознавание текста временно недоступно (нет OpenAI API или ошибка "
+            "инициализации). Проверьте OPENAI_API_KEY и vision-capable модель "
+            f"(сейчас: {config.openai_model}).",
+        )
+        return
+
+    if len(image_bytes) > _MAX_TELEGRAM_IMAGE_BYTES:
+        bot.send_message(
+            message.chat.id,
+            "Изображение слишком большое для безопасной обработки. "
+            "Отправьте файл меньшего размера.",
+        )
+        return
+
+    cap_preview = _safe_query_preview_for_log(cap, max_len=160) if cap else ""
+    file_size_bytes = len(image_bytes)
+    document_flag = "true" if content_kind == "document_image" else "false"
+    fname = (filename or "").strip() or "—"
+
+    list_user_preview = f"OCR: {cap_preview}" if cap_preview else "Изображение для OCR"
+    if cap:
+        user_text = f"Изображение для OCR\nПодпись: {cap.strip()}"
+    else:
+        user_text = "Изображение для OCR"
+
+    ocr_input_diagnostics: dict[str, Any] = {
+        "mime_type": mime_type,
+        "file_size_bytes": file_size_bytes,
+        "image_source": "telegram",
+        "filename": fname,
+        "document_image": document_flag == "true",
+        "content_kind": content_kind,
+    }
+
+    asset_fields: dict[str, Any] = {}
+    try:
+        mt_l = (mime_type or "").lower()
+        ext = ".jpg"
+        if "png" in mt_l:
+            ext = ".png"
+        elif "webp" in mt_l:
+            ext = ".webp"
+        elif "gif" in mt_l:
+            ext = ".gif"
+        elif "jpeg" in mt_l or "jpg" in mt_l:
+            ext = ".jpg"
+        ref = asset_repository.save_bytes(
+            bytes(image_bytes),
+            namespace="incoming_images",
+            filename=f"ocr_{execution_id[:12]}{ext}",
+            content_type=mime_type or None,
+        )
+        asset_fields = _ocr_input_asset_fields(ref)
+        ocr_input_diagnostics.update(
+            {
+                "input_asset_ref": ref.relative_path,
+                "input_asset_filename": ref.filename,
+                "input_asset_content_type": ref.content_type,
+                "input_asset_size_bytes": ref.size_bytes,
+                "input_asset_sha256": ref.sha256,
+            }
+        )
+    except Exception:
+        traceback.print_exc()
+
+    ocr_ui_base: dict[str, Any] = {
+        "modality": "text",
+        "mode": "ocr",
+        "route": "vision_ocr",
+        "downstream_route": "vision_ocr",
+        "user_input_kind": "image",
+        "system_output_kind": "text",
+        "list_user_preview": list_user_preview,
+        "user_text": user_text,
+        "query_preview": list_user_preview,
+        "caption_preview": cap_preview or None,
+        "ocr_input_diagnostics": ocr_input_diagnostics,
+        **asset_fields,
+    }
+
+    intake_preview = _safe_query_preview_for_log(list_user_preview, max_len=200)
+    intake_id = lifecycle.create_intake_event(
+        execution_id=execution_id,
+        telegram_chat_id=message.chat.id,
+        telegram_user_id=uid,
+        text_preview=intake_preview,
+        original_char_length=len(cap),
+    )
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="intake_received",
+        status="success" if intake_id else "error",
+        details={
+            **ocr_ui_base,
+            "content_kind": content_kind,
+            "telegram_mode": mode,
+        },
+        error_text=None if intake_id else "intake_events insert failed",
+    )
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="image_received",
+        status="success",
+        details={
+            **ocr_ui_base,
+            "content_kind": content_kind,
+            "image_bytes": len(image_bytes),
+        },
+    )
+
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="ocr_started",
+        status="success",
+        details={
+            **ocr_ui_base,
+            "model": chat.model_name,
+            "provider": chat.provider_label,
+        },
+    )
+
+    try:
+        svc = VisionOcrService(chat)
+        instruction = build_ocr_user_instruction(
+            caption=cap if cap else None,
+            mode_is_ocr=(mode == "ocr"),
+        )
+        t_vision = time.monotonic()
+        recognized = svc.extract_text(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            user_instruction=instruction,
+        )
+        vision_latency_ms = int((time.monotonic() - t_vision) * 1000)
+        llm_telemetry = _ocr_vision_telemetry(chat=chat, vision_latency_ms=vision_latency_ms)
+    except Exception as exc:
+        traceback.print_exc()
+        lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=intake_id,
+            stage="ocr_error",
+            status="error",
+            details={
+                **ocr_ui_base,
+                "model": chat.model_name,
+                "provider": chat.provider_label,
+            },
+            error_text=str(exc)[:4000],
+        )
+        lifecycle.log_error_from_exception(
+            execution_id=execution_id,
+            intake_event_id=intake_id,
+            component="VisionOcr",
+            operation="extract_text",
+            exc=exc,
+        )
+        bot.send_message(
+            message.chat.id,
+            "Не удалось распознать текст на изображении. Попробуйте другое фото "
+            "или повторите позже. Если ошибка повторяется, проверьте лимиты API и "
+            "что модель поддерживает vision.",
+        )
+        return
+
+    preview = truncate_for_lifecycle_log(recognized, 600)
+    recognized_len = len(recognized)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="ocr_done",
+        status="success",
+        details={
+            **ocr_ui_base,
+            "model": chat.model_name,
+            "provider": chat.provider_label,
+            **llm_telemetry,
+            "recognized_text_length": recognized_len,
+            "recognized_text_preview": preview,
+            "answer_text": preview,
+            "answer_preview": preview,
+            "output_text": preview,
+        },
+    )
+    reply_body = f"Распознанный текст:\n\n{recognized}"
+    formatted = format_for_telegram(reply_body)
+    send_long_message(bot, message.chat.id, formatted)
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="ocr_response_sent",
+        status="success",
+        details={
+            **ocr_ui_base,
+            **llm_telemetry,
+            "recognized_text_length": recognized_len,
+            "recognized_text_preview": preview,
+            "answer_text": preview,
+            "answer_preview": preview,
+            "output_text": preview,
+        },
+    )
+    lifecycle.log_processing_event(
+        execution_id=execution_id,
+        intake_event_id=intake_id,
+        stage="processing_done",
+        status="success",
+        details={
+            **ocr_ui_base,
+            "provider": chat.provider_label,
+            "model": chat.model_name,
+            **llm_telemetry,
+            "latency_ms": elapsed_ms,
+            "duration_ms": elapsed_ms,
+            "elapsed_ms": elapsed_ms,
+            "recognized_text_length": recognized_len,
+            "recognized_text_preview": preview,
+            "answer_text": preview,
+            "answer_preview": preview,
+            "output_text": preview,
+        },
+    )
+    try:
+        persist_telegram_dialog_turn_best_effort(
+            telegram_user_id=uid,
+            telegram_chat_id=message.chat.id,
+            username=getattr(message.from_user, "username", None),
+            first_name=getattr(message.from_user, "first_name", None),
+            last_name=getattr(message.from_user, "last_name", None),
+            user_text=user_text,
+            assistant_text=truncate_for_lifecycle_log(formatted, 2000),
+            execution_id=execution_id,
+            session_mode="ocr",
+        )
+    except Exception:
+        traceback.print_exc()
+
+
 def _voice_storage_filename(
     execution_id: str,
     *,
@@ -381,6 +741,15 @@ def create_bot() -> telebot.TeleBot:
 
     try_init_rag(log_to_db=True)
 
+    ocr_holder: dict[str, Any] = {"provider": None, "last_error": None}
+    try_init_ocr_chat_provider(config, ocr_holder)
+    if ocr_holder.get("last_error"):
+        print(
+            "[assistant-flow] ocr: vision не инициализирован при старте: "
+            f"{ocr_holder['last_error']}",
+            flush=True,
+        )
+
     chroma_display = _resolve_project_path(config, config.chroma_persist_dir)
     docs_display = _resolve_project_path(config, config.rag_documents_dir)
 
@@ -393,6 +762,7 @@ def create_bot() -> telebot.TeleBot:
                 "Могу:\n"
                 "- отвечать на вопросы (режим текста, GigaChat)\n"
                 "- отвечать по базе знаний (режим RAG, нужен проиндексированный Chroma)\n"
+                "- распознавать текст на фото (режим OCR или подпись «распознай текст»)\n"
                 "- генерировать изображения по запросу (в текстовом режиме)\n\n"
                 "Команды: /help, /mode, /stats, /reset",
             )
@@ -407,12 +777,15 @@ def create_bot() -> telebot.TeleBot:
                 message.chat.id,
                 "Режимы:\n"
                 "/mode text — обычный диалог и генерация картинок по ключевым словам\n"
-                "/mode rag — вопросы по документам в Chroma (индекс через CLI)\n\n"
+                "/mode rag — вопросы по документам в Chroma (индекс через CLI)\n"
+                "/mode ocr — распознавание текста на изображениях (OpenAI vision)\n\n"
                 "/stats — статистика индекса RAG\n"
                 "/reset — сброс в текстовый режим и очистка истории RAG\n\n"
                 "Примеры (текст):\n"
                 "• Объясни простыми словами, как работает фотосинтез\n"
                 "• Нарисуй футуристический город на закате\n\n"
+                "Фото: в режиме OCR отправьте изображение; в text/rag — добавьте подпись "
+                "«распознай текст» / «OCR» и т.п.\n\n"
                 "В режиме RAG задавайте вопросы по уже проиндексированной базе.",
             )
         except Exception:
@@ -431,21 +804,23 @@ def create_bot() -> telebot.TeleBot:
                     f"Текущий режим: {current}\n\n"
                     "Доступно:\n"
                     "/mode text — обычный режим (GigaChat + картинки)\n"
-                    "/mode rag — ответы по RAG / Chroma\n\n"
+                    "/mode rag — ответы по RAG / Chroma\n"
+                    "/mode ocr — распознавание текста на фото (OpenAI vision)\n\n"
                     "TODO: сохранение режима в PostgreSQL (chat_sessions).",
                 )
                 return
             arg = parts[1].strip().lower()
-            if arg not in ("text", "rag"):
+            if arg not in ("text", "rag", "ocr"):
                 bot.send_message(
                     message.chat.id,
-                    "Неизвестный режим. Используйте: /mode text или /mode rag",
+                    "Неизвестный режим. Используйте: /mode text, /mode rag или /mode ocr",
                 )
                 return
             user_store.set_mode(uid, arg)
             labels = {
                 "text": "Текстовый режим: GigaChat и генерация изображений.",
                 "rag": "Режим RAG: ответы по проиндексированной базе (см. /stats).",
+                "ocr": "Режим OCR: отправьте фото — текст будет распознан (OpenAI vision).",
             }
             bot.send_message(message.chat.id, f"Режим: {arg}\n{labels[arg]}")
         except Exception:
@@ -494,7 +869,7 @@ def create_bot() -> telebot.TeleBot:
             user_store.reset(message.from_user.id)
             bot.send_message(
                 message.chat.id,
-                "Сброшено: режим text, история RAG очищена.\n"
+                "Сброшено: режим text, история RAG очищена (включая режим OCR).\n"
                 "(TODO: синхронизация с PostgreSQL chat_sessions.)",
             )
         except Exception:
@@ -1103,6 +1478,94 @@ def create_bot() -> telebot.TeleBot:
                 message.chat.id,
                 "Не удалось обработать голосовое сообщение. Попробуйте позже.",
             )
+
+    def _is_telegram_image_document(message: telebot.types.Message) -> bool:
+        doc = message.document
+        if doc is None:
+            return False
+        mt = (getattr(doc, "mime_type", None) or "").lower().strip()
+        return bool(mt.startswith("image/"))
+
+    @bot.message_handler(content_types=["photo"])
+    def handle_photo(message: telebot.types.Message) -> None:
+        try:
+            photos = message.photo
+            if not photos:
+                bot.send_message(message.chat.id, "Фото не получено.")
+                return
+            best = photos[-1]
+            fid = getattr(best, "file_id", None)
+            if not fid:
+                bot.send_message(message.chat.id, "Не удалось получить file_id фото.")
+                return
+            finfo = bot.get_file(fid)
+            raw = bot.download_file(finfo.file_path)
+            data = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+            caption = (message.caption or "").strip()
+            run_telegram_ocr_flow(
+                bot=bot,
+                message=message,
+                image_bytes=bytes(data),
+                mime_type="image/jpeg",
+                caption=caption,
+                filename=None,
+                lifecycle=lifecycle,
+                user_store=user_store,
+                ocr_holder=ocr_holder,
+                config=config,
+                content_kind="photo",
+                asset_repository=asset_repository,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            print(f"[assistant-flow] handle_photo: {type(exc).__name__}: {exc}", flush=True)
+            try:
+                bot.send_message(
+                    message.chat.id,
+                    "Не удалось обработать фото. Попробуйте позже или проверьте сеть/API.",
+                )
+            except Exception:
+                traceback.print_exc()
+
+    @bot.message_handler(content_types=["document"], func=_is_telegram_image_document)
+    def handle_document_image(message: telebot.types.Message) -> None:
+        try:
+            doc = message.document
+            if doc is None or not getattr(doc, "file_id", None):
+                bot.send_message(message.chat.id, "Документ-изображение не получен.")
+                return
+            finfo = bot.get_file(doc.file_id)
+            raw = bot.download_file(finfo.file_path)
+            data = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+            caption = (message.caption or "").strip()
+            mt = (getattr(doc, "mime_type", None) or "image/jpeg").strip() or "image/jpeg"
+            run_telegram_ocr_flow(
+                bot=bot,
+                message=message,
+                image_bytes=bytes(data),
+                mime_type=mt,
+                caption=caption,
+                filename=getattr(doc, "file_name", None),
+                lifecycle=lifecycle,
+                user_store=user_store,
+                ocr_holder=ocr_holder,
+                config=config,
+                content_kind="document_image",
+                asset_repository=asset_repository,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            print(
+                f"[assistant-flow] handle_document_image: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            try:
+                bot.send_message(
+                    message.chat.id,
+                    "Не удалось обработать изображение-документ. Попробуйте позже.",
+                )
+            except Exception:
+                traceback.print_exc()
 
     @bot.message_handler(
         func=lambda msg: msg.content_type == "text"

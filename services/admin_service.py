@@ -67,6 +67,11 @@ SUMMARY_LOG_SAMPLE_CAP = 500
 
 SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
     "intake_received",
+    "image_received",
+    "ocr_started",
+    "ocr_done",
+    "ocr_error",
+    "ocr_response_sent",
     "route_selected",
     "text_answer_done",
     "rag_answer_done",

@@ -21,6 +21,7 @@ from services.cache.retrieval_serializers import (
 )
 from services.cache.sqlite_cache import get_sqlite_cache_store
 from services.retrieval.base import RetrievalBackend, RetrievalHealth, RetrievalSearchResult
+from services.retrieval_security.context import RetrievalSecurityContext
 
 if TYPE_CHECKING:
     from utils.config import AppConfig
@@ -46,13 +47,28 @@ class CachingRetrievalBackend:
     def collection_count(self) -> int:
         return int(self._inner.collection_count())
 
-    def search(self, query: str, top_k: int = 5) -> list[RetrievalSearchResult]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        security_context: RetrievalSecurityContext | None = None,
+    ) -> list[RetrievalSearchResult]:
         if not (query or "").strip():
             return []
         if not self._config.enable_retrieval_cache:
-            return self._inner.search(query, top_k=top_k)
+            return self._inner.search(
+                query, top_k=top_k, security_context=security_context
+            )
 
-        fp = build_retrieval_fingerprint(self._config, query=query, top_k=top_k)
+        ctx = security_context or RetrievalSecurityContext.permissive_default()
+        sec_extra = ctx.to_cache_fingerprint_extra()
+        fp = build_retrieval_fingerprint(
+            self._config,
+            query=query,
+            top_k=top_k,
+            security_fingerprint_extra=sec_extra,
+        )
         kh = fingerprint_to_key_hash(fp)
         t0 = time.monotonic()
         ent = self._store.get(CacheNamespaces.RETRIEVAL, kh)
@@ -67,7 +83,9 @@ class CachingRetrievalBackend:
             return results
 
         try:
-            results = self._inner.search(query, top_k=top_k)
+            results = self._inner.search(
+                query, top_k=top_k, security_context=security_context
+            )
         except Exception:
             self._log(
                 outcome="miss",

@@ -546,6 +546,17 @@ function pickRouteKey(rows: LogItem[]): string {
   if (f === "audio") return "audio";
   if (f === "rag") return "rag";
   if (f === "text") return "text";
+  if (f === "other") {
+    for (const r of rows) {
+      const det = r.details;
+      if (det && typeof det === "object" && !Array.isArray(det)) {
+        const rt = String((det as Record<string, unknown>).route ?? "")
+          .trim()
+          .toLowerCase();
+        if (rt === "vision_ocr") return "text";
+      }
+    }
+  }
   return "unknown";
 }
 
@@ -573,7 +584,9 @@ function buildSessions(rows: LogItem[]): SessionView[] {
     const status = String(latest.status || "—");
     const providerModel = pickProviderModel(detailsPool);
     const userInput = pickText(detailsPool, [
+      "list_user_preview",
       "user_input",
+      "user_text",
       "query_preview",
       "query",
       "prompt",
@@ -582,10 +595,12 @@ function buildSessions(rows: LogItem[]): SessionView[] {
     ]);
     const transcript = pickText(detailsPool, ["transcript_preview", "transcript"]);
     const assistantOutputBase = pickText(detailsPool, [
+      "recognized_text_preview",
       "assistant_response",
       "response_text",
       "answer_preview",
       "answer",
+      "answer_text",
       "output_text",
       "final_answer",
       "rag_answer",
@@ -701,7 +716,16 @@ function normalizeStatus(s: string): string {
 }
 
 function pickRoute(rows: LogItem[]): RouteFilter {
-  const vals = rows
+  const ordered = [...rows].sort((a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0));
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const mr = String(ordered[i].modality_route ?? "")
+      .trim()
+      .toLowerCase();
+    if (mr === "text" || mr === "rag" || mr === "image" || mr === "audio") {
+      return mr;
+    }
+  }
+  const vals = ordered
     .flatMap((r) => {
       const d = asRecord(r.details);
       return [
@@ -715,8 +739,9 @@ function pickRoute(rows: LogItem[]): RouteFilter {
     .filter(Boolean);
   for (const v of vals.reverse()) {
     if (v.includes("rag")) return "rag";
+    if (v === "vision_ocr" || v === "ocr") return "text";
     if (v.includes("audio") || v.includes("voice")) return "audio";
-    if (v.includes("image")) return "image";
+    if (v === "image_generation" || v === "image_response" || v === "image") return "image";
     if (v.includes("text")) return "text";
   }
   return "other";

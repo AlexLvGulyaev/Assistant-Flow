@@ -2200,3 +2200,363 @@ Foundation для **hybrid context assembly**: `KB retrieval context` + `dialog 
 
 - Redis, Admin UI cache stats, политика answer cache с security review, document version в fingerprint, production-grade invalidation.
 
+---
+
+## 36. P6.7 Retrieval Security Groundwork (append-only)
+
+### 36.1 Назначение
+
+Foundation для **retrieval-side security** и **role-aware retrieval** без production RBAC, JWT, OAuth, логинов и UI security. Только контракты, фильтрация до/на уровне vector query (где поддерживается Chroma), post-filter как вторая линия, минимальное masking, телеметрия событий.
+
+### 36.2 Принципы
+
+- **Retrieval-before-generation**: политика задаётся до вызова vector backend; для Chroma в query передаётся ``where`` при ограничениях по ``source`` / ``metadata_filters``; теги и сложные условия — post-filter после контракта metadata.
+- **Additive / backward-compatible**: ``security_context=None`` в ``RetrievalBackend.search`` и в ``RagQueryService.retrieve`` / ``answer`` — поведение как до P6.7 (``RetrievalSecurityContext.permissive_default()``).
+- **Кэш**: fingerprint retrieval дополняется сегментом ``retrieval_security=...`` при не-permissive контексте (см. ``to_cache_fingerprint_extra``).
+
+### 36.3 Контракты и код
+
+- ``services/retrieval_security/context.py`` — ``RetrievalSecurityContext`` (``role``, ``allowed_sources``, ``retrieval_scope``, ``metadata_filters``, ``required_tags``); роли-константы ``ROLE_GUEST`` / ``ROLE_EMPLOYEE`` / ``ROLE_ADMIN`` (идентификаторы, не IAM).
+- ``chroma_where.py`` — сборка Chroma ``where`` до ``collection.query``.
+- ``result_filter.py`` — post-filter + события ``retrieval_filtered``, ``retrieval_denied_source``.
+- ``masking.py`` — regex-хелперы phone/email/длинные цифры; ``masking_applied`` при обёртке с телеметрией.
+- ``telemetry.py`` — stdout ``[assistant-flow] retrieval_security: событие=...``.
+- Backends: ``ChromaBackend.search(..., security_context=)``, ``FaissBackend`` (oversample ×8 при ограничениях, затем filter + slice top_k — ограничение FAISS без metadata-индекса).
+- ``rag_chroma_store.native_similarity_search_with_score(..., where=)`` — опциональный ``where``.
+- ``chunk_metadata.apply_retrieval_metadata_contract`` — ``setdefault`` для ``document_type``, ``visibility``, ``tags`` (заготовка фильтров).
+
+### 36.4 Телеметрия (lifecycle-события уровня логов)
+
+- ``retrieval_scope_applied`` — политика не fully unrestricted (в т.ч. ``chroma_where`` true/false).
+- ``retrieval_filtered`` — post-filter отбросил чанки (агрегаты счётчиков).
+- ``retrieval_denied_source`` — отказ по источнику (без полного текста чанка).
+- ``masking_applied`` — применена маска (виды агрегированно).
+
+### 36.5 Текущие ограничения
+
+- Нет auth-привязки ролей; ``role`` — строка для политик/логов.
+- FAISS: нет истинного pre-vector metadata filter; только oversampling + post-filter (возможен under-fetch при плотных ограничениях).
+- Теги: не в Chroma ``where`` (совместимость операторов); только post-filter.
+- Masking — эвристики regex, не NLP/NER.
+
+### 36.6 Smoke
+
+- ``scripts/test_retrieval_security_smoke.py`` — where, filter, masking, fake Chroma store.
+
+### 36.7 Future (намеренно не в P6.7)
+
+- Production RBAC, JWT/OAuth, пользователи, UI security, PII-детекторы, metadata-индекс для FAISS, расширение Chroma where для массивов тегов.
+
+---
+
+## 37. P6.8 Retrieval Evaluation & Diagnostics Layer (append-only)
+
+### 37.1 Назначение
+
+**Operational foundation** для оценки качества retrieval (и подготовки к RAG-диагностике) **offline**: отдельный слой ``services/retrieval_diagnostics/``, smoke-dataset и скрипт отчёта. **Не** production monitoring, **не** Admin UI, **не** scheduled jobs, **не** auto-evaluation на каждом Telegram-запросе.
+
+### 37.2 Инварианты
+
+- Слой **не меняет** ranking retrieval, ``top_k`` по умолчанию, prompt rewriting, ответы Telegram/runtime RAG — только читает результаты ``RetrievalBackend.search`` и строит отчёт.
+- Smoke-dataset ``evaluation/datasets/retrieval_diagnostics_smoke.json`` — **generic**, не curated production benchmark; при нестабильной KB кейсы с ``should_have_answer: false`` и без жёстких ``expected_*`` допускают предупреждения без падения скрипта.
+- **RAGAS** — опционален; ``ragas_placeholder`` не добавляет обязательных зависимостей; ``enable_ragas_evaluation`` не включает полноценный RAGAS pipeline на этом этапе.
+
+### 37.3 Кодовая поверхность
+
+- ``services/retrieval_diagnostics/base.py`` — ``RetrievalDiagnosticSample``, ``RetrievalDiagnosticResult``, ``RetrievalDiagnosticMetric``.
+- ``services/retrieval_diagnostics/diagnostics_service.py`` — ``RetrievalDiagnosticsService.load_samples`` / ``analyze``; десериализация ``security_context`` из JSON (совместимость P6.7).
+- ``services/retrieval_diagnostics/ragas_placeholder.py`` — заглушка под будущую интеграцию.
+- ``scripts/test_retrieval_diagnostics_smoke.py`` — загрузка dataset, ``build_retrieval_backend``, прогон diagnostics, stdout summary, JSON ``outputs/evaluation/retrieval_diagnostics_report.json`` (каталог из ``rag_eval_output_dir`` / env).
+- Опционально: ``RETRIEVAL_DIAGNOSTICS_DATASET_PATH`` — переопределение пути dataset.
+
+### 37.4 Отчёт и stdout
+
+- В отчёт попадают **preview** полей (query, объединённый текст, источники) с ограничением длины; полные chunks **не** пишутся.
+- Stdout: агрегаты ``total_cases``, ``passed``, ``warnings``, ``avg_retrieved_count``, счётчики hit по keyword/source (только если в кейсе заданы ограничения), путь к report.
+
+### 37.5 Критерии завершения smoke-скрипта
+
+- Завершение **без exception**; hard exit code 2 только при невалидном dataset (<5 кейсов, битый JSON), отсутствии файла dataset или невозможности собрать retrieval backend.
+- Warnings на уровне кейсов допускаются.
+
+### 37.6 Future (намеренно не в P6.8)
+
+- Curated benchmarks, Admin UI метрики, drift tracking, scheduled evaluation jobs, полноценный RAGAS (judge LLM, faithfulness), интеграция diagnostics в CI gates.
+
+---
+
+## 38. Unified roadmap realignment (append-only)
+
+### 38.1 Цель раздела
+
+Зафиксировать **актуальную единую roadmap-структуру** проекта после смещения фокуса к **retrieval-platform architecture**. Раздел **не** переписывает и **не** удаляет прежние упоминания P6/P7 и прочие исторические секции; он **supersedes** их как верхнеуровневую strategic roadmap для чтения «сегодня».
+
+### 38.2 Статус ранних формулировок P6 / P7
+
+Ранние формулировки в духе:
+
+- «P6 — Admin UI / operational console maturity»
+- «P7 — Security / RBAC / Multi-user»
+
+отражали **более раннюю фазу** планирования и **больше не являются** актуальной верхнеуровневой нумерацией roadmap. Соответствующие исторические абзацы в этом документе остаются **архивным контекстом**, а не текущим master-планом.
+
+### 38.3 Где «лежит» operational Admin UI maturity
+
+**Operational Admin UI maturity** фактически вошла в **late P5 operational contour** (консоль, health, деградации, операционные сценарии), а не в отдельный верхнеуровневый «P6 = Admin UI» в новой схеме.
+
+### 38.4 Strategic direction
+
+**Retrieval platform evolution** стала основным **strategic direction**: единый слой для векторного retrieval, контрактов metadata, hybrid/memory readiness, кэша, безопасности retrieval-side, offline evaluation/diagnostics — как foundation для остальной платформы.
+
+### 38.5 Unified roadmap (актуальная структура)
+
+**P5.1** — Healthchecks / graceful degradation / operational stability  
+**P5.2** — Storage abstraction  
+**P5.3** — Async processing foundation  
+**P5.4** — Voice / Audio pipeline  
+**P5.5** — Retrieval Quality Engineering  
+
+**P6 — Retrieval Platform Foundation Layer**
+
+Внутри P6 (фактические этапы кода и документации):
+
+- **P6.1** — Retrieval abstraction  
+- **P6.2** — Smart chunking  
+- **P6.3** — Conversational memory groundwork  
+- **P6.4** — Hybrid retrieval groundwork  
+- **P6.5** — Cache foundation  
+- **P6.6** — Retrieval stabilization / tests  
+- **P6.7** — Retrieval security groundwork  
+- **P6.8** — Retrieval diagnostics / evaluation  
+
+**P7** — Async Processing & Background Jobs Platform  
+**P8** — Security / RBAC / Multi-user groundwork  
+**P9** — Multimodal Retrieval & Advanced Ingestion  
+**P10** — Operational Observability & Evaluation Platform  
+**P11** — Deployment / Production / Distribution Maturity  
+
+*Примечание:* нумерация подэтапов P6 в §23+ документа описывает реализацию в хронологии репозитория; при расхождении с более старыми подзаголовками внутри секций **приоритет у этой таблицы §38.5** как у **unified** структуры.
+
+### 38.6 Rationale
+
+Retrieval platform как **foundation layer** обслуживает дальнейшее развитие:
+
+- RAG и качество контекста;
+- memory / hybrid context;
+- multimodal ingestion;
+- evaluation и diagnostics;
+- observability (в т.ч. поверх retrieval-событий);
+- security (retrieval-side и далее platform-wide);
+- async indexing / reindex;
+- масштабирование платформы.
+
+### 38.7 Отношение к историческим секциям
+
+Новая roadmap **не отменяет** и **не удаляет** исторические разделы PROJECT_STATE; она **заменяет их смысл** как единственный актуальный **верхнеуровневый** roadmap и устраняет архитектурное противоречие «старый P6/P7 vs retrieval-oriented P6» для читателей документа.
+
+---
+
+## 39. P6.x / Module 5 Lesson 1 — OCR image route (append-only)
+
+### 39.1 Назначение
+
+Production-safe маршрут **распознавания текста с изображения** в Telegram: фото и документы с ``image/*``, без локальных OCR-библиотек (tesseract и т.д.), через **OpenAI vision** (``chat.completions`` + ``image_url`` data URL).
+
+### 39.2 Поведение
+
+- Режим ``/mode ocr`` — любое входящее фото обрабатывается как OCR (подпись опциональна).
+- В режимах ``text`` / ``rag`` — OCR только если **caption** содержит явные маркеры (OCR, «распознай», «прочитай изображение», …); иначе подсказка пользователю без вызова API.
+- Ответ пользователю: заголовок «Распознанный текст» + текст; при ошибке — **graceful** сообщение на русском.
+- **Не** выполняется OCR→RAG на этом шаге; RAG по изображению не смешивается.
+
+### 39.3 Observability
+
+Lifecycle stages (processing_logs): ``image_received``, ``ocr_started``, ``ocr_done``, ``ocr_error``. В логах **не** пишется полный распознанный текст — только ``recognized_text_chars`` и ``recognized_text_preview`` (усечённый).
+
+### 39.4 Кодовая поверхность
+
+- ``providers/openai_chat_provider.py`` — ``extract_text_from_image`` (vision).
+- ``services/vision_ocr_service.py`` — маркеры caption, ``VisionOcrService``, фиксированный OCR-prompt (RU).
+- ``interfaces/telegram_bot.py`` — handlers ``photo``, ``document`` (image mime), ``run_telegram_ocr_flow``; режим ``/mode ocr``; расширение ``Mode`` в ``utils/telegram_user_state.py``; ``session_mode=ocr`` в persist (``conversation_memory_service``).
+
+### 39.5 Smoke
+
+- ``scripts/test_ocr_route_smoke.py`` — эвристики + опциональный вызов vision при наличии ключа.
+
+### 39.6 Ручная проверка Telegram
+
+После deploy: ``/mode ocr`` → отправить фото с текстом → убедиться, что ответ содержит распознанный текст. Без режима OCR — фото с подписью «распознай текст». Полный E2E подтверждается вручную (CI не заменяет живой Telegram).
+
+---
+
+## 40. OCR / vision route observability conventions (append-only)
+
+### 40.1 Machine names и payload
+
+- OCR route = ``vision_ocr``.
+- OCR input kind = ``image`` (в payload как ``user_input_kind``).
+- OCR output kind = ``text`` (в payload как ``system_output_kind``).
+
+### 40.2 Lifecycle stage naming (stable machine names)
+
+OCR известные stage machine names (в lifecycle/logging):
+- ``image_received`` → ``Получено изображение``
+- ``ocr_started`` → ``OCR запущен``
+- ``ocr_done`` → ``OCR завершён``
+- ``ocr_error`` → ``Ошибка OCR``
+- ``vision_ocr_started`` → ``OCR запущен`` (alias)
+- ``vision_ocr_done`` → ``OCR завершён`` (alias)
+- ``vision_ocr_error`` → ``Ошибка OCR`` (alias)
+- ``ocr_response_sent`` → ``OCR-ответ отправлен``
+- ``processing_done`` для ``route=vision_ocr`` → ``Обработка OCR завершена`` (UI special-case)
+
+Unknown stage fallback допустим, но все OCR known stages должны иметь русские UI labels.
+
+### 40.3 Observability hygiene
+
+- raw image bytes/base64 в технические логи не пишется.
+- распознанный текст в технических логах — только ``recognized_text_preview`` + длина (и/или ``answer_text`` в виде preview).
+- OCR→RAG намеренно deferred, без изменения retrieval/prompt/runtime.
+
+### 40.4 UI mapping договорённости
+
+- UI маппит machine names в русские operator labels.
+- новые routes обязаны добавлять stage-label mapping одновременно с lifecycle logging.
+
+---
+
+## 41. OCR operational observability corrections (append-only)
+
+### 41.1 Primary vs secondary UI
+
+- **React + FastAPI Admin API** — основной operational contour (production observability): Vite admin-ui, `/api/logs/*`, summary, modality views, asset preview.
+- **Streamlit** (`admin_ui/app.py`) — **вторичный** слой совместимости; правки только там не закрывают операторский UX в production.
+
+### 41.2 Modality semantics
+
+- OCR (**`route=vision_ocr`**, **`mode=ocr`**) — **text-producing** pipeline: вход изображение, выход текст. В дашбордах и фильтрах относится к семейству **«текст»**, не к генерации изображений.
+
+### 41.3 Operator UX (lists и карточки)
+
+- Known OCR lifecycle stages обязаны иметь **явные русские operator labels** в React (`operationalLabels.ts` / timeline), без сырого machine name и без fallback «Нестандартный этап».
+- Элементы списка executions — **компактные**, ориентированные на оператора: **`list_user_preview`** (`Изображение для OCR` или `OCR: <caption preview>`), без **mime / file size** в основной строке.
+- **Mime, размер файла, источник** — в **`ocr_input_diagnostics`** (collapsible / technical snapshot), не в primary list line.
+- **«Что спросил пользователь»**: предпочтительно **preview изображения** через **`/api/assets/preview?asset_ref=<intake_image_asset_ref>`** (после сохранения intake в `AssetRepository`), плюс компактный текст; метаданные — в раскрываемом блоке.
+- **«Что ответила система»**: для успешного OCR — **`recognized_text_preview`** (и синонимы `answer_preview` / `answer_text`) с ограничением длины; без заглушки **N/A** при успехе.
+
+### 41.4 Lifecycle payload schema (OCR, стабильные поля для UI/summary)
+
+- **`route`**, **`downstream_route`**: `vision_ocr`
+- **`mode`**: `ocr`
+- **`user_input_kind`**: `image`
+- **`system_output_kind`**: `text`
+- **`list_user_preview`**: компактная строка для списков
+- **`user_text`**: человекочитаемый ввод (подпись / «Изображение для OCR»)
+- **`query_preview`**: для обратной совместимости совпадает с **`list_user_preview`** в OCR contour
+- **`intake_image_asset_ref`**: относительный ref в `AssetRepository` для preview API
+- **`ocr_input_diagnostics`**: mime, размер, filename, `content_kind`, источник
+- **`recognized_text_preview`**, **`recognized_text_length`**
+- **`answer_preview`**, **`answer_text`**, **`output_text`**: preview ответа для карточек
+
+### 41.5 Backend / aggregation
+
+- **`count_routes_since`**: `vision_ocr` и `mode=ocr` учитываются в bucket **`text`**.
+- **`SUMMARY_LIFECYCLE_STAGE_ORDER`**: включает OCR stages (`image_received`, `ocr_*`, `ocr_response_sent`), чтобы summary отражал OCR lifecycle.
+- **`admin_api/deps` `truncate_details`**: preserved keys включают OCR-поля, чтобы slim payload не обнулял preview при больших `details`.
+
+---
+
+## 42. OCR modality normalization corrections (append-only)
+
+### 42.1 Semantics
+
+- OCR — **text-producing** маршрут: в операторском UI он относится к семейству **«текст»**, не к генерации изображений.
+- **Summary** (агрегаты SQL) и **страницы Logs/Text** (фильтры, карточки, таймлайн) не должны расходиться из‑за разных эвристик на усечённом JSON `details`.
+
+### 42.2 Централизация (FastAPI → React)
+
+- Нормализация **модальности для фильтров** выполняется в **`admin_api.deps.log_row_to_entry`**: на каждую строку лога добавляются поля **`modality_route`** (как bucket на Logs: `text` \| `rag` \| `image` \| `audio` \| `other`) и **`modality`** (высокоуровневый label: для OCR и обычного чата — `text`, иначе `rag` \| `image` \| `audio`, для `other` — `null`).
+- Инференс использует **исходный** `details` из БД (до `truncate_details`), плюс **`stage`**, поэтому OCR не теряется, когда в API уходит усечённый `details`.
+- В **`details`** для OCR-пайплайна дополнительно пишется **`modality: "text"`** (совместимость сырого JSON в БД).
+- **React** (`LogsPage.pickRoute`, `TextPage.isTextExecutionSession`) **сначала** опирается на **`modality_route` / `modality`**, затем — на прежние эвристики (legacy строки без новых полей).
+
+### 42.3 Lifecycle stage labels (единый слой)
+
+- **`normalizeMachineStage`** в `operationalLabels.ts` приводит machine `stage` к каноническому виду (trim, zero-width/BOM, NFKC, пробелы → `_`) до lookup в **`OCR_STAGE_LABEL_RU`** / **`EVENT_TYPE_RU`** — таймлайн не должен падать в «Нестандартный этап» из‑за невидимых символов или пробелов в `stage`.
+
+### 42.4 Legacy heuristic fix (Logs)
+
+- В fallback-классификации маршрута убран широкий **`includes("image")`** в пользу явных токенов (`image_generation`, `image_response`, …), чтобы случайные подстроки не переводили сессию в «image» вместо текста.
+
+### 42.5 Source of truth
+
+- Для поведения operational UI в production contour **источник истины** — **React + FastAPI** (`/api/logs/recent`, `log_row_to_entry`); Streamlit — вторичный слой.
+
+---
+
+## 43. OCR input asset persistence and telemetry conventions (append-only)
+
+### 43.1 Входящее изображение OCR
+
+- Входящее изображение OCR — **first-class incoming asset**: байты хранятся только через **`AssetRepository`** (filesystem layout), **не** в PostgreSQL и **не** как base64 в `processing_logs.details`.
+- Стабильный namespace для файлов: **`incoming_images`** (имя файла включает префикс execution).
+- В lifecycle payload (и slim API) попадают **`input_asset_ref`**, **`input_asset_filename`**, **`input_asset_content_type`**, **`input_asset_size_bytes`**, **`input_asset_sha256`**, плюс legacy-алиас **`intake_image_asset_ref`** (= тот же ref) для уже существующего Admin UI preview.
+
+### 43.2 Семантика маршрута
+
+- OCR output — **текст**; **`user_input_kind=image`**, **`system_output_kind=text`**; маршрут **`vision_ocr`** остаётся text-producing modality (см. §41–42).
+
+### 43.3 Телеметрия токенов и задержек
+
+- Токены: при ответе OpenAI с **`usage`** провайдер заполняет **`prompt_tokens` / `completion_tokens` / `total_tokens`**; в лог дублируются **`input_tokens` / `output_tokens` / `total_tokens`** для совпадения с полями text-пайплайна в React (**`extractTokensFromDetails`** / **`pickAggregatedTokens`**).
+- Если обёртка не получила usage: **`usage_not_returned_by_provider_wrapper: true`** (без выдуманных чисел).
+- Задержка vision-вызова: **`response_latency_ms`**, **`llm_latency_ms`**, **`vision_call_latency_ms`** (одно и то же wall time вокруг `extract_text`), пишется в **`ocr_done`**, **`ocr_response_sent`**, **`processing_done`**; полный wall execution по-прежнему **`latency_ms` / `duration_ms` / `elapsed_ms`** на **`processing_done`**.
+
+### 43.4 Долгосрочно
+
+- Целевая модель: **единый asset metadata** для incoming/outgoing (связь с async jobs / generated assets), без дублирования смысла в разных ключах; текущий этап — **AssetRepository + нормализованный lifecycle JSON**.
+
+---
+
+## 44. FAISS operational integration audit (append-only)
+
+### 44.1 Verdict (operational Documents → RAG)
+
+**Нет:** текущий operational contour **Documents upload / reindex → indexing → vectors** **не** может end-to-end идти через FAISS. Индексация и привязка к каталогу документов **жёстко реализованы на Chroma** (`AdminKnowledgeIndexer`, `LocalRagIndexer`, `ChromaRagStore`, `reset_chroma_for_reindex`).
+
+**Да (частично):** при **`RAG_BACKEND=faiss`** и заранее собранном каталоге **`FAISS_INDEX_DIR`** (файлы `vectors.faiss`, `chunks.json`, опционально `manifest.json`) **runtime RAG query** идёт через **`RetrievalBackend`** → **`FaissBackend`** (`services/retrieval/factory.py` → `RagQueryService._retrieval.search`). Это **query-only** контур, не синхронизированный с Admin indexing pipeline.
+
+### 44.2 Что реально работает (FAISS)
+
+- **Абстракция + factory**: `build_retrieval_backend`, `ChromaBackend` / `FaissBackend`, опционально `CachingRetrievalBackend`.
+- **FAISS persistence для read path**: индекс на диске под `FAISS_INDEX_DIR`; после рестарта процесс перечитывает файлы при создании `FaissBackend`.
+- **Демо/регресс индекс**: `scripts/build_faiss_demo_index.py` — изолированный корпус, **без** PostgreSQL и **без** вызова production Chroma indexers (явно задокументировано в скрипте).
+
+### 44.3 Что не работает как operational secondary
+
+- **Индексация из Documents UI / AdminService**: `AdminService.run_reindex`, `upload_txt_and_index`, `reindex_document_file` → **`AdminKnowledgeIndexer`** → только **`ChromaRagStore.add_documents`**. Ветвления по `config.rag_backend` **нет**.
+- **Единый источник чанков для FAISS и PG**: lifecycle PostgreSQL (`document_versions`, `document_chunks`, indexing jobs) обновляется в контексте **Chroma-индексации**; FAISS-индекс **не** обновляется этим пайплайном. При **`RAG_BACKEND=faiss`** возможно **расхождение**: в PG/UI документ «проиндексирован», а векторы для ответа берутся из **статического** FAISS demo-каталога.
+- **Reindex / смена backend**: full reindex сбрасывает **только Chroma**; FAISS файлы не инвалидируются — риск **устаревшего / дублирующего смысла** относительно Chroma и PG, если оба артефакта использовать параллельно без дисциплины.
+
+### 44.4 Жёстко зашитый Chroma (ключевые точки)
+
+- `services/admin_knowledge_indexer.py` — прямой **`ChromaRagStore`**, **`reset_chroma_for_reindex`**, **`count_chroma_chunks`**.
+- `services/rag_local_indexer.py` — только **`ChromaRagStore`**.
+- `services/admin_service.py` — оркестрация reindex/upload, отчёты **`chroma_chunk_count`**, **`count_chroma_chunks`**.
+- `interfaces/telegram_bot.py` — **`build_rag_query_service`**: **всегда** создаёт **`ChromaRagStore`** (даже если retrieval factory выберет FAISS для `search`; store используется как зависимость конструктора chroma path — избыточно для faiss-only, но не заменяет query abstraction).
+- `services/rag_chroma_store.py` — низкоуровневый клиент Chroma (ожидаемо).
+
+### 44.5 Retrieval query path (RAG ответ)
+
+- **`RagQueryService`**: поиск только через **`self._retrieval.search`** — **factory / abstraction соблюдены**; прямого вызова `ChromaRagStore.native_similarity_search` из `RagQueryService` **нет**.
+
+### 44.6 Статус для курса / demo vs production
+
+- **FAISS сейчас:** **smoke / demo / query-only secondary**, с **отдельным** путём сборки индекса (`build_faiss_demo_index.py`), **не** operational Documents pipeline.
+- **Production contour по документам:** **Chroma** (или HTTP Chroma), до появления **единого indexer**, ветвящегося на backend или до offline-export Chroma→FAISS.
+
+### 44.7 Следующий шаг (если нужен operational FAISS)
+
+- Ввести **индексацию в FAISS** (или экспорт из общего chunk pipeline) под тем же контрактом метаданных, что и Chroma; связать с **PG** и **reindex**; не полагаться на demo-скрипт как на единственный writer.
+
+

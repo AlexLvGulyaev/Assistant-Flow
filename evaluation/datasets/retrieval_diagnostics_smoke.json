@@ -1,0 +1,68 @@
+[
+  {
+    "id": "rd_001",
+    "query": "What is retrieval augmented generation in one sentence?",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "generic"],
+    "note": "Generic smoke: KB может быть пустой — не production benchmark."
+  },
+  {
+    "id": "rd_002",
+    "query": "Explain briefly how a vector store supports document search.",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "paraphrase"]
+  },
+  {
+    "id": "rd_003",
+    "query": "portfolio_smoke_token_no_answer_zzzz_9f3c2a1b",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "no_answer_expected"]
+  },
+  {
+    "id": "rd_004",
+    "query": "List configuration environment variables related to RAG.",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "source_check_shape"],
+    "note": "Проверка формы отчёта; без жёстких expected_sources из-за нестабильной KB."
+  },
+  {
+    "id": "rd_005",
+    "query": "Describe operational logging patterns for assistants.",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "security_compatible"],
+    "security_context": null
+  },
+  {
+    "id": "rd_006",
+    "query": "Any query under locked sources policy.",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "security_empty_sources"],
+    "security_context": {
+      "role": "guest",
+      "allowed_sources": [],
+      "retrieval_scope": "locked",
+      "metadata_filters": [],
+      "required_tags": []
+    }
+  },
+  {
+    "id": "rd_007",
+    "query": "a",
+    "should_have_answer": false,
+    "expected_keywords": [],
+    "expected_sources": [],
+    "tags": ["smoke", "retrieval", "regression_minimal_query"]
+  }
+]
