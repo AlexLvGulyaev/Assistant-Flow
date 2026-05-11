@@ -30,6 +30,7 @@ from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
 from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import ChromaRagStore, count_chroma_chunks
+from services.retrieval.factory import build_retrieval_backend
 from services.rag_query_service import RagQueryService
 from services.rag_types import RagQueryResult
 from services.runtime_lifecycle_service import RuntimeLifecycleService
@@ -111,8 +112,38 @@ def build_rag_query_service(config: AppConfig) -> RagQueryService:
         embeddings,
         persist_directory=chroma_dir,
     )
+    try:
+        retrieval = build_retrieval_backend(
+            config,
+            chroma_store=store,
+            embeddings=embeddings,
+        )
+        health = retrieval.healthcheck()
+        idx = getattr(retrieval, "index_dir", None)
+        path_note = f" index_dir={idx}" if idx is not None else ""
+        print(
+            "[assistant-flow] retrieval: "
+            f"backend={health.backend} ok={health.ok} "
+            f"collection_count={health.collection_count}"
+            f"{path_note}",
+            flush=True,
+        )
+        if health.detail:
+            print(f"[assistant-flow] retrieval: healthcheck detail={health.detail}", flush=True)
+        if not health.ok:
+            print(
+                "[assistant-flow] retrieval: внимание — healthcheck не ok; "
+                "RAG может быть недоступен до устранения причины.",
+                flush=True,
+            )
+    except ValueError as exc:
+        print(
+            f"[assistant-flow] retrieval: не удалось создать backend ({exc})",
+            flush=True,
+        )
+        raise
     chat = OpenAIChatProvider(config)
-    return RagQueryService(store, chat, config)
+    return RagQueryService(retrieval, chat, config)
 
 
 def _log_system_degraded(
@@ -867,6 +898,21 @@ def create_bot() -> telebot.TeleBot:
             else:
                 formatted_result = format_for_telegram(result_text)
                 send_long_message(bot, message.chat.id, formatted_result)
+                from services.memory.conversation_memory_service import (
+                    persist_telegram_dialog_turn_best_effort,
+                )
+
+                persist_telegram_dialog_turn_best_effort(
+                    telegram_user_id=message.from_user.id,
+                    telegram_chat_id=message.chat.id,
+                    username=getattr(message.from_user, "username", None),
+                    first_name=getattr(message.from_user, "first_name", None),
+                    last_name=getattr(message.from_user, "last_name", None),
+                    user_text=transcript,
+                    assistant_text=formatted_result,
+                    execution_id=execution_id,
+                    session_mode=str(user_store.get_mode(message.from_user.id)),
+                )
                 lifecycle.log_processing_event(
                     execution_id=execution_id,
                     intake_event_id=intake_id,
@@ -1185,6 +1231,21 @@ def create_bot() -> telebot.TeleBot:
                         bot, message.chat.id, telegram_reply
                     )
                     print("[assistant-flow] rag after send_message", flush=True)
+                    from services.memory.conversation_memory_service import (
+                        persist_telegram_dialog_turn_best_effort,
+                    )
+
+                    persist_telegram_dialog_turn_best_effort(
+                        telegram_user_id=uid,
+                        telegram_chat_id=message.chat.id,
+                        username=getattr(message.from_user, "username", None),
+                        first_name=getattr(message.from_user, "first_name", None),
+                        last_name=getattr(message.from_user, "last_name", None),
+                        user_text=text,
+                        assistant_text=telegram_reply,
+                        execution_id=execution_id,
+                        session_mode="rag",
+                    )
                 except BaseException as exc:
                     lifecycle.log_processing_event(
                         execution_id=execution_id,
@@ -1373,6 +1434,21 @@ def create_bot() -> telebot.TeleBot:
             else:
                 formatted_result = format_for_telegram(result_text)
                 send_long_message(bot, message.chat.id, formatted_result)
+                from services.memory.conversation_memory_service import (
+                    persist_telegram_dialog_turn_best_effort,
+                )
+
+                persist_telegram_dialog_turn_best_effort(
+                    telegram_user_id=uid,
+                    telegram_chat_id=message.chat.id,
+                    username=getattr(message.from_user, "username", None),
+                    first_name=getattr(message.from_user, "first_name", None),
+                    last_name=getattr(message.from_user, "last_name", None),
+                    user_text=text,
+                    assistant_text=formatted_result,
+                    execution_id=execution_id,
+                    session_mode=str(user_store.get_mode(uid)),
+                )
                 lifecycle.log_processing_event(
                     execution_id=execution_id,
                     intake_event_id=intake_id,

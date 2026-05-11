@@ -8,13 +8,14 @@ Requires OPENAI_API_KEY, Chroma (HTTP or local per .env), and documents under RA
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from utils.config import load_config
 
 _EXPECTED_EMBEDDING_DIM = 1536
 _RELEVANT_Q = "Кратко: что описано в базе знаний?"
@@ -34,19 +35,19 @@ def _check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def main() -> int:
-    if not (os.getenv("OPENAI_API_KEY") or "").strip():
+    # Сначала load_config() — подтягивает .env (load_dotenv / _load_dotenv), иначе ранняя проверка ключа обходила файл.
+    config = load_config()
+    if not (config.openai_api_key or "").strip():
         print("FAIL: OPENAI_API_KEY is not set", flush=True)
         return 1
 
     from providers.openai_chat_provider import OpenAIChatProvider
     from providers.rag_embeddings import build_openai_embeddings
     from services.rag_chroma_store import ChromaRagStore, reset_chroma_for_reindex
+    from services.retrieval.factory import build_retrieval_backend
     from services.rag_document_loader import load_and_split_directory
     from services.rag_local_indexer import LocalRagIndexer
     from services.rag_query_service import RagQueryService
-    from utils.config import load_config
-
-    config = load_config()
     chroma_dir = _resolve_path(config.chroma_persist_dir)
     docs_dir = _resolve_path(config.rag_documents_dir)
 
@@ -111,7 +112,8 @@ def main() -> int:
         failed.append("second_reindex_collection_stable")
 
     chat = OpenAIChatProvider(config)
-    rag = RagQueryService(store2, chat, config)
+    retrieval = build_retrieval_backend(config, chroma_store=store2, embeddings=embeddings)
+    rag = RagQueryService(retrieval, chat, config)
 
     rel = rag.answer(_RELEVANT_Q)
     srcs = rel.sources

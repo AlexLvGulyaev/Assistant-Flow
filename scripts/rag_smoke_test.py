@@ -56,6 +56,7 @@ def main() -> None:
     )
     from services.rag_local_indexer import LocalRagIndexer
     from services.rag_query_service import RagQueryService
+    from services.retrieval.factory import build_retrieval_backend
     from utils.config import load_config
 
     config = load_config()
@@ -97,7 +98,8 @@ def main() -> None:
         sys.exit(1)
 
     chat = OpenAIChatProvider(config)
-    rag = RagQueryService(store, chat, config)
+    retrieval = build_retrieval_backend(config, chroma_store=store, embeddings=embeddings)
+    rag = RagQueryService(retrieval, chat, config)
 
     print(f"\nQuestion: {args.question}\n")
     retrieved = rag.retrieve(args.question)

@@ -42,3 +42,7 @@ storage/assets/.browser_audio_preview/
 .DS_Store
 .idea/
 .vscode/
+PROJECT_STATE.md
+
+# Legacy lesson source repositories are donor/reference material only
+legacy/PEr*_source/.git/

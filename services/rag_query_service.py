@@ -9,7 +9,8 @@ from typing import Sequence
 from langchain_core.documents import Document
 
 from providers.openai_chat_provider import OpenAIChatProvider
-from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME, ChromaRagStore
+from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME
+from services.retrieval.base import RetrievalBackend
 from services.rag_types import (
     RagQueryResult,
     RagRequestDiagnostics,
@@ -262,15 +263,17 @@ class RagQueryService:
     """
     Query persisted Chroma index; does not mutate the index.
     Used from Telegram in /mode rag (interfaces/telegram_bot.py) and from CLI smoke-test.
+
+    P6.1: similarity search идёт через RetrievalBackend (по умолчанию ChromaBackend).
     """
 
     def __init__(
         self,
-        store: ChromaRagStore,
+        retrieval: RetrievalBackend,
         chat: OpenAIChatProvider,
         config: AppConfig,
     ) -> None:
-        self._store = store
+        self._retrieval = retrieval
         self._chat = chat
         self._config = config
 
@@ -300,27 +303,54 @@ class RagQueryService:
 
         def run() -> list[tuple[Document, float]]:
             try:
-                return self._store.native_similarity_search_with_score(query, k=k)
+                results = self._retrieval.search(query, top_k=k)
+                return [
+                    (
+                        Document(
+                            page_content=r.chunk.page_content,
+                            metadata=dict(r.chunk.metadata),
+                        ),
+                        r.score,
+                    )
+                    for r in results
+                ]
             except Exception as exc:
                 print(
-                    "[assistant-flow] rag retrieve: chroma query failed "
+                    "[assistant-flow] rag retrieve: retrieval backend query failed "
                     f"({type(exc).__name__}: {exc})",
                     flush=True,
                 )
                 return []
 
         timeout_sec = max(1, int(self._config.rag_retrieval_timeout))
+        backend_label = getattr(self._retrieval, "backend_name", type(self._retrieval).__name__)
+        t_vec0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run)
             try:
-                return future.result(timeout=timeout_sec)
+                out = future.result(timeout=timeout_sec)
             except concurrent.futures.TimeoutError:
+                wall_ms = int((time.monotonic() - t_vec0) * 1000)
+                print(
+                    "[assistant-flow] rag retrieval: "
+                    f"backend={backend_label} top_k={k} retrieved_count=0 "
+                    f"latency_ms={wall_ms} status=timeout",
+                    flush=True,
+                )
                 print(
                     "[assistant-flow] rag retrieve: similarity_search timed out "
                     f"after {timeout_sec}s",
                     flush=True,
                 )
                 return []
+        wall_ms = int((time.monotonic() - t_vec0) * 1000)
+        print(
+            "[assistant-flow] rag retrieval: "
+            f"backend={backend_label} top_k={k} retrieved_count={len(out)} "
+            f"latency_ms={wall_ms}",
+            flush=True,
+        )
+        return out
 
     def _retrieve_raw(
         self,
@@ -388,6 +418,8 @@ class RagQueryService:
         *,
         top_k: int | None = None,
         conversation_history: list[dict[str, str]] | None = None,
+        hybrid_session_id: str | None = None,
+        hybrid_user_id: str | None = None,
     ) -> RagQueryResult:
         """
         Retrieve context, then generate an answer. Empty retrieval returns a static message
@@ -472,6 +504,22 @@ class RagQueryService:
             )
 
         context = _format_context(filtered)
+        memory_section_present = False
+        if self._config.enable_hybrid_retrieval and hybrid_session_id:
+            from services.hybrid_retrieval.hybrid_context_service import HybridContextService
+
+            hsvc = HybridContextService()
+            hr = hsvc.build(
+                kb_chunks=filtered,
+                session_id=hybrid_session_id,
+                user_id=hybrid_user_id,
+                include_memory=True,
+            )
+            context = hr.context_text
+            memory_section_present = hr.hybrid_enabled and any(
+                it.source_type == "memory" for it in hr.items
+            )
+
         sources_unique = _dedupe_sources_by_file(filtered)
         ctx_len = len(context)
         fb_reason = "none"
@@ -481,7 +529,12 @@ class RagQueryService:
         print("[assistant-flow] rag answer: before LLM call", flush=True)
         t_llm0 = time.monotonic()
         try:
-            answer = self._rag_llm(normalized, context, history=conversation_history)
+            answer = self._rag_llm(
+                normalized,
+                context,
+                history=conversation_history,
+                memory_section_present=memory_section_present,
+            )
         except Exception as exc:
             print(
                 f"[assistant-flow] rag answer: LLM call failed: {type(exc).__name__}: {exc}",
@@ -529,22 +582,42 @@ class RagQueryService:
         context: str,
         *,
         history: list[dict[str, str]] | None,
+        memory_section_present: bool = False,
     ) -> str:
-        system_prompt = (
-            "Ты отвечаешь на вопрос пользователя, используя ТОЛЬКО приведённый ниже КОНТЕКСТ "
-            "из базы знаний.\n\n"
-            "Правила:\n"
-            "1. Если контекст не пуст и содержит сведения по теме вопроса (полностью или "
-            "частично) — ОБЯЗАТЕЛЬНО дай связный ответ по-русски в 1–2 абзацах, опираясь "
-            "на эти сведения. Не пиши, что информации нет, если она присутствует в контексте.\n"
-            "2. Фразу вида «в базе знаний нет информации» используй только если контекст "
-            "пуст, либо он явно не относится к вопросу и не позволяет сформировать ответ.\n"
-            "3. Не выдумывай факты, которых нет в контексте.\n"
-            "4. Не добавляй раздел «Источники» и нумерацию файлов — список источников "
-            "добавляется отдельно.\n"
-            "5. Пиши нейтрально, ясно, по делу.\n\n"
-            f"КОНТЕКСТ:\n{context}"
-        )
+        if memory_section_present:
+            system_prompt = (
+                "Ты отвечаешь на вопрос пользователя. Ниже КОНТЕКСТ: сначала блок из базы знаний "
+                "(единственный допустимый источник фактов), затем при необходимости — краткая "
+                "история диалога (только для понимания формулировки пользователя, не как "
+                "источник фактов).\n\n"
+                "Правила:\n"
+                "1. Факты и утверждения по теме опирай ТОЛЬКО на блок базы знаний. Историю "
+                "диалога не используй как доказательство фактов.\n"
+                "2. Если в блоке базы знаний есть сведения по теме — дай связный ответ по-русски "
+                "в 1–2 абзацах. Не пиши, что информации нет, если она есть в этом блоке.\n"
+                "3. Фразу «в базе знаний нет информации» используй только если блок базы знаний "
+                "пуст или явно не относится к вопросу.\n"
+                "4. Не выдумывай факты, которых нет в блоке базы знаний.\n"
+                "5. Не добавляй раздел «Источники» — список источников добавляется отдельно.\n"
+                "6. Пиши нейтрально, ясно, по делу.\n\n"
+                f"КОНТЕКСТ:\n{context}"
+            )
+        else:
+            system_prompt = (
+                "Ты отвечаешь на вопрос пользователя, используя ТОЛЬКО приведённый ниже КОНТЕКСТ "
+                "из базы знаний.\n\n"
+                "Правила:\n"
+                "1. Если контекст не пуст и содержит сведения по теме вопроса (полностью или "
+                "частично) — ОБЯЗАТЕЛЬНО дай связный ответ по-русски в 1–2 абзацах, опираясь "
+                "на эти сведения. Не пиши, что информации нет, если она присутствует в контексте.\n"
+                "2. Фразу вида «в базе знаний нет информации» используй только если контекст "
+                "пуст, либо он явно не относится к вопросу и не позволяет сформировать ответ.\n"
+                "3. Не выдумывай факты, которых нет в контексте.\n"
+                "4. Не добавляй раздел «Источники» и нумерацию файлов — список источников "
+                "добавляется отдельно.\n"
+                "5. Пиши нейтрально, ясно, по делу.\n\n"
+                f"КОНТЕКСТ:\n{context}"
+            )
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         if history:
             messages.extend(history[-6:])

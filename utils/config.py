@@ -55,6 +55,16 @@ class AppConfig:
     chroma_use_http: bool = False
     chroma_host: str = "127.0.0.1"
     chroma_port: int = 8000
+    # P6.1 / P6.2a: chroma по умолчанию; faiss — только явный RAG_BACKEND=faiss (secondary demo).
+    rag_backend: str = "chroma"
+    # P6.4: hybrid KB + dialog memory в RAG только при true и переданном hybrid_session_id.
+    enable_hybrid_retrieval: bool = False
+    # P6.5: offline RAG evaluation; RAGAS опционален, по умолчанию выключен.
+    enable_ragas_evaluation: bool = False
+    rag_eval_dataset_path: str = "evaluation/datasets/rag_smoke_dataset.json"
+    rag_eval_output_dir: str = "outputs/evaluation"
+    # Изолированное хранилище FAISS (не Chroma, не PostgreSQL lifecycle).
+    faiss_index_dir: str = "storage/faiss"
     asset_storage_backend: str = "filesystem"
     asset_storage_dir: str = "/app/storage/assets"
     audio_enabled: bool = True
@@ -152,6 +162,21 @@ def load_config() -> AppConfig:
         chroma_use_http=_bool_env("CHROMA_USE_HTTP", False),
         chroma_host=(os.getenv("CHROMA_HOST", "127.0.0.1").strip() or "127.0.0.1"),
         chroma_port=_int_env("CHROMA_PORT", 8000),
+        rag_backend=(
+            (os.getenv("RAG_BACKEND") or "").strip().lower() or "chroma"
+        ),
+        enable_hybrid_retrieval=_bool_env("ENABLE_HYBRID_RETRIEVAL", False),
+        enable_ragas_evaluation=_bool_env("ENABLE_RAGAS_EVALUATION", False),
+        rag_eval_dataset_path=(
+            (os.getenv("RAG_EVAL_DATASET_PATH") or "").strip()
+            or "evaluation/datasets/rag_smoke_dataset.json"
+        ),
+        rag_eval_output_dir=(
+            (os.getenv("RAG_EVAL_OUTPUT_DIR") or "").strip() or "outputs/evaluation"
+        ),
+        faiss_index_dir=(
+            (os.getenv("FAISS_INDEX_DIR") or "").strip() or "storage/faiss"
+        ),
         asset_storage_backend=(
             os.getenv("ASSET_STORAGE_BACKEND", "filesystem").strip().lower()
             or "filesystem"

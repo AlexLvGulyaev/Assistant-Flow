@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from providers.rag_embeddings import build_openai_embeddings
 from repositories.connection import get_connection
 from repositories.document_repository import DocumentRepository
+from services.chunking.smart_chunker import SmartChunker
 from services.rag_chroma_store import (
     ChromaRagStore,
     RAG_CHROMA_COLLECTION_NAME,
@@ -67,17 +67,13 @@ def _load_split_txt_md_for_index(
     raw = file_path.read_bytes()
     file_hash = hashlib.sha256(raw).hexdigest()
     text = raw.decode("utf-8")
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=config.rag_chunk_size,
-        chunk_overlap=config.rag_chunk_overlap,
-        length_function=len,
-    )
     resolved = str(file_path.resolve())
     doc = Document(
         page_content=text,
         metadata={"source": file_path.name, "file_path": resolved},
     )
-    chunks = splitter.split_documents([doc])
+    chunker = SmartChunker.from_app_config(config)
+    chunks = chunker.split_langchain_documents([doc])
     return chunks, file_hash
 
 

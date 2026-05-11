@@ -6,8 +6,8 @@ from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from services.chunking.smart_chunker import SmartChunker
 from utils.config import AppConfig
 
 
@@ -38,16 +38,13 @@ def iter_supported_files(directory: Path) -> list[Path]:
 def load_and_split_file(file_path: Path, config: AppConfig) -> list[Document]:
     """Load one file and return chunked Documents with source metadata."""
     file_path = Path(file_path)
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=config.rag_chunk_size,
-        chunk_overlap=config.rag_chunk_overlap,
-        length_function=len,
-    )
     docs = _load_file_documents(file_path)
     for doc in docs:
         doc.metadata.setdefault("source", file_path.name)
         doc.metadata.setdefault("file_path", str(file_path.resolve()))
-    return splitter.split_documents(docs)
+    # P6.3: детерминированный SmartChunker вместо RecursiveCharacterTextSplitter (совместимый выход).
+    chunker = SmartChunker.from_app_config(config)
+    return chunker.split_langchain_documents(docs)
 
 
 def load_and_split_directory(

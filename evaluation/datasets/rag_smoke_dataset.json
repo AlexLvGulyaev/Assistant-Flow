@@ -1,0 +1,51 @@
+[
+  {
+    "id": "smoke_fact_1",
+    "question": "Кратко: о чём говорится в загруженных документах базы знаний?",
+    "expected_answer": null,
+    "tags": ["rag", "fact", "smoke"],
+    "should_have_answer": true
+  },
+  {
+    "id": "smoke_fact_2",
+    "question": "Перечисли основные темы, которые встречаются в текстах документации проекта.",
+    "expected_answer": null,
+    "tags": ["rag", "fact", "smoke"],
+    "should_have_answer": true
+  },
+  {
+    "id": "smoke_paraphrase_1",
+    "question": "Что можно узнать из материалов knowledge base в общих чертах?",
+    "expected_answer": null,
+    "tags": ["rag", "paraphrase", "smoke"],
+    "should_have_answer": true
+  },
+  {
+    "id": "smoke_paraphrase_2",
+    "question": "Дай краткое резюме содержимого доступных справочных файлов.",
+    "expected_answer": null,
+    "tags": ["rag", "paraphrase", "smoke"],
+    "should_have_answer": true
+  },
+  {
+    "id": "smoke_no_answer_1",
+    "question": "Какой точный серийный номер несуществующего артефакта XYZ-99999-QUANTUM в базе?",
+    "expected_answer": null,
+    "tags": ["rag", "ood", "smoke"],
+    "should_have_answer": false
+  },
+  {
+    "id": "smoke_sources_1",
+    "question": "Из каких источников (файлов или разделов) ты черпаешь ответы по этой базе знаний?",
+    "expected_answer": null,
+    "tags": ["rag", "sources", "smoke"],
+    "should_have_answer": true
+  },
+  {
+    "id": "smoke_regression_generic",
+    "question": "Есть ли в базе знаний упоминания smoke-тестов или регрессионных проверок?",
+    "expected_answer": null,
+    "tags": ["rag", "regression", "smoke"],
+    "should_have_answer": true
+  }
+]
