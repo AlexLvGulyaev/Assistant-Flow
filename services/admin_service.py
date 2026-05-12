@@ -611,6 +611,55 @@ class AdminService:
         out.update(self._retrieval_settings_public_snapshot())
         return out
 
+    def get_retrieval_platform_compact(self) -> dict[str, Any]:
+        """
+        High-level retrieval platform snapshot for Overview / Documents (no tuning matrix).
+        Reuses ``get_retrieval_overview`` probes (multi-backend).
+        """
+        ro = self.get_retrieval_overview()
+        active_h = ro.get("active_backend_health") or {}
+        ok = bool(active_h.get("ok"))
+        cnt_raw = active_h.get("collection_count")
+        try:
+            cnt_i = int(cnt_raw) if cnt_raw is not None else None
+        except (TypeError, ValueError):
+            cnt_i = None
+        if not ok:
+            readiness = "DOWN"
+        elif cnt_i is None:
+            readiness = "UNKNOWN"
+        elif cnt_i == 0:
+            readiness = "EMPTY"
+        else:
+            readiness = "READY"
+        eff = str(ro.get("effective_backend") or "unknown").strip().lower()
+        backends_compact: dict[str, Any] = {}
+        for name, h in sorted((ro.get("backends") or {}).items()):
+            bok = bool(h.get("ok"))
+            bc = h.get("collection_count")
+            try:
+                bi = int(bc) if bc is not None else None
+            except (TypeError, ValueError):
+                bi = None
+            if not bok:
+                br = "DOWN"
+            elif bi is None:
+                br = "UNKNOWN"
+            elif bi == 0:
+                br = "EMPTY"
+            else:
+                br = "READY"
+            backends_compact[name] = {"ok": bok, "count": bi, "readiness": br}
+        reindex_recommended = (not ok) or (cnt_i is not None and cnt_i == 0)
+        return {
+            "effective_backend": eff,
+            "active_readiness": readiness,
+            "active_ok": ok,
+            "active_collection_count": cnt_i,
+            "backends_compact": backends_compact,
+            "reindex_recommended": bool(reindex_recommended),
+        }
+
     def _retrieval_settings_public_snapshot(self) -> dict[str, Any]:
         """Tuning/paths for Admin UI (no secrets). Effective tuning merges env + DB overrides."""
         c = self._config

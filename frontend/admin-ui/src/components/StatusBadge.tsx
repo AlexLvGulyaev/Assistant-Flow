@@ -11,6 +11,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   let tone: "ok" | "warn" | "err" | "muted" = "muted";
   if (
     n === "ok" ||
+    n === "ready" ||
     n === "configured" ||
     n === "available" ||
     n === "on" ||
@@ -20,6 +21,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     tone = "ok";
   } else if (
     n === "degraded" ||
+    n === "empty" ||
     n === "unreachable" ||
     n === "checking…" ||
     n === "started" ||
@@ -31,6 +33,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     tone = "warn";
   } else if (
     n === "error" ||
+    n === "down" ||
     n.includes("fail") ||
     n === "err" ||
     n === "internal_error" ||
@@ -61,6 +64,9 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       running: "в работе",
       skipped: "пропущено",
       degraded: "ограничено",
+      empty: "EMPTY",
+      ready: "READY",
+      down: "DOWN",
       unknown: "неизвестно",
       unreachable: "недоступно",
       checking: "проверка",

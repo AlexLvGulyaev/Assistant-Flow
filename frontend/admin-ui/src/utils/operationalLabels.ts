@@ -273,6 +273,28 @@ export function sessionAvgStepLatencyMs(
   return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
 }
 
+/** Короткое имя retrieval backend (chroma | faiss | weaviate) для операторского UI. */
+export function formatRetrievalBackendTitle(id: string | undefined | null): string {
+  if (!id?.trim()) return "—";
+  const t = id.trim().toLowerCase();
+  return t.length ? t.charAt(0).toUpperCase() + t.slice(1) : "—";
+}
+
+/**
+ * Maps compact retrieval readiness to StatusBadge `status` tokens (see StatusBadge.tsx).
+ */
+export function retrievalReadinessForStatusBadge(
+  readiness: string | undefined | null,
+  activeOk?: boolean | null
+): string {
+  if (activeOk === false) return "down";
+  const r = (readiness || "").trim().toUpperCase();
+  if (r === "READY") return "ready";
+  if (r === "EMPTY") return "empty";
+  if (r === "DOWN") return "down";
+  return "unknown";
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }

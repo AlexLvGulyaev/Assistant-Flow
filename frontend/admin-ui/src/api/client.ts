@@ -235,10 +235,23 @@ export interface HealthResponse {
   config_readiness?: Record<string, unknown>;
 }
 
+export interface RetrievalPlatformCompact {
+  effective_backend?: string;
+  active_readiness?: string;
+  active_ok?: boolean;
+  active_collection_count?: number | null;
+  backends_compact?: Record<
+    string,
+    { ok?: boolean; count?: number | null; readiness?: string }
+  >;
+  reindex_recommended?: boolean;
+}
+
 export interface OverviewResponse {
   database?: Record<string, unknown>;
   chroma?: Record<string, unknown>;
   rag?: Record<string, unknown>;
+  retrieval?: RetrievalPlatformCompact | Record<string, unknown>;
   supported_modalities?: string[];
   providers?: Record<string, { status?: string; detail?: string | null }>;
   asset_storage?: Record<string, unknown>;
@@ -361,6 +374,7 @@ export interface DocumentsResponse {
   embedding_model?: string | null;
   global_index_sync?: DocumentsGlobalIndexSync;
   observability?: DocumentsObservability;
+  retrieval_operational?: RetrievalPlatformCompact;
 }
 
 export interface DocumentDetailVersion {

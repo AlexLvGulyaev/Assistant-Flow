@@ -2607,4 +2607,53 @@ Unknown stage fallback допустим, но все OCR known stages должн
 - **Нет** переключателя backend в Admin UI (только env/config).
 - **`scripts/build_faiss_demo_index.py`** остаётся вспомогательным демо-сборщиком, **не** основным operational writer.
 
+---
+
+## 46. Multi-backend retrieval platform — Admin UI operational consistency (append-only)
+
+### 46.1 Архитектурная эволюция retrieval
+
+- Система вышла из **Chroma-centric** картины (отдельная строка «Chroma» и «Чанков Chroma» на Обзоре как единственный смысл векторного слоя) к **multi-backend retrieval platform**: **Chroma**, **FAISS**, **Weaviate** как равноправные реализации **`RetrievalBackend`**, с **runtime** выбором активного backend через **`RetrievalBackendManager`** и **DB-backed** переключателем (`platform_settings` / active RAG backend), поверх **env defaults** (`RAG_BACKEND`, пути, HTTP Chroma и т.д.).
+- **Retrieval Settings** в Admin UI остаётся **deep control plane** (матрица здоровья, tuning, смена backend). **Overview** и страницы **Documents** / **RAG** получают только **high-level operational summary**: активный backend, компактная строка по всем probed backend, число чанков **именно в активном индексе**, короткие предупреждения (reindex / health), без дублирования полной матрицы.
+
+### 46.2 RetrievalBackendManager и runtime switching
+
+- **Источник эффективного backend**: `effective_rag_backend_from_sources(env, db)` + **`get_retrieval_overview()`** / **`get_retrieval_platform_compact()`** в **`AdminService`** — единая логика для API и UI.
+- **Runtime overrides** tuning (top_k, max_distance, timeouts) через **DB + `RetrievalTuningResolver`** без пересборки образа; **indexing-related** поля по-прежнему требуют **reindex** (см. контракт tuning в Retrieval Settings).
+
+### 46.3 API: overview и documents
+
+- **`GET /api/overview`**: поле **`retrieval`** (compact): `effective_backend`, `active_readiness` (`READY` | `EMPTY` | `DOWN` | `UNKNOWN`), `active_ok`, `active_collection_count`, `backends_compact` (per-backend `readiness` + `count`), `reindex_recommended`. В **`database`** добавлен зеркальный алиас **`vector_index_chunk_count`** (= счётчик активного vector index, совпадает с `collection_chunk_count`).
+- **`GET /api/documents`**: объект **`retrieval_operational`** — тот же compact снимок, чтобы страница Документов после смены backend и нажатия **Обновить** показывала, **куда** уходят upload / reindex / indexing jobs.
+
+### 46.4 RAG diagnostics enrichment (P6.12)
+
+- **`RagRequestDiagnostics.to_log_details`** (и stdout-блок) дополняется опционально: **`active_backend`**, **`retrieval_backend`**, **`active_collection_count`**, **`retrieval_readiness`**; сохранён **`chroma_collection`** как совместимый ярлык коллекции/метки (для Chroma — имя коллекции, для прочих — id backend).
+- Каждый элемент **`retrieved_chunks[]`** в логах может содержать **`retrieval_backend`** и **`source_backend`** (сейчас совпадают для KB-only retrieval). **Старые логи** без этих полей **не ломаются**: Admin UI подставляет session-level **`active_backend`**.
+- **`admin_api/deps._slim_details_for_payload`**: при усечении больших `details` сохраняет новые ключи на уровне чанка, чтобы RAG-страница не теряла backend.
+
+### 46.5 Admin UI (кратко)
+
+- **Overview**: панель **«Retrieval platform»**; runtime-строка **Retrieval**; предупреждения по **`reindex_recommended`** / **`active_ok`**.
+- **Documents**: компактная полоса под заголовком с активным backend и подсказкой про запись в активный индекс.
+- **RAG**: полоса из **`fetchOverview()`**; в карточке сессии — backend / readiness / collection count из diagnostics; у каждого chunk — **Backend / Источник / Score**.
+
+### 46.6 Operational rules (зафиксировано)
+
+- **Активный retrieval backend** — единственный writer для operational indexing из Documents и единственный read path для **`RagQueryService`** в runtime (без silent fallback на другой backend).
+- **Env defaults vs DB**: env задаёт baseline; при наличии **`DATABASE_URL`** активный backend и tuning могут переопределяться из БД; UI должен отражать **эффективное** состояние после refresh.
+- **Пустой индекс или health не OK** → **reindex-required semantics**: оператор видит компактное «рекомендуется переиндексация», без гигантских баннеров.
+- **Weaviate** как operational backend следует тем же правилам явной конфигурации и health, без скрытого переключения.
+
+### 46.7 Зрелость подсистемы (P6.9–P6.12 — UI / diagnostics)
+
+- **P6.9** — Weaviate operational integration (индексация + query path) — связано с backend factory и indexer (см. предыдущие секции).
+- **P6.10** — runtime backend switching (manager + DB) — отражается в compact overview / documents / RAG strip.
+- **P6.11** — Retrieval Settings UI — остаётся глубокой панелью; настоящий патч **не** дублирует её в Overview.
+- **P6.12** — **multi-backend UI consistency** + **retrieval diagnostics enrichment** (активный backend, readiness, count, per-chunk backend labels, slim log contract).
+
+### 46.8 Известные ограничения
+
+- **§45.8** частично устарел: переключатель backend в Admin UI **есть** (Retrieval Settings); в настоящем параграфе зафиксировано разделение **control plane vs high-level overview**.
+- RAG-страница для «живой» полосы делает дополнительный **`GET /api/overview`** (compact `retrieval`); при недоступности overview полоса скрывается, логи RAG по-прежнему грузятся.
 

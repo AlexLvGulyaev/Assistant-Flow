@@ -7,6 +7,7 @@ import {
   type DocumentsResponse,
   type HealthResponse,
   type OverviewResponse,
+  type RetrievalPlatformCompact,
   type SummaryResponse,
 } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
@@ -15,6 +16,7 @@ import { OperationalRefreshButton } from "../components/OperationalRefreshButton
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { formatRetrievalBackendTitle, retrievalReadinessForStatusBadge } from "../utils/operationalLabels";
 
 const READINESS_KEYS: { key: string; label: string }[] = [
   { key: "database_url_configured", label: "DATABASE_URL" },
@@ -170,6 +172,7 @@ export function OverviewPage() {
 
   const mods = data.supported_modalities ?? [];
   const db = data.database ?? {};
+  const retrieval = (data.retrieval ?? null) as RetrievalPlatformCompact | null;
   const audio = data.audio ?? {};
   const readiness = data.config_readiness ?? {};
   const deps = health?.dependencies ?? {};
@@ -181,8 +184,8 @@ export function OverviewPage() {
   const checkedAt = health?.timestamp ? formatTs(health.timestamp) : "—";
   const latencySummary = averageMs([
     Number(pg.latency_ms),
-    Number(chromaLive.latency_ms),
     Number(ragLive.latency_ms),
+    ...(retrieval ? [] : [Number(chromaLive.latency_ms)]),
   ]);
   const routes = summary?.routes;
   const telem = summary?.telemetry_sample;
@@ -198,6 +201,7 @@ export function OverviewPage() {
     docsSyncState: kbState,
     readiness,
     summary,
+    retrieval: (data.retrieval ?? null) as RetrievalPlatformCompact | null,
   });
   return (
     <div className="page overview-page">
@@ -237,10 +241,15 @@ export function OverviewPage() {
                 <StatusBadge status={String(pg.status ?? "—")} />
                 <span className="muted mono">{fmtMs(pg.latency_ms)}</span>
               </dd>
-              <dt>Chroma</dt>
+              <dt>Retrieval{retrieval?.effective_backend ? ` (${formatRetrievalBackendTitle(retrieval.effective_backend)})` : ""}</dt>
               <dd className="overview-kv__split">
-                <StatusBadge status={String(chromaLive.status ?? "—")} />
-                <span className="muted mono">{fmtMs(chromaLive.latency_ms)}</span>
+                <StatusBadge
+                  status={retrievalReadinessForStatusBadge(
+                    retrieval?.active_readiness,
+                    retrieval?.active_ok
+                  )}
+                />
+                <span className="muted mono">—</span>
               </dd>
               <dt>RAG</dt>
               <dd className="overview-kv__split">
@@ -312,18 +321,62 @@ export function OverviewPage() {
         </SectionCard>
 
         <SectionCard
-        title="База знаний (операционный статус)"
-        description="Синхронизация документов, индекса и админ-операций."
-      >
+          title="Retrieval platform"
+          description="Активный backend, краткая сводка по индексам и операционные метрики документов."
+          className="overview-tight"
+        >
+          <div className="overview-retrieval-matrix">
+            <div className="overview-retrieval-matrix__active">
+              <div className="overview-retrieval-matrix__active-label">Active backend</div>
+              <div className="overview-retrieval-matrix__active-row">
+                <span className="overview-retrieval-matrix__active-name mono">
+                  {retrieval?.effective_backend
+                    ? formatRetrievalBackendTitle(retrieval.effective_backend).toUpperCase()
+                    : "—"}
+                </span>
+                <StatusBadge
+                  status={retrievalReadinessForStatusBadge(
+                    retrieval?.active_readiness,
+                    retrieval?.active_ok
+                  )}
+                />
+              </div>
+            </div>
+            <div className="overview-retrieval-matrix__grid" role="list" aria-label="Сводка по backends">
+              {retrieval?.backends_compact &&
+              Object.keys(retrieval.backends_compact).length > 0 ? (
+                [...Object.entries(retrieval.backends_compact)].sort(([a], [b]) => a.localeCompare(b)).map(
+                  ([name, row]) => {
+                    const isActive =
+                      retrieval?.effective_backend &&
+                      name.toLowerCase() === String(retrieval.effective_backend).toLowerCase();
+                    return (
+                    <div
+                      key={name}
+                      className={`overview-retrieval-matrix__row${isActive ? " overview-retrieval-matrix__row--active" : ""}`}
+                      role="listitem"
+                    >
+                      <span className="overview-retrieval-matrix__backend mono">{name}</span>
+                      <StatusBadge
+                        status={retrievalReadinessForStatusBadge(row?.readiness, row?.ok)}
+                      />
+                      <span className="overview-retrieval-matrix__count mono">
+                        {row?.count == null ? "—" : String(row.count)}
+                      </span>
+                    </div>
+                    );
+                  }
+                )
+              ) : (
+                <div className="muted overview-retrieval-matrix__empty">Нет данных по backends.</div>
+              )}
+            </div>
+          </div>
           <dl className="kv overview-kv">
             <dt>Документов в БД</dt>
             <dd>{formatVal(db.postgres_documents)}</dd>
-            <dt>Файлов в каталоге</dt>
-            <dd>н/д</dd>
-            <dt>Активных чанков</dt>
-            <dd>{formatVal(db.postgres_chunks_sum)}</dd>
-            <dt>Чанков Chroma</dt>
-            <dd>{formatVal(db.collection_chunk_count)}</dd>
+            <dt>Чанков (активный индекс)</dt>
+            <dd>{formatVal(db.collection_chunk_count ?? db.vector_index_chunk_count)}</dd>
             <dt>Синхронизация</dt>
             <dd>
               <StatusBadge status={kbState} />
@@ -497,6 +550,7 @@ function buildOverviewWarnings(args: {
   docsSyncState: string;
   readiness: Record<string, unknown>;
   summary: SummaryResponse | null;
+  retrieval: RetrievalPlatformCompact | null;
 }): string[] {
   const out: string[] = [];
   if (args.healthStatus && args.healthStatus !== "ok") {
@@ -505,7 +559,13 @@ function buildOverviewWarnings(args: {
   if (args.ragStatus && args.ragStatus !== "ok") {
     out.push("RAG-пайплайн сообщает не-OK статус.");
   }
-  if (args.chromaStatus && args.chromaStatus !== "ok") {
+  if (args.retrieval) {
+    if (args.retrieval.active_ok === false) {
+      out.push("Активный retrieval backend не готов (health).");
+    } else if (args.retrieval.reindex_recommended) {
+      out.push("Рекомендуется переиндексация для активного retrieval backend.");
+    }
+  } else if (args.chromaStatus && args.chromaStatus !== "ok") {
     out.push("Chroma недоступна или нестабильна.");
   }
   if (args.docsSyncState !== "ok") {

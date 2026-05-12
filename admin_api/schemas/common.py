@@ -20,6 +20,7 @@ class OverviewResponse(BaseModel):
     database: dict[str, Any] = Field(default_factory=dict)
     chroma: dict[str, Any] = Field(default_factory=dict)
     rag: dict[str, Any] = Field(default_factory=dict)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
     supported_modalities: list[str] = Field(default_factory=list)
     providers: dict[str, Any] = Field(default_factory=dict)
     asset_storage: dict[str, Any] = Field(default_factory=dict)

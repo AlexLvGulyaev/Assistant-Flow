@@ -13,14 +13,25 @@ class RagRetrievedChunkDiagnostics:
     score: float | None
     passed_filter: bool
     text_preview: str
+    retrieval_backend: str | None = None
+    source_backend: str | None = None
 
     def to_log_dict(self) -> dict[str, object]:
-        return {
+        out: dict[str, object] = {
             "source": self.source,
             "score": self.score,
             "passed_filter": bool(self.passed_filter),
             "text_preview": self.text_preview,
         }
+        rb0 = self.retrieval_backend
+        sb0 = self.source_backend
+        if rb0 or sb0:
+            rb = (rb0 or sb0 or "").strip().lower()
+            sb = (sb0 or rb0 or rb).strip().lower()
+            if rb:
+                out["retrieval_backend"] = rb
+                out["source_backend"] = sb
+        return out
 
 
 @dataclass(frozen=True)
@@ -51,6 +62,10 @@ class RagRequestDiagnostics:
     total_tokens: int | None = None
     embedding_model: str | None = None
     chroma_collection: str | None = None
+    active_backend: str | None = None
+    retrieval_backend: str | None = None
+    active_collection_count: int | None = None
+    retrieval_readiness: str | None = None
 
     def to_log_details(self) -> dict[str, object]:
         """Compact JSON-safe payload for ``processing_logs.details``."""
@@ -90,6 +105,14 @@ class RagRequestDiagnostics:
             out["embedding_model"] = self.embedding_model
         if self.chroma_collection:
             out["chroma_collection"] = self.chroma_collection
+        if self.active_backend:
+            out["active_backend"] = self.active_backend
+        if self.retrieval_backend:
+            out["retrieval_backend"] = self.retrieval_backend
+        if self.active_collection_count is not None:
+            out["active_collection_count"] = int(self.active_collection_count)
+        if self.retrieval_readiness:
+            out["retrieval_readiness"] = self.retrieval_readiness
         return out
 
     def emit_stdout(self) -> None:

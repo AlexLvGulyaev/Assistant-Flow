@@ -14,6 +14,7 @@ import {
   uploadDocument,
   type DocumentDetailResponse,
   type DocumentsResponse,
+  type RetrievalPlatformCompact,
 } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -24,6 +25,8 @@ import {
   formatDurationMs,
   formatShortDateMsk,
   formatTimestampMsk,
+  formatRetrievalBackendTitle,
+  retrievalReadinessForStatusBadge,
   stageToActionRu,
 } from "../utils/operationalLabels";
 
@@ -99,6 +102,7 @@ export function DocumentsPage() {
 
   const items = data?.items ?? [];
   const gis = data?.global_index_sync;
+  const rop = data?.retrieval_operational as RetrievalPlatformCompact | undefined;
   const lastFullReindex = data?.observability?.last_reindex_event;
   const embeddingModel = (data?.embedding_model || "").trim() || null;
   const providerHint = embeddingModel ? `OpenAI · ${embeddingModel}` : null;
@@ -429,6 +433,9 @@ export function DocumentsPage() {
   }
 
   const docStatusRaw = String(detail?.document?.status ?? selected?.status_raw ?? "");
+  const vectorStoreDisplay = formatRetrievalBackendTitle(
+    rop?.effective_backend ?? gis?.active_retrieval_backend ?? undefined
+  );
 
   return (
     <div className="page logs-page docs-page docs-page-viewport">
@@ -438,6 +445,32 @@ export function DocumentsPage() {
           <code>/api/documents</code> · МСК
         </span>
       </header>
+
+      {!loading && !error && rop ? (
+        <div className="docs-retrieval-context page__mt" role="status">
+          <div className="docs-retrieval-context__label">Active backend</div>
+          <div className="docs-retrieval-context__row">
+            <span className="docs-retrieval-context__name mono">
+              {formatRetrievalBackendTitle(rop.effective_backend).toUpperCase()}
+            </span>
+            <StatusBadge
+              status={retrievalReadinessForStatusBadge(rop.active_readiness, rop.active_ok)}
+            />
+            <span className="docs-retrieval-context__chunks muted mono">
+              Chunks: {rop.active_collection_count == null ? "—" : String(rop.active_collection_count)}
+            </span>
+          </div>
+          <p className="docs-retrieval-context__hint muted">
+            Загрузка, переиндексация и фоновые indexing jobs пишут в активный retrieval backend
+            (смена backend — в Retrieval Settings).
+          </p>
+          {rop.reindex_recommended ? (
+            <p className="docs-retrieval-context__warn muted">
+              Индекс пуст или backend не готов — рекомендуется переиндексация для активного backend.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="docs-toolbar card">
         <div className="docs-toolbar__actions" role="toolbar" aria-label="Операции с базой знаний">
@@ -542,7 +575,9 @@ export function DocumentsPage() {
                       </span>
                     </DocFieldRow>
                     <DocFieldRow label="Активный backend">
-                      <span className="mono">{gis?.active_retrieval_backend ?? "—"}</span>
+                      <span className="mono">
+                        {formatRetrievalBackendTitle(gis?.active_retrieval_backend ?? undefined)}
+                      </span>
                     </DocFieldRow>
                     <DocFieldRow label="Σ chunk_count (активные версии)">
                       <span className="mono">
@@ -908,10 +943,11 @@ export function DocumentsPage() {
                             <div className="docs-chunk-list docs-chunk-list--in-grid">
                               {(detail.chunks ?? []).map((c, idx) => {
                                 const text = c.chunk_text_preview || "";
-                                const chromaShort =
-                                  c.chroma_id && c.chroma_id.length > 12
-                                    ? `${c.chroma_id.slice(0, 8)}…`
-                                    : c.chroma_id || null;
+                                const vectorIdRaw = c.chroma_id ?? (c.metadata as { id?: string } | undefined)?.id;
+                                const vectorIdShort =
+                                  vectorIdRaw && vectorIdRaw.length > 12
+                                    ? `${vectorIdRaw.slice(0, 8)}…`
+                                    : vectorIdRaw || null;
                                 return (
                                   <div key={`${c.chunk_index}-${idx}`} className="docs-chunk-card">
                                     <div className="docs-chunk-card__head">
@@ -920,10 +956,10 @@ export function DocumentsPage() {
                                         {text.length} симв.
                                         {c.token_count != null ? ` · ${c.token_count} ток.` : ""}
                                       </span>
-                                      <span className="mono muted" title={c.chroma_id ?? undefined}>
-                                        {chromaShort
-                                          ? `Chroma: ${chromaShort} (в коллекции)`
-                                          : "Chroma: нет id"}
+                                      <span className="mono muted" title={vectorIdRaw ?? undefined}>
+                                        {vectorIdShort
+                                          ? `${vectorStoreDisplay} · id ${vectorIdShort}`
+                                          : `${vectorStoreDisplay} · нет id в метаданных`}
                                       </span>
                                     </div>
                                     <div className="docs-chunk-card__body docs-chunk-card__body--scroll">

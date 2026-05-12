@@ -22,6 +22,7 @@ def api_overview() -> OverviewResponse:
     svc = get_admin_service()
     _, rep = run_health_report()
     kb = svc.get_knowledge_base_status()
+    retrieval = svc.get_retrieval_platform_compact()
 
     return OverviewResponse(
         database={
@@ -29,9 +30,11 @@ def api_overview() -> OverviewResponse:
             "postgres_documents": kb.postgres_documents,
             "postgres_chunks_sum": kb.postgres_chunks_sum,
             "collection_chunk_count": kb.collection_count,
+            "vector_index_chunk_count": kb.collection_count,
         },
         chroma=snapshot_to_public_dict(rep.chroma),
         rag=snapshot_to_public_dict(rep.rag),
+        retrieval=retrieval,
         supported_modalities=list(_SUPPORTED_MODALITIES),
         providers={
             name: {"status": snap.status, "detail": snap.detail}

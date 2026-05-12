@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { fetchRecentLogs, type LogItem } from "../api/client";
+import { fetchOverview, fetchRecentLogs, type LogItem, type RetrievalPlatformCompact } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -13,6 +13,8 @@ import {
   sessionWallDurationMs,
   stageToActionRu,
   statusLabelRu,
+  formatRetrievalBackendTitle,
+  retrievalReadinessForStatusBadge,
 } from "../utils/operationalLabels";
 
 const PAGE_SIZE = 10;
@@ -45,6 +47,27 @@ function TelemetryGap({ kind }: { kind: TelemetryGapKind }) {
   return <span className="telemetry-gap muted">{telemetryGapText(kind)}</span>;
 }
 
+function resolvedChunkBackendId(
+  chunk: RagChunk,
+  session: RagSession | null,
+  platform: RetrievalPlatformCompact | null
+): string {
+  const a = (chunk.backend || "").trim().toLowerCase();
+  if (a) return a;
+  const b = (session?.activeBackend || "").trim().toLowerCase();
+  if (b) return b;
+  return (platform?.effective_backend || "").trim().toLowerCase();
+}
+
+function displayChunkBackendTitle(
+  chunk: RagChunk,
+  session: RagSession | null,
+  platform: RetrievalPlatformCompact | null
+): string {
+  const id = resolvedChunkBackendId(chunk, session, platform);
+  return formatRetrievalBackendTitle(id || undefined);
+}
+
 interface RagChunk {
   source: string;
   distance: number | null;
@@ -55,6 +78,8 @@ interface RagChunk {
   version: string | null;
   chunkIndex: number | null;
   tokenCount: number | null;
+  /** Retrieval backend id (chroma | faiss | weaviate); fallback to session active_backend. */
+  backend: string | null;
 }
 
 interface RagSession {
@@ -91,10 +116,15 @@ interface RagSession {
   ragPipelineWallMs: number | null;
   /** When logged in details; complements chunk-derived best distance. */
   loggedBestDistance: number | null;
+  /** From rag diagnostics (P6.12 multi-backend). */
+  activeBackend: string | null;
+  retrievalReadiness: string | null;
+  activeCollectionCount: number | null;
 }
 
 export function RagPage() {
   const [items, setItems] = useState<LogItem[]>([]);
+  const [retrievalPlatform, setRetrievalPlatform] = useState<RetrievalPlatformCompact | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -111,6 +141,7 @@ export function RagPage() {
     chunk: RagChunk;
     displayIndex: number;
     relevanceLabel: string;
+    backendTitle: string;
   } | null>(null);
 
   const fetchLimit = LOG_LIMIT_BY_WINDOW[windowLabel] ?? LOG_LIMIT_BY_WINDOW["24h"];
@@ -122,11 +153,23 @@ export function RagPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetchRecentLogs({ limit: fetchLimit, sinceHours });
-        if (!cancelled) setItems(res.items ?? []);
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Не удалось загрузить RAG-логи");
+        const [lr, or] = await Promise.allSettled([
+          fetchRecentLogs({ limit: fetchLimit, sinceHours }),
+          fetchOverview(),
+        ]);
+        if (cancelled) return;
+        if (lr.status === "fulfilled") {
+          setItems(lr.value.items ?? []);
+        } else {
+          setItems([]);
+          setError(
+            lr.reason instanceof Error ? lr.reason.message : "Не удалось загрузить RAG-логи"
+          );
+        }
+        if (or.status === "fulfilled") {
+          setRetrievalPlatform((or.value.retrieval as RetrievalPlatformCompact) ?? null);
+        } else {
+          setRetrievalPlatform(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -303,6 +346,28 @@ export function RagPage() {
       <p className="page__lead rag-page__lead muted">
         Операционная диагностика retrieval · <code>/api/logs/recent</code> · время: МСК
       </p>
+      {retrievalPlatform?.effective_backend ? (
+        <div className="rag-retrieval-context page__mt" role="status">
+          <div className="rag-retrieval-context__label">Retrieval · active backend</div>
+          <div className="rag-retrieval-context__row">
+            <span className="rag-retrieval-context__name mono">
+              {formatRetrievalBackendTitle(retrievalPlatform.effective_backend).toUpperCase()}
+            </span>
+            <StatusBadge
+              status={retrievalReadinessForStatusBadge(
+                retrievalPlatform.active_readiness,
+                retrievalPlatform.active_ok
+              )}
+            />
+            <span className="rag-retrieval-context__chunks muted mono">
+              Chunks:{" "}
+              {retrievalPlatform.active_collection_count == null
+                ? "—"
+                : String(retrievalPlatform.active_collection_count)}
+            </span>
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <div className="panel panel--error page__mt" role="alert">
           {error}
@@ -642,6 +707,40 @@ export function RagPage() {
                       <div className="modality-ops-panel__name">Retrieval</div>
                       <dl className="kv modality-ops-panel__kv">
                         <OpsRow
+                          label="Активный backend (лог)"
+                          value={
+                            selected.activeBackend?.trim() ? (
+                              <span className="mono">
+                                {formatRetrievalBackendTitle(selected.activeBackend)}
+                              </span>
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Готовность индекса"
+                          value={
+                            selected.retrievalReadiness?.trim() ? (
+                              <StatusBadge
+                                status={retrievalReadinessForStatusBadge(selected.retrievalReadiness)}
+                              />
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Чанков в коллекции"
+                          value={
+                            hasNum(selected.activeCollectionCount) ? (
+                              String(selected.activeCollectionCount)
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
                           label="top_k"
                           value={
                             hasNum(selected.topK) ? String(selected.topK) : <TelemetryGap kind="log" />
@@ -708,10 +807,14 @@ export function RagPage() {
                           }
                         />
                         <OpsRow
-                          label="Коллекция Chroma"
+                          label="Коллекция / метка (лог)"
                           value={
                             selected.collectionName?.trim() ? (
                               <span className="mono">{selected.collectionName}</span>
+                            ) : selected.activeBackend?.trim() ? (
+                              <span className="mono">
+                                {formatRetrievalBackendTitle(selected.activeBackend)}
+                              </span>
                             ) : (
                               <TelemetryGap kind="log" />
                             )
@@ -755,7 +858,7 @@ export function RagPage() {
                                 <span className="rag-chunk-card__chunk-no">#{idx}</span>
                                 <span className="rag-chunk-card__distance">
                                   {chunk.distance != null ? (
-                                    <span title="distance в Chroma (меньше — ближе к запросу)">
+                                    <span title="Score / distance (семантика зависит от backend)">
                                       {chunk.distance.toFixed(4)}
                                     </span>
                                   ) : (
@@ -771,6 +874,11 @@ export function RagPage() {
                                     chunk,
                                     displayIndex: idx,
                                     relevanceLabel: relevanceLabel(chunk, selected.relevanceThreshold),
+                                    backendTitle: displayChunkBackendTitle(
+                                      chunk,
+                                      selected,
+                                      retrievalPlatform
+                                    ),
                                   })
                                 }
                               >
@@ -782,6 +890,19 @@ export function RagPage() {
                                 </span>
                               </div>
                             </div>
+                            <p className="muted rag-chunk-card__backend-line" style={{ fontSize: "0.8rem", margin: "0.2rem 0 0" }}>
+                              Backend:{" "}
+                              <strong className="rag-chunk-card__backend-name">
+                                {displayChunkBackendTitle(chunk, selected, retrievalPlatform)}
+                              </strong>
+                              {" · "}
+                              Источник: <span className="mono">{chunk.source || "—"}</span>
+                              {" · "}
+                              Score:{" "}
+                              {chunk.distance != null && Number.isFinite(chunk.distance)
+                                ? chunk.distance.toFixed(4)
+                                : "—"}
+                            </p>
                           </header>
                           <div className="rag-chunk-card__body">
                             <p className="rag-chunk-card__preview mono">{chunkPreviewText(chunk)}</p>
@@ -844,6 +965,7 @@ export function RagPage() {
                         chunk={chunkFullTextModal.chunk}
                         displayIndex={chunkFullTextModal.displayIndex}
                         relevanceLabel={chunkFullTextModal.relevanceLabel}
+                        backendTitle={chunkFullTextModal.backendTitle}
                         onClose={() => setChunkFullTextModal(null)}
                       />,
                       document.body,
@@ -1004,11 +1126,13 @@ function RagChunkFullTextModal({
   chunk,
   displayIndex,
   relevanceLabel,
+  backendTitle,
   onClose,
 }: {
   chunk: RagChunk;
   displayIndex: number;
   relevanceLabel: string;
+  backendTitle: string;
   onClose: () => void;
 }) {
   const full = chunk.fullText?.trim()
@@ -1037,6 +1161,7 @@ function RagChunkFullTextModal({
           </button>
         </div>
         <dl className="kv rag-chunk-modal__meta modality-ops-panel__kv">
+          <OpsRow label="Backend" value={<span className="mono">{backendTitle}</span>} />
           <OpsRow
             label="Файл"
             value={<span className="mono break-all">{chunk.source || "неизвестный файл"}</span>}
@@ -1109,7 +1234,8 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
     const latest = ordered[ordered.length - 1];
     const first = ordered[0];
     const scores = collectScores(detailsPool);
-    const chunks = extractChunks(detailsPool);
+    const sessionBackend = pickText(detailsPool, ["active_backend", "retrieval_backend"]);
+    const chunks = extractChunks(detailsPool, sessionBackend);
     const usedInContext =
       pickNumber(detailsPool, ["used_chunks_count"]) ?? chunks.filter((c) => c.passedFilter).length;
     const filteredCount = pickNumber(detailsPool, ["filtered_count"]);
@@ -1182,6 +1308,9 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       llmLatencyMs: pickNumber(detailsPool, ["llm_latency_ms"]),
       ragPipelineWallMs: pickNumber(detailsPool, ["rag_pipeline_wall_ms"]),
       loggedBestDistance: pickFloat(detailsPool, ["best_distance"]),
+      activeBackend: sessionBackend,
+      retrievalReadiness: pickText(detailsPool, ["retrieval_readiness"]),
+      activeCollectionCount: pickNumber(detailsPool, ["active_collection_count"]),
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
@@ -1372,7 +1501,11 @@ function collectScores(detailsPool: Record<string, unknown>[]): number[] {
   return [];
 }
 
-function extractChunks(detailsPool: Record<string, unknown>[]): RagChunk[] {
+function extractChunks(
+  detailsPool: Record<string, unknown>[],
+  fallbackBackend: string | null
+): RagChunk[] {
+  const fb = (fallbackBackend || "").trim().toLowerCase() || null;
   for (let i = detailsPool.length - 1; i >= 0; i--) {
     const d = detailsPool[i];
     const raw = d.retrieved_chunks;
@@ -1394,6 +1527,19 @@ function extractChunks(detailsPool: Record<string, unknown>[]): RagChunk[] {
       const chromaRaw = item.chroma_id ?? item.id ?? item.chunk_id;
       const ver = item.version ?? item.version_number ?? item.document_version;
       const tok = item.token_count ?? item.tokens;
+      const diagRaw =
+        typeof d.active_backend === "string"
+          ? d.active_backend
+          : typeof d.retrieval_backend === "string"
+            ? d.retrieval_backend
+            : null;
+      const diagBackend = diagRaw ? String(diagRaw).trim().toLowerCase() : null;
+      const beRaw = item.retrieval_backend ?? item.source_backend ?? diagBackend ?? fb;
+      let backend =
+        beRaw != null && String(beRaw).trim() ? String(beRaw).trim().toLowerCase() : null;
+      if (!backend) {
+        backend = diagBackend ?? fb ?? null;
+      }
       out.push({
         source,
         distance: Number.isFinite(dist) ? dist : null,
@@ -1404,6 +1550,7 @@ function extractChunks(detailsPool: Record<string, unknown>[]): RagChunk[] {
         version: ver != null ? String(ver) : null,
         chunkIndex: typeof item.chunk_index === "number" ? item.chunk_index : idx,
         tokenCount: typeof tok === "number" && Number.isFinite(tok) ? tok : null,
+        backend,
       });
       idx += 1;
     }

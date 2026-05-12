@@ -118,6 +118,10 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
         "total_tokens",
         "embedding_model",
         "chroma_collection",
+        "active_backend",
+        "retrieval_backend",
+        "retrieval_readiness",
+        "active_collection_count",
         "latency_ms",
         "duration_ms",
         "elapsed_ms",
@@ -157,20 +161,31 @@ def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
 
     chunks = details.get("retrieved_chunks")
     if isinstance(chunks, list):
+        parent_ab = str(
+            details.get("active_backend") or details.get("retrieval_backend") or ""
+        ).strip().lower()
         slim_chunks: list[dict[str, Any]] = []
         for raw_c in chunks[:18]:
             if not isinstance(raw_c, dict):
                 continue
             prev = raw_c.get("text_preview")
             ps = str(prev) if prev is not None else ""
-            slim_chunks.append(
-                {
-                    "source": raw_c.get("source"),
-                    "score": raw_c.get("score"),
-                    "passed_filter": raw_c.get("passed_filter"),
-                    "text_preview": ps if len(ps) <= 96 else ps[:93] + "…",
-                }
+            rb_chunk = (
+                raw_c.get("retrieval_backend")
+                or raw_c.get("source_backend")
+                or (parent_ab or None)
             )
+            sb_chunk = raw_c.get("source_backend") or raw_c.get("retrieval_backend")
+            row: dict[str, Any] = {
+                "source": raw_c.get("source"),
+                "score": raw_c.get("score"),
+                "passed_filter": raw_c.get("passed_filter"),
+                "text_preview": ps if len(ps) <= 96 else ps[:93] + "…",
+            }
+            if rb_chunk:
+                row["retrieval_backend"] = str(rb_chunk).strip().lower()
+                row["source_backend"] = str(sb_chunk or rb_chunk).strip().lower()
+            slim_chunks.append(row)
         out["retrieved_chunks"] = slim_chunks
 
     for passthrough in ("answer", "rag_answer", "details"):

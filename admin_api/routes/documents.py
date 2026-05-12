@@ -107,6 +107,7 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
         and pg_sum is not None
         and pg_sum != vector_n
     )
+    retrieval_ops = svc.get_retrieval_platform_compact()
 
     return {
         "count": len(items),
@@ -121,6 +122,7 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
             "postgres_available": kb.postgres_available,
             "global_chunks_mismatch": global_mismatch,
         },
+        "retrieval_operational": retrieval_ops,
         "observability": {
             "reindex_available": True,
             "last_reindex_event": reindex_events[0] if reindex_events else None,

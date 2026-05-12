@@ -79,6 +79,42 @@ def _score_or_none(value: object) -> float | None:
         return None
 
 
+def _retrieval_diag_snapshot(
+    be: RetrievalBackend,
+) -> tuple[str, str, int | None, str]:
+    """
+    (active_backend_id, retrieval_backend_id, collection_count, readiness) for logs/UI.
+
+    readiness: READY | EMPTY | DOWN | UNKNOWN
+    """
+    name = (be.backend_name or "").strip().lower() or "unknown"
+    n: int | None = None
+    readiness = "UNKNOWN"
+    try:
+        h = be.healthcheck()
+        if h.collection_count is not None:
+            try:
+                n = int(h.collection_count)
+            except (TypeError, ValueError):
+                n = None
+        if not h.ok:
+            readiness = "DOWN"
+        elif n is not None and n == 0:
+            readiness = "EMPTY"
+        elif n is not None:
+            readiness = "READY"
+        elif h.ok:
+            readiness = "READY"
+    except Exception:
+        try:
+            raw = be.collection_count()
+            n = int(raw)
+            readiness = "EMPTY" if n == 0 else "READY"
+        except Exception:
+            pass
+    return name, name, n, readiness
+
+
 def _text_preview_for_logs(text: object, max_len: int = _CHUNK_PREVIEW_MAX) -> str:
     normalized = " ".join(str(text or "").split())
     if not normalized:
@@ -95,7 +131,9 @@ def _build_retrieved_chunks_diagnostics(
     raw: Sequence[tuple[Document, float]],
     *,
     max_distance: float,
+    chunk_backend: str,
 ) -> tuple[RagRetrievedChunkDiagnostics, ...]:
+    be_label = (chunk_backend or "").strip().lower() or "unknown"
     out: list[RagRetrievedChunkDiagnostics] = []
     for doc, score in raw:
         source_raw = doc.metadata.get("source")
@@ -110,6 +148,8 @@ def _build_retrieved_chunks_diagnostics(
                 score=score_num,
                 passed_filter=passed_filter,
                 text_preview=_text_preview_for_logs(doc.page_content),
+                retrieval_backend=be_label,
+                source_backend=be_label,
             )
         )
     return tuple(out)
@@ -158,11 +198,16 @@ def _build_diagnostics(
     total_tokens: int | None = None,
     embedding_model: str | None = None,
     chroma_collection: str | None = None,
+    active_backend: str | None = None,
+    retrieval_backend: str | None = None,
+    active_collection_count: int | None = None,
+    retrieval_readiness: str | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
         {str(doc.metadata.get("source", "Unknown")) for doc, _ in filtered}
     )
+    chunk_be = (active_backend or retrieval_backend or "unknown").strip().lower()
     return RagRequestDiagnostics(
         query_preview=_query_preview_for_logs(query),
         top_k=top_k,
@@ -177,6 +222,7 @@ def _build_diagnostics(
         retrieved_chunks=_build_retrieved_chunks_diagnostics(
             raw,
             max_distance=relevance_threshold,
+            chunk_backend=chunk_be,
         ),
         retrieval_latency_ms=retrieval_latency_ms,
         llm_latency_ms=llm_latency_ms,
@@ -188,6 +234,10 @@ def _build_diagnostics(
         total_tokens=total_tokens,
         embedding_model=embedding_model,
         chroma_collection=chroma_collection,
+        active_backend=active_backend,
+        retrieval_backend=retrieval_backend,
+        active_collection_count=active_collection_count,
+        retrieval_readiness=retrieval_readiness,
     )
 
 
@@ -436,6 +486,8 @@ class RagQueryService:
         emb_model = (self._eff().openai_embedding_model or "").strip() or None
         llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
+        active = self._active_retrieval()
+        ab, rb, acnt, rdy = _retrieval_diag_snapshot(active)
         _build_diagnostics(
             query=query,
             top_k=k,
@@ -450,6 +502,10 @@ class RagQueryService:
             chroma_collection=self._diagnostics_collection_label(),
             llm_provider=llm_prov,
             llm_model=llm_mod,
+            active_backend=ab,
+            retrieval_backend=rb,
+            active_collection_count=acnt,
+            retrieval_readiness=rdy,
         ).emit_stdout()
         return _sources_from_results(filtered)
 
@@ -493,6 +549,8 @@ class RagQueryService:
         chroma_coll = self._diagnostics_collection_label()
         llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
+        active = self._active_retrieval()
+        ab, rb, acnt, rdy = _retrieval_diag_snapshot(active)
 
         if not raw:
             diagnostics = _build_diagnostics(
@@ -510,6 +568,10 @@ class RagQueryService:
                 chroma_collection=chroma_coll,
                 llm_provider=llm_prov,
                 llm_model=llm_mod,
+                active_backend=ab,
+                retrieval_backend=rb,
+                active_collection_count=acnt,
+                retrieval_readiness=rdy,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -535,6 +597,10 @@ class RagQueryService:
                 chroma_collection=chroma_coll,
                 llm_provider=llm_prov,
                 llm_model=llm_mod,
+                active_backend=ab,
+                retrieval_backend=rb,
+                active_collection_count=acnt,
+                retrieval_readiness=rdy,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -610,6 +676,10 @@ class RagQueryService:
             total_tokens=tot_t,
             embedding_model=emb_model,
             chroma_collection=chroma_coll,
+            active_backend=ab,
+            retrieval_backend=rb,
+            active_collection_count=acnt,
+            retrieval_readiness=rdy,
         )
         diagnostics.emit_stdout()
 
