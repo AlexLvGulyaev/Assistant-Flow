@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
@@ -41,7 +40,7 @@ def snapshot_to_public_dict(snap: HealthSnapshot) -> dict[str, Any]:
 def config_readiness_summary(cfg: AppConfig) -> dict[str, Any]:
     """Non-secret flags for operators / probes."""
     return {
-        "database_url_configured": bool((os.getenv("DATABASE_URL") or "").strip()),
+        "database_url_configured": bool((cfg.database_url or "").strip()),
         "chroma_use_http": cfg.chroma_use_http,
         "chroma_host": cfg.chroma_host,
         "chroma_port": cfg.chroma_port,

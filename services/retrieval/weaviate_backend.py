@@ -96,15 +96,16 @@ class WeaviateBackend:
             Configure,
             DataType,
             Property,
-            VectorDistances,
         )
 
         if self._client.collections.exists(self._class_name):
             return
+        # weaviate-client 4.x: use hnsw()/flat(); VectorIndex.distance() removed.
+        # weaviate-client 4.15+: VectorDistances.L2 renamed/removed — omit metric (server default).
         self._client.collections.create(
             name=self._class_name,
             vectorizer_config=Configure.Vectorizer.none(),
-            vector_index_config=Configure.VectorIndex.distance(VectorDistances.L2),
+            vector_index_config=Configure.VectorIndex.hnsw(),
             properties=[
                 Property(name="text", data_type=DataType.TEXT),
                 Property(name="chunk_id", data_type=DataType.TEXT),
@@ -316,10 +317,17 @@ def weaviate_collection_count_best_effort(
     config: "AppConfig",
     *,
     embeddings: "Embeddings",
-) -> int:
-    """Для Admin stats: best-effort count без долгого удержания соединения."""
-    store = WeaviateBackend(config=config, embeddings=embeddings)
+) -> int | None:
+    """
+    Для Admin stats: best-effort count без долгого удержания соединения.
+
+    Не бросает наружу: при недоступном Weaviate / ошибке схемы / сети — ``None``.
+    """
     try:
-        return int(store.collection_count())
-    finally:
-        store.close()
+        store = WeaviateBackend(config=config, embeddings=embeddings)
+        try:
+            return int(store.collection_count())
+        finally:
+            store.close()
+    except Exception:
+        return None

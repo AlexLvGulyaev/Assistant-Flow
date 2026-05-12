@@ -232,7 +232,7 @@ class AdminKnowledgeIndexer:
         files = list(iter_supported_files(self._documents_dir))
         outcomes: list[FileIndexOutcome] = []
 
-        database_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
+        database_url_set = bool((self._config.database_url or "").strip())
         pg_active = self._use_postgres and database_url_set
 
         embeddings = build_openai_embeddings(self._config)
@@ -473,7 +473,7 @@ class AdminKnowledgeIndexer:
             )
 
         pg_enabled = self._use_postgres and bool(
-            (os.getenv("DATABASE_URL") or "").strip()
+            (self._config.database_url or "").strip()
         )
         doc_id: uuid.UUID | None = None
         ver_id: uuid.UUID | None = None

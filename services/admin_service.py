@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -14,6 +15,10 @@ import mimetypes
 
 from repositories.connection import get_connection
 from repositories.document_repository import DocumentRepository
+from repositories.platform_settings_repository import (
+    KEY_RETRIEVAL_TUNING,
+    PlatformSettingsRepository,
+)
 from repositories.processing_logs_repository import ProcessingLogsRepository
 from services.admin_knowledge_indexer import AdminKnowledgeIndexer
 from services.asset_repository import AssetNotFoundError, AssetValidationError
@@ -23,12 +28,31 @@ from services.audio_browser_preview import ensure_mp3_browser_preview, needs_bro
 from providers.rag_embeddings import build_openai_embeddings
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
+from services.retrieval.faiss_backend import count_faiss_chunks_on_disk, resolve_faiss_index_dir
 from services.retrieval.weaviate_backend import weaviate_collection_count_best_effort
-from services.retrieval.factory import normalize_rag_backend
+from services.retrieval.retrieval_tuning import (
+    TUNING_INDEXING_KEYS,
+    TUNING_REQUIRES_REINDEX_KEYS,
+    TUNING_RUNTIME_KEYS,
+    apply_db_overrides_to_config,
+    field_sources_from_db,
+    load_retrieval_tuning_db,
+    strip_db_keys_matching_env,
+    tuning_effective_values,
+    validate_and_normalize_patch,
+)
+from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
+from services.retrieval.factory import (
+    KNOWN_RAG_BACKENDS,
+    build_retrieval_backend,
+    effective_rag_backend_from_sources,
+    normalize_rag_backend,
+)
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_EFFECTIVE_RAG_BACKEND_CACHE_TTL_S = 2.5
 
 
 def _sniff_audio_content_type(path: Path) -> str | None:
@@ -288,8 +312,12 @@ class AdminService:
         self._asset_repository = create_asset_repository(self._config)
         self._async_jobs = AsyncJobService()
         self._doc_repo = DocumentRepository()
+        self._platform_repo = PlatformSettingsRepository()
         self._proc_repo = ProcessingLogsRepository()
         self._lifecycle = RuntimeLifecycleService()
+        self._eff_rb_cache: str | None = None
+        self._eff_rb_cache_ts: float = 0.0
+        self._tuning_resolver: RetrievalTuningResolver | None = None
 
     @property
     def documents_directory(self) -> Path:
@@ -303,6 +331,49 @@ class AdminService:
     @property
     def app_config(self) -> AppConfig:
         return self._config
+
+    @property
+    def tuning_resolver(self) -> RetrievalTuningResolver:
+        if self._tuning_resolver is None:
+            self._tuning_resolver = RetrievalTuningResolver(self._config)
+        return self._tuning_resolver
+
+    def _invalidate_tuning_cache(self) -> None:
+        if self._tuning_resolver is not None:
+            self._tuning_resolver.invalidate()
+
+    def _invalidate_effective_rag_backend_cache(self) -> None:
+        self._eff_rb_cache = None
+
+    def _effective_rag_backend_resolved(self) -> str:
+        env_b = normalize_rag_backend(self._config.rag_backend)
+        if not (self._config.database_url or "").strip():
+            return env_b
+        now = time.monotonic()
+        if (
+            self._eff_rb_cache is not None
+            and (now - self._eff_rb_cache_ts) < _EFFECTIVE_RAG_BACKEND_CACHE_TTL_S
+        ):
+            return self._eff_rb_cache
+        try:
+            with get_connection() as conn:
+                db_v = self._platform_repo.peek_active_rag_backend(conn)
+            eff = effective_rag_backend_from_sources(
+                env_backend=env_b,
+                db_backend=db_v,
+            )
+        except Exception:
+            eff = env_b
+        self._eff_rb_cache = eff
+        self._eff_rb_cache_ts = now
+        return eff
+
+    def _indexing_config(self) -> AppConfig:
+        eff = self.tuning_resolver.effective_config()
+        return replace(
+            eff,
+            rag_backend=self._effective_rag_backend_resolved(),
+        )
 
     def get_documents_filesystem_count(self) -> int:
         """Number of ``.txt`` files under ``RAG_DOCUMENTS_DIR`` (recursive)."""
@@ -385,21 +456,28 @@ class AdminService:
 
     def get_collection_count(self) -> int:
         """Chunk count in the active vector index (Chroma, FAISS, or Weaviate), same semantics as CLI /stats."""
-        rb = normalize_rag_backend(self._config.rag_backend)
+        rb = self._effective_rag_backend_resolved()
         if rb == "faiss":
             idx = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
             return count_faiss_chunks_on_disk(idx)
         if rb == "weaviate":
-            embeddings = build_openai_embeddings(self._config)
-            return weaviate_collection_count_best_effort(
-                self._config, embeddings=embeddings
-            )
+            try:
+                embeddings = build_openai_embeddings(self._config)
+            except Exception:
+                return 0
+            try:
+                n = weaviate_collection_count_best_effort(
+                    self._config, embeddings=embeddings
+                )
+                return int(n) if n is not None else 0
+            except Exception:
+                return 0
         return count_chroma_chunks(self._config, persist_path=self._chroma_dir)
 
     def get_knowledge_base_status(self) -> KnowledgeBaseStatus:
         vector_n = self.get_collection_count()
-        rb = normalize_rag_backend(self._config.rag_backend)
-        db_url = (os.getenv("DATABASE_URL") or "").strip()
+        rb = self._effective_rag_backend_resolved()
+        db_url = (self._config.database_url or "").strip()
         if not db_url:
             return KnowledgeBaseStatus(
                 collection_count=vector_n,
@@ -432,10 +510,262 @@ class AdminService:
                 vector_index_chunk_count=vector_n,
             )
 
+    def _probe_retrieval_backend_health(self, backend_name: str) -> dict[str, Any]:
+        """Одноразовый health/collection snapshot для overview (независимо от active)."""
+        name = normalize_rag_backend(backend_name)
+        if name not in KNOWN_RAG_BACKENDS:
+            return {
+                "backend": name,
+                "ok": False,
+                "detail": "unknown_backend",
+                "collection_count": None,
+            }
+        cfg = replace(self._config, rag_backend=name)
+        try:
+            emb = build_openai_embeddings(self._config)
+        except ValueError as exc:
+            return {
+                "backend": name,
+                "ok": False,
+                "detail": str(exc),
+                "collection_count": None,
+            }
+        be: Any = None
+        try:
+            if name == "chroma":
+                from services.rag_chroma_store import ChromaRagStore
+                from services.retrieval.chroma_backend import ChromaBackend
+
+                cdir = self._chroma_dir
+                if not cfg.chroma_use_http:
+                    cdir.mkdir(parents=True, exist_ok=True)
+                store = ChromaRagStore(cfg, emb, persist_directory=cdir)
+                be = ChromaBackend(store)
+            else:
+                be = build_retrieval_backend(cfg, chroma_store=None, embeddings=emb)
+            h = be.healthcheck()
+            n = h.collection_count
+            if n is None:
+                try:
+                    n = int(be.collection_count())
+                except Exception:
+                    n = None
+            return {
+                "backend": name,
+                "ok": h.ok,
+                "detail": h.detail,
+                "collection_count": n,
+            }
+        except Exception as exc:
+            return {
+                "backend": name,
+                "ok": False,
+                "detail": f"{type(exc).__name__}: {exc}",
+                "collection_count": None,
+            }
+        finally:
+            if be is not None:
+                closer = getattr(be, "close", None)
+                if callable(closer):
+                    try:
+                        closer()
+                    except Exception:
+                        pass
+
+    def get_retrieval_overview(self) -> dict[str, Any]:
+        """Сводка для Admin API: env vs DB vs effective + health по каждому backend."""
+        env_default = normalize_rag_backend(self._config.rag_backend)
+        db_active: str | None = None
+        degraded_detail: str | None = None
+        if (self._config.database_url or "").strip():
+            try:
+                with get_connection() as conn:
+                    db_active = self._platform_repo.peek_active_rag_backend(conn)
+            except Exception as exc:
+                degraded_detail = f"{type(exc).__name__}: {exc}"
+        effective = effective_rag_backend_from_sources(
+            env_backend=env_default,
+            db_backend=db_active,
+        )
+        allowed = sorted(KNOWN_RAG_BACKENDS)
+        backends = {b: self._probe_retrieval_backend_health(b) for b in allowed}
+        active_h = backends.get(effective, {})
+        warnings: list[str] = []
+        if degraded_detail:
+            warnings.append(f"postgres_read:{degraded_detail}")
+        if not active_h.get("ok"):
+            warnings.append(
+                f"active_backend_health:{effective}:{active_h.get('detail')}"
+            )
+        out: dict[str, Any] = {
+            "database_configured": bool((self._config.database_url or "").strip()),
+            "env_default_backend": env_default,
+            "db_active_backend": db_active,
+            "effective_backend": effective,
+            "allowed_backends": allowed,
+            "degraded": degraded_detail is not None,
+            "warnings": warnings,
+            "backends": backends,
+            "active_backend_health": active_h,
+        }
+        out.update(self._retrieval_settings_public_snapshot())
+        return out
+
+    def _retrieval_settings_public_snapshot(self) -> dict[str, Any]:
+        """Tuning/paths for Admin UI (no secrets). Effective tuning merges env + DB overrides."""
+        c = self._config
+        eff = self.tuning_resolver.effective_config()
+        db: dict[str, Any] = {}
+        if (c.database_url or "").strip():
+            try:
+                with get_connection() as conn:
+                    db = load_retrieval_tuning_db(conn)
+            except Exception:
+                db = {}
+        fs = field_sources_from_db(db)
+        db_ok = bool((c.database_url or "").strip())
+        return {
+            "runtime_tuning": {
+                "rag_top_k": eff.rag_top_k,
+                "rag_max_distance": eff.rag_max_distance,
+                "rag_answer_max_tokens": eff.rag_answer_max_tokens,
+                "rag_retrieval_timeout": eff.rag_retrieval_timeout,
+                "rag_embedding_request_timeout": eff.rag_embedding_request_timeout,
+                "field_sources": {k: fs[k] for k in sorted(TUNING_RUNTIME_KEYS)},
+                "editable_via_api": db_ok,
+                "planned_note": (
+                    "GET/PUT /api/retrieval/tuning when DATABASE_URL is set; "
+                    "Telegram RAG picks up runtime fields within ~2.5s."
+                ),
+            },
+            "indexing_tuning": {
+                "rag_chunk_size": eff.rag_chunk_size,
+                "rag_chunk_overlap": eff.rag_chunk_overlap,
+                "field_sources": {k: fs[k] for k in sorted(TUNING_INDEXING_KEYS)},
+                "editable_via_api": db_ok,
+                "reindex_warning": (
+                    "Changing chunk size/overlap requires full reindex of the active vector backend."
+                ),
+            },
+            "cache": {
+                "enable_retrieval_cache": c.enable_retrieval_cache,
+                "enable_answer_cache": c.enable_answer_cache,
+                "retrieval_cache_ttl_seconds": c.retrieval_cache_ttl_seconds,
+                "answer_cache_ttl_seconds": c.answer_cache_ttl_seconds,
+                "rag_retrieval_generation": (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip()
+                or None,
+                "cache_db_path": c.cache_db_path,
+                "rag_retrieval_generation_hint": (
+                    "Bump RAG_RETRIEVAL_GENERATION after corpus reindex when retrieval cache is enabled."
+                ),
+                "editable_via_api": False,
+            },
+            "paths": {
+                "chroma_host": c.chroma_host,
+                "chroma_port": c.chroma_port,
+                "chroma_use_http": c.chroma_use_http,
+                "chroma_persist_dir": c.chroma_persist_dir,
+                "rag_documents_dir": c.rag_documents_dir,
+                "faiss_index_dir": c.faiss_index_dir,
+                "weaviate_url": (c.weaviate_url or "").strip() or None,
+                "weaviate_host": c.weaviate_host,
+                "weaviate_http_port": c.weaviate_http_port,
+                "weaviate_grpc_port": c.weaviate_grpc_port,
+                "cache_db_path": c.cache_db_path,
+            },
+        }
+
+    def _retrieval_tuning_api_core(self) -> dict[str, Any]:
+        base = self._config
+        db: dict[str, Any] = {}
+        if (base.database_url or "").strip():
+            try:
+                with get_connection() as conn:
+                    db = load_retrieval_tuning_db(conn)
+            except Exception:
+                db = {}
+        eff = apply_db_overrides_to_config(base, db)
+        return {
+            "effective": tuning_effective_values(eff),
+            "env_defaults": tuning_effective_values(base),
+            "db_overrides": dict(db),
+            "requires_reindex_keys": sorted(TUNING_REQUIRES_REINDEX_KEYS),
+            "runtime_keys": sorted(TUNING_RUNTIME_KEYS),
+        }
+
+    def get_retrieval_tuning(self) -> dict[str, Any]:
+        """GET /api/retrieval/tuning — effective + env + DB overrides."""
+        return self._retrieval_tuning_api_core()
+
+    def put_retrieval_tuning(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """PUT /api/retrieval/tuning — partial merge, validate, strip keys matching env."""
+        if not (self._config.database_url or "").strip():
+            raise ValueError("DATABASE_URL not configured")
+        with get_connection() as conn:
+            db_existing = load_retrieval_tuning_db(conn)
+            before_eff = apply_db_overrides_to_config(self._config, db_existing)
+            normalized = validate_and_normalize_patch(self._config, db_existing, patch)
+            merged = {**db_existing, **normalized}
+            merged = strip_db_keys_matching_env(merged, self._config)
+            if merged:
+                self._platform_repo.set_setting(conn, KEY_RETRIEVAL_TUNING, merged)
+            else:
+                self._platform_repo.delete_setting(conn, KEY_RETRIEVAL_TUNING)
+            conn.commit()
+        self._invalidate_tuning_cache()
+        after_eff = self.tuning_resolver.effective_config()
+        reindex_required = any(
+            getattr(before_eff, k) != getattr(after_eff, k) for k in TUNING_REQUIRES_REINDEX_KEYS
+        )
+        out = self._retrieval_tuning_api_core()
+        out["reindex_required"] = reindex_required
+        return out
+
+    def delete_retrieval_tuning(self) -> dict[str, Any]:
+        """DELETE /api/retrieval/tuning — clear all DB overrides."""
+        if not (self._config.database_url or "").strip():
+            raise ValueError("DATABASE_URL not configured")
+        with get_connection() as conn:
+            db_existing = load_retrieval_tuning_db(conn)
+            before_eff = apply_db_overrides_to_config(self._config, db_existing)
+            self._platform_repo.delete_setting(conn, KEY_RETRIEVAL_TUNING)
+            conn.commit()
+        self._invalidate_tuning_cache()
+        after_eff = self.tuning_resolver.effective_config()
+        reindex_required = any(
+            getattr(before_eff, k) != getattr(after_eff, k) for k in TUNING_REQUIRES_REINDEX_KEYS
+        )
+        out = self._retrieval_tuning_api_core()
+        out["reindex_required"] = reindex_required
+        return out
+
+    def set_active_retrieval_backend(self, backend: str) -> dict[str, Any]:
+        """Persist active backend; allow switch with warnings if target health not ok."""
+        name = normalize_rag_backend(backend)
+        if name not in KNOWN_RAG_BACKENDS:
+            raise ValueError(
+                f"unsupported backend {name!r}; allowed: {', '.join(sorted(KNOWN_RAG_BACKENDS))}"
+            )
+        if not (self._config.database_url or "").strip():
+            raise ValueError("DATABASE_URL not configured")
+        warnings: list[str] = []
+        snap = self._probe_retrieval_backend_health(name)
+        if not snap.get("ok"):
+            warnings.append(f"target_health_not_ok:{snap.get('detail')}")
+        with get_connection() as conn:
+            eff = self._platform_repo.set_active_rag_backend(conn, name)
+            conn.commit()
+        self._invalidate_effective_rag_backend_cache()
+        return {
+            "effective_backend": eff,
+            "warnings": warnings,
+            "target_health": snap,
+        }
+
     def run_reindex(self) -> ReindexRunResult:
         """Full vector index reset + index from RAG_DOCUMENTS_DIR (same as admin CLI --reindex)."""
         execution_id = str(uuid.uuid4())
-        rb = normalize_rag_backend(self._config.rag_backend)
+        rb = self._effective_rag_backend_resolved()
         try:
             doc_count_started = len(iter_supported_files(self._documents_dir))
         except FileNotFoundError:
@@ -460,7 +790,7 @@ class AdminService:
         )
 
         indexer = AdminKnowledgeIndexer(
-            self._config,
+            self._indexing_config(),
             documents_dir=self._documents_dir,
             chroma_dir=self._chroma_dir,
             use_postgres=True,
@@ -477,7 +807,7 @@ class AdminService:
                 details={
                     "documents_count": doc_count_started,
                     "chunks_count": 0,
-                    "retrieval_backend": normalize_rag_backend(self._config.rag_backend),
+                    "retrieval_backend": self._effective_rag_backend_resolved(),
                 },
                 error_text=err_text,
             )
@@ -569,7 +899,7 @@ class AdminService:
         since_hours: int | None = None,
     ) -> list[dict[str, Any]]:
         """Last rows from processing_logs (requires DATABASE_URL and schema v2)."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -636,7 +966,7 @@ class AdminService:
         Read-only async_jobs list for Admin UI visibility (P5.3c).
         Safe fallback: returns [] if DB/table is unavailable.
         """
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         lim = max(1, min(int(limit), 200))
         st = (status or "").strip().lower()
@@ -752,7 +1082,7 @@ class AdminService:
         page_size: int,
     ) -> tuple[list[dict[str, Any]], int]:
         """Page of execution_ids + total distinct execution_ids."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return [], 0
         pg = max(0, int(page))
         size = max(1, min(int(page_size), 500))
@@ -770,7 +1100,7 @@ class AdminService:
 
     def get_logs_execution_ids_total(self) -> int:
         """Total number of distinct execution_id in processing logs."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return 0
         try:
             with get_connection() as conn:
@@ -785,7 +1115,7 @@ class AdminService:
         execution_ids: list[str],
     ) -> list[dict[str, Any]]:
         """All processing logs rows for selected execution_ids."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -804,7 +1134,7 @@ class AdminService:
         fallback_reason: str | None = None,
     ) -> list[dict[str, Any]]:
         """Last ``rag_answer_done`` events with optional fallback_reason filter."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -820,7 +1150,7 @@ class AdminService:
 
     def get_recent_route_events(self, route: str, limit: int = 50) -> list[dict[str, Any]]:
         """Last processing logs rows for a given ``details.route`` value."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -836,7 +1166,7 @@ class AdminService:
 
     def get_recent_text_events(self, limit: int = 50) -> list[dict[str, Any]]:
         """Full processing logs chains for recent text requests grouped by execution_id."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -848,7 +1178,7 @@ class AdminService:
 
     def get_documents_with_versions(self) -> list[dict[str, Any]]:
         """Rows from documents + version aggregates (for admin «Документы» table)."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -860,7 +1190,7 @@ class AdminService:
 
     def get_document_versions(self, document_id: uuid.UUID) -> list[dict[str, Any]]:
         """All document_versions rows for one document."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return []
         try:
             with get_connection() as conn:
@@ -874,7 +1204,7 @@ class AdminService:
         """Save ``.txt`` via asset pipeline, copy to RAG dir, then index one file."""
         dest = self.save_uploaded_txt(filename, data)
         indexer = AdminKnowledgeIndexer(
-            self._config,
+            self._indexing_config(),
             documents_dir=self._documents_dir,
             chroma_dir=self._chroma_dir,
             use_postgres=True,
@@ -892,7 +1222,7 @@ class AdminService:
 
     def reindex_document_file(self, document_id: uuid.UUID) -> dict[str, Any]:
         """Re-embed one on-disk document (no global Chroma reset)."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return {"success": False, "error": "DATABASE_URL not configured"}
         row: dict[str, Any] | None = None
         try:
@@ -912,7 +1242,7 @@ class AdminService:
             return {"success": False, "error": "source file not found on disk"}
 
         execution_id = str(uuid.uuid4())
-        rb = normalize_rag_backend(self._config.rag_backend)
+        rb = self._effective_rag_backend_resolved()
         reindex_details: dict[str, Any] = {
             "document_id": str(document_id),
             "filename": source_fn or path.name,
@@ -931,7 +1261,7 @@ class AdminService:
             details=reindex_details,
         )
         indexer = AdminKnowledgeIndexer(
-            self._config,
+            self._indexing_config(),
             documents_dir=self._documents_dir,
             chroma_dir=self._chroma_dir,
             use_postgres=True,
@@ -987,7 +1317,7 @@ class AdminService:
         version_number: int | None = None,
     ) -> dict[str, Any]:
         """Document row, versions, chunk rows, FS preview, and raw timeline rows."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return {"error": "postgres_unavailable"}
         try:
             with get_connection() as conn:
@@ -1167,7 +1497,7 @@ class AdminService:
 
     def get_overview_insights(self) -> OverviewInsights:
         """Counts and last event from processing_logs for dashboard (24h window)."""
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return OverviewInsights(
                 db_logs_available=False,
                 errors_last_24h=0,
@@ -1247,7 +1577,7 @@ class AdminService:
             },
             "rag_quality": dict(empty_rq),
         }
-        if not (os.getenv("DATABASE_URL") or "").strip():
+        if not (self._config.database_url or "").strip():
             return empty
         try:
             with get_connection() as conn:

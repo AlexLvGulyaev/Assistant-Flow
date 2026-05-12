@@ -7,6 +7,7 @@ import { ImagesPage } from "./pages/ImagesPage";
 import { LogsPage } from "./pages/LogsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RagPage } from "./pages/RagPage";
+import { RetrievalSettingsPage } from "./pages/RetrievalSettingsPage";
 import { SummaryPage } from "./pages/SummaryPage";
 import { TextPage } from "./pages/TextPage";
 
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="images" element={<ImagesPage />} />
         <Route path="audio" element={<AudioPage />} />
         <Route path="documents" element={<DocumentsPage />} />
+        <Route path="retrieval" element={<RetrievalSettingsPage />} />
         <Route path="logs" element={<LogsPage />} />
       </Route>
     </Routes>

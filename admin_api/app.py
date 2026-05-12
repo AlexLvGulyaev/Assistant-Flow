@@ -12,6 +12,7 @@ from admin_api.routes.documents import router as documents_router
 from admin_api.routes.health import router as health_router
 from admin_api.routes.logs import router as logs_router
 from admin_api.routes.overview import router as overview_router
+from admin_api.routes.retrieval import router as retrieval_router
 from admin_api.routes.summary import router as summary_router
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def create_admin_api_app() -> FastAPI:
 
     application.include_router(health_router)
     application.include_router(overview_router)
+    application.include_router(retrieval_router)
     application.include_router(summary_router)
     application.include_router(logs_router)
     application.include_router(assets_router)

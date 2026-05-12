@@ -1,6 +1,6 @@
 -- database/schema.sql
 -- Assistant Flow / Career Knowledge Assistant
--- PostgreSQL schema v2 (итоговое состояние после migrations, включая 002_runtime_lifecycle)
+-- PostgreSQL schema v2 (итоговое состояние после migrations, включая 005_platform_settings)
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -623,6 +623,20 @@ CREATE INDEX IF NOT EXISTS idx_generated_assets_type
 
 CREATE INDEX IF NOT EXISTS idx_generated_assets_created_at
     ON generated_assets(created_at);
+
+
+-- ----------------------------
+-- Platform settings (P6.10)
+-- ----------------------------
+
+CREATE TABLE IF NOT EXISTS platform_settings (
+    key TEXT PRIMARY KEY,
+    value_json JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_settings_updated_at
+    ON platform_settings (updated_at);
 
 
 -- ----------------------------

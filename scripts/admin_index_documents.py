@@ -16,6 +16,7 @@ import argparse
 import os
 import sys
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,19 +51,41 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    from repositories.connection import get_connection
+    from repositories.platform_settings_repository import PlatformSettingsRepository
     from services.admin_knowledge_indexer import AdminKnowledgeIndexer
+    from services.retrieval.retrieval_tuning import apply_db_overrides_to_config, load_retrieval_tuning_db
+    from services.retrieval.factory import effective_rag_backend_from_sources, normalize_rag_backend
     from utils.config import load_config
 
+    use_pg = not args.no_postgres
+
     config = load_config()
+    db_url = (config.database_url or "").strip()
+    env_b = normalize_rag_backend(config.rag_backend)
+    db_backend: str | None = None
+    if db_url:
+        try:
+            with get_connection() as conn:
+                db_backend = PlatformSettingsRepository().peek_active_rag_backend(conn)
+        except Exception:
+            db_backend = None
+    eff = effective_rag_backend_from_sources(env_backend=env_b, db_backend=db_backend)
+    config = replace(config, rag_backend=eff)
+    if db_url:
+        try:
+            with get_connection() as conn:
+                db_tune = load_retrieval_tuning_db(conn)
+            config = apply_db_overrides_to_config(config, db_tune)
+        except Exception:
+            pass
     docs_dir = _resolve_path(args.documents_dir or config.rag_documents_dir)
     chroma_dir = _resolve_path(config.chroma_persist_dir)
-
-    use_pg = not args.no_postgres
-    db_url = (os.getenv("DATABASE_URL") or "").strip()
 
     print("=== Admin knowledge base indexing ===")
     print(f"Documents directory: {docs_dir}")
     print(f"Chroma directory:    {chroma_dir}")
+    print(f"Effective retrieval backend: {eff} (env_default={env_b}, db_active={db_backend!r})")
     print(f"Reindex (wipe Chroma first): {args.reindex}")
     if use_pg and db_url:
         print("PostgreSQL:          enabled (metadata + jobs)")

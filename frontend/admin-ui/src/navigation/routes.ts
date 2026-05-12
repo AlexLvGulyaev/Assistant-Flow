@@ -17,5 +17,6 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/images", label: "Изображения" },
   { path: "/audio", label: "Аудио" },
   { path: "/documents", label: "Документы" },
+  { path: "/retrieval", label: "Retrieval Settings" },
   { path: "/logs", label: "Логи" },
 ];

@@ -32,6 +32,8 @@ from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_query_service import RagQueryService
 from services.rag_types import RagQueryResult
+from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
+from services.retrieval.runtime_manager import RetrievalBackendManager
 from services.runtime_lifecycle_service import (
     RuntimeLifecycleService,
     truncate_for_lifecycle_log,
@@ -115,10 +117,12 @@ def build_orchestrator() -> PromptOrchestrator:
 
 def build_rag_query_service(config: AppConfig) -> RagQueryService:
     chroma_dir = _resolve_project_path(config, config.chroma_persist_dir)
+    tuning = RetrievalTuningResolver(config)
     manager = RetrievalBackendManager(
         config,
         project_root=_project_root(),
         chroma_persist_directory=chroma_dir,
+        tuning_resolver=tuning,
     )
     try:
         retrieval = manager.get_retrieval()
@@ -147,7 +151,7 @@ def build_rag_query_service(config: AppConfig) -> RagQueryService:
         )
         raise
     chat = OpenAIChatProvider(config)
-    return RagQueryService(manager, chat, config)
+    return RagQueryService(manager, chat, config, tuning_resolver=tuning)
 
 
 def _log_system_degraded(

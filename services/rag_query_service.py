@@ -12,6 +12,7 @@ from providers.openai_chat_provider import OpenAIChatProvider
 from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME
 from services.retrieval.base import RetrievalBackend
 from services.retrieval.runtime_manager import RetrievalBackendManager
+from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
 from services.retrieval_security.context import RetrievalSecurityContext
 from services.rag_types import (
     RagQueryResult,
@@ -275,6 +276,8 @@ class RagQueryService:
         retrieval: RetrievalBackend | RetrievalBackendManager,
         chat: OpenAIChatProvider,
         config: AppConfig,
+        *,
+        tuning_resolver: RetrievalTuningResolver | None = None,
     ) -> None:
         if isinstance(retrieval, RetrievalBackendManager):
             self._retrieval_manager = retrieval
@@ -284,6 +287,13 @@ class RagQueryService:
             self._retrieval_static = retrieval
         self._chat = chat
         self._config = config
+        self._tuning_resolver = tuning_resolver
+
+    def _eff(self) -> AppConfig:
+        """Effective tuning (DB overrides + env); never mutates frozen base config."""
+        if self._tuning_resolver is not None:
+            return self._tuning_resolver.effective_config()
+        return self._config
 
     def _active_retrieval(self) -> RetrievalBackend:
         if self._retrieval_manager is not None:
@@ -302,7 +312,7 @@ class RagQueryService:
 
         def run() -> str:
             return self._chat.complete_chat(
-                messages, max_tokens=self._config.rag_answer_max_tokens
+                messages, max_tokens=self._eff().rag_answer_max_tokens
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -349,7 +359,7 @@ class RagQueryService:
                 )
                 return []
 
-        timeout_sec = max(1, int(self._config.rag_retrieval_timeout))
+        timeout_sec = max(1, int(self._eff().rag_retrieval_timeout))
         t_vec0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run)
@@ -411,11 +421,11 @@ class RagQueryService:
         security_context: RetrievalSecurityContext | None = None,
     ) -> tuple[RagSourceChunk, ...]:
         """Similarity search only (read-only)."""
-        k = top_k if top_k is not None else self._config.rag_top_k
+        k = top_k if top_k is not None else self._eff().rag_top_k
         t0 = time.monotonic()
         raw = self._retrieve_raw(query, k, security_context=security_context)
         retrieval_ms = int((time.monotonic() - t0) * 1000)
-        thr = float(self._config.rag_max_distance)
+        thr = float(self._eff().rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
         if not raw:
             fb = "empty_retrieval"
@@ -423,7 +433,7 @@ class RagQueryService:
             fb = "low_relevance"
         else:
             fb = "none"
-        emb_model = (self._config.openai_embedding_model or "").strip() or None
+        emb_model = (self._eff().openai_embedding_model or "").strip() or None
         llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
         _build_diagnostics(
@@ -467,7 +477,7 @@ class RagQueryService:
         def wall_ms() -> int:
             return int((time.monotonic() - t_answer0) * 1000)
 
-        k = top_k if top_k is not None else self._config.rag_top_k
+        k = top_k if top_k is not None else self._eff().rag_top_k
         print("[assistant-flow] rag answer: before retrieval", flush=True)
         t_ret0 = time.monotonic()
         raw = self._retrieve_raw(
@@ -476,10 +486,10 @@ class RagQueryService:
         retrieval_latency_ms = int((time.monotonic() - t_ret0) * 1000)
         print("[assistant-flow] rag answer: after retrieval", flush=True)
 
-        thr = float(self._config.rag_max_distance)
+        thr = float(self._eff().rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
 
-        emb_model = (self._config.openai_embedding_model or "").strip() or None
+        emb_model = (self._eff().openai_embedding_model or "").strip() or None
         chroma_coll = self._diagnostics_collection_label()
         llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None

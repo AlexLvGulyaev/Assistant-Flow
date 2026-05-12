@@ -25,6 +25,21 @@ def normalize_rag_backend(raw: str | None) -> str:
     return s if s else "chroma"
 
 
+KNOWN_RAG_BACKENDS: frozenset[str] = frozenset({"chroma", "faiss", "weaviate"})
+
+
+def effective_rag_backend_from_sources(
+    *,
+    env_backend: str,
+    db_backend: str | None,
+) -> str:
+    """
+    DB wins when set and valid; otherwise env bootstrap default.
+    ``db_backend`` must already be validated or None.
+    """
+    if db_backend is not None and db_backend in KNOWN_RAG_BACKENDS:
+        return db_backend
+    return normalize_rag_backend(env_backend)
 def build_retrieval_backend(
     config: "AppConfig",
     *,

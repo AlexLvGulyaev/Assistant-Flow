@@ -130,6 +130,95 @@ export async function postDocumentsReindex(
   return parseJson<ReindexResponse>(res);
 }
 
+export async function fetchRetrievalOverview(): Promise<RetrievalOverviewResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/overview`);
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Retrieval overview: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
+  }
+  return parseJson<RetrievalOverviewResponse>(res);
+}
+
+async function parseFastApiError(res: Response, fallback: string): Promise<string> {
+  const t = await res.text().catch(() => "");
+  if (!t) return fallback;
+  try {
+    const j = JSON.parse(t) as { detail?: unknown };
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail)) return j.detail.map((x) => JSON.stringify(x)).join("; ");
+  } catch {
+    /* ignore */
+  }
+  return `${fallback} ${t.slice(0, 240)}`;
+}
+
+export interface RetrievalTuningResponse {
+  effective: Record<string, number>;
+  env_defaults: Record<string, number>;
+  db_overrides: Record<string, number>;
+  requires_reindex_keys: string[];
+  runtime_keys: string[];
+  reindex_required?: boolean;
+}
+
+export async function fetchRetrievalTuning(): Promise<RetrievalTuningResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`);
+  if (!res.ok) {
+    throw new Error(await parseFastApiError(res, `Retrieval tuning: ${res.status}`));
+  }
+  return parseJson<RetrievalTuningResponse>(res);
+}
+
+export async function putRetrievalTuning(
+  patch: Record<string, number>
+): Promise<RetrievalTuningResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error(await parseFastApiError(res, `Retrieval tuning save: ${res.status}`));
+  }
+  return parseJson<RetrievalTuningResponse>(res);
+}
+
+export async function deleteRetrievalTuning(): Promise<RetrievalTuningResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(await parseFastApiError(res, `Retrieval tuning clear: ${res.status}`));
+  }
+  return parseJson<RetrievalTuningResponse>(res);
+}
+
+export async function setActiveRetrievalBackend(
+  backend: string
+): Promise<SetActiveRetrievalBackendResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/active-backend`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ backend: backend.trim() }),
+  });
+  if (!res.ok) {
+    let msg = `Switch backend: ${res.status}`;
+    const t = await res.text().catch(() => "");
+    if (t) {
+      try {
+        const j = JSON.parse(t) as { detail?: unknown };
+        if (typeof j.detail === "string") {
+          msg = j.detail;
+        } else if (Array.isArray(j.detail)) {
+          msg = j.detail.map((x) => JSON.stringify(x)).join("; ");
+        }
+      } catch {
+        msg = `${msg} ${t.slice(0, 240)}`;
+      }
+    }
+    throw new Error(msg);
+  }
+  return parseJson<SetActiveRetrievalBackendResponse>(res);
+}
+
 export function getAssetPreviewUrl(assetRef: string): string {
   const enc = encodeURIComponent(assetRef.trim());
   return `${getApiBaseUrl()}/api/assets/preview?asset_ref=${enc}`;
@@ -342,4 +431,38 @@ export interface ReindexResponse {
   files_found?: number;
   chunks?: number;
   document_id?: string | null;
+}
+
+export interface RetrievalBackendHealthRow {
+  backend?: string;
+  ok?: boolean;
+  detail?: string | null;
+  collection_count?: number | null;
+}
+
+/** GET /api/retrieval/overview — backend matrix + read-only tuning/paths (P6.11). */
+export interface RetrievalOverviewResponse {
+  database_configured?: boolean;
+  env_default_backend?: string;
+  db_active_backend?: string | null;
+  effective_backend?: string;
+  allowed_backends?: string[];
+  degraded?: boolean;
+  warnings?: string[];
+  backends?: Record<string, RetrievalBackendHealthRow>;
+  active_backend_health?: RetrievalBackendHealthRow;
+  runtime_tuning?: Record<string, unknown> & {
+    field_sources?: Record<string, string>;
+  };
+  indexing_tuning?: Record<string, unknown> & {
+    field_sources?: Record<string, string>;
+  };
+  cache?: Record<string, unknown>;
+  paths?: Record<string, unknown>;
+}
+
+export interface SetActiveRetrievalBackendResponse {
+  effective_backend?: string;
+  warnings?: string[];
+  target_health?: RetrievalBackendHealthRow;
 }
