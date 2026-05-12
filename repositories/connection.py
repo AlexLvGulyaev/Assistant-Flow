@@ -14,6 +14,7 @@ from psycopg import Connection, pq
 
 
 def get_database_url() -> str:
+    """Return ``DATABASE_URL`` after dotenv load — same value as ``AppConfig.database_url``."""
     load_dotenv(find_dotenv())
     url = (os.getenv("DATABASE_URL") or "").strip()
     if not url:

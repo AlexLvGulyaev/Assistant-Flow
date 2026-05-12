@@ -55,6 +55,8 @@ class AppConfig:
     chroma_use_http: bool = False
     chroma_host: str = "127.0.0.1"
     chroma_port: int = 8000
+    # PostgreSQL: same source as os.environ DATABASE_URL after load_dotenv (see repositories.connection).
+    database_url: Optional[str] = None
     # P6.1 / P6.2a: chroma по умолчанию; faiss — только явный RAG_BACKEND=faiss (secondary demo).
     rag_backend: str = "chroma"
     # P6.4: hybrid KB + dialog memory в RAG только при true и переданном hybrid_session_id.
@@ -174,6 +176,7 @@ def load_config() -> AppConfig:
         chroma_use_http=_bool_env("CHROMA_USE_HTTP", False),
         chroma_host=(os.getenv("CHROMA_HOST", "127.0.0.1").strip() or "127.0.0.1"),
         chroma_port=_int_env("CHROMA_PORT", 8000),
+        database_url=_optional_stripped_url("DATABASE_URL"),
         rag_backend=(
             (os.getenv("RAG_BACKEND") or "").strip().lower() or "chroma"
         ),
