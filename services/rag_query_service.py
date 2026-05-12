@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from providers.openai_chat_provider import OpenAIChatProvider
 from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME
 from services.retrieval.base import RetrievalBackend
+from services.retrieval.runtime_manager import RetrievalBackendManager
 from services.retrieval_security.context import RetrievalSecurityContext
 from services.rag_types import (
     RagQueryResult,
@@ -262,21 +263,39 @@ def _dedupe_sources_by_file(
 
 class RagQueryService:
     """
-    Query persisted Chroma index; does not mutate the index.
+    Query persisted vector index; does not mutate the index.
     Used from Telegram in /mode rag (interfaces/telegram_bot.py) and from CLI smoke-test.
 
-    P6.1: similarity search идёт через RetrievalBackend (по умолчанию ChromaBackend).
+    P6.1: similarity search через RetrievalBackend.
+    P6.9: опционально ``RetrievalBackendManager`` для refresh FAISS / смены backend без restart.
     """
 
     def __init__(
         self,
-        retrieval: RetrievalBackend,
+        retrieval: RetrievalBackend | RetrievalBackendManager,
         chat: OpenAIChatProvider,
         config: AppConfig,
     ) -> None:
-        self._retrieval = retrieval
+        if isinstance(retrieval, RetrievalBackendManager):
+            self._retrieval_manager = retrieval
+            self._retrieval_static: RetrievalBackend | None = None
+        else:
+            self._retrieval_manager = None
+            self._retrieval_static = retrieval
         self._chat = chat
         self._config = config
+
+    def _active_retrieval(self) -> RetrievalBackend:
+        if self._retrieval_manager is not None:
+            return self._retrieval_manager.get_retrieval()
+        assert self._retrieval_static is not None
+        return self._retrieval_static
+
+    def _diagnostics_collection_label(self) -> str:
+        be = self._active_retrieval()
+        if be.backend_name == "chroma":
+            return RAG_CHROMA_COLLECTION_NAME
+        return be.backend_name
 
     def _complete_chat_with_timeout(self, messages: list[dict[str, str]]) -> str:
         """Run sync OpenAI chat in a worker thread with a hard timeout."""
@@ -304,9 +323,12 @@ class RagQueryService:
     ) -> list[tuple[Document, float]]:
         """Run Chroma+embedding search in a worker thread (bounds local stalls)."""
 
+        active = self._active_retrieval()
+        backend_label = active.backend_name
+
         def run() -> list[tuple[Document, float]]:
             try:
-                results = self._retrieval.search(
+                results = active.search(
                     query, top_k=k, security_context=security_context
                 )
                 return [
@@ -328,7 +350,6 @@ class RagQueryService:
                 return []
 
         timeout_sec = max(1, int(self._config.rag_retrieval_timeout))
-        backend_label = getattr(self._retrieval, "backend_name", type(self._retrieval).__name__)
         t_vec0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run)
@@ -416,7 +437,7 @@ class RagQueryService:
             fallback_reason=fb,
             retrieval_latency_ms=retrieval_ms,
             embedding_model=emb_model,
-            chroma_collection=RAG_CHROMA_COLLECTION_NAME,
+            chroma_collection=self._diagnostics_collection_label(),
             llm_provider=llm_prov,
             llm_model=llm_mod,
         ).emit_stdout()
@@ -459,7 +480,7 @@ class RagQueryService:
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
 
         emb_model = (self._config.openai_embedding_model or "").strip() or None
-        chroma_coll = RAG_CHROMA_COLLECTION_NAME
+        chroma_coll = self._diagnostics_collection_label()
         llm_prov = str(getattr(self._chat, "provider_label", "") or "").strip() or None
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
 

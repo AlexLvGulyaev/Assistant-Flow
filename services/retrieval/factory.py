@@ -2,8 +2,8 @@
 Фабрика retrieval backend по AppConfig.
 
 - chroma (по умолчанию): ChromaBackend + chroma_store.
-- faiss: secondary operational backend; embeddings + FAISS_INDEX_DIR (пустой каталог —
-  пустой индекс до operational indexer).
+- faiss: secondary operational backend; embeddings + FAISS_INDEX_DIR.
+- weaviate: tertiary operational backend; embeddings + WEAVIATE_* (BYOV vectors).
 """
 
 from __future__ import annotations
@@ -83,10 +83,26 @@ def build_retrieval_backend(
                 "Проверьте FAISS_INDEX_DIR, chunks.json и manifest."
             ) from exc
 
+    elif name == "weaviate":
+        if embeddings is None:
+            raise ValueError(
+                "RAG_BACKEND=weaviate: требуется передать embeddings=build_openai_embeddings(config). "
+                "Молчаливый fallback на Chroma не выполняется."
+            )
+        from services.retrieval.weaviate_backend import WeaviateBackend
+
+        try:
+            backend = WeaviateBackend(config=config, embeddings=embeddings)
+        except Exception as exc:
+            raise ValueError(
+                "RAG_BACKEND=weaviate: не удалось подключиться к Weaviate или создать схему: "
+                f"{type(exc).__name__}: {exc}. Проверьте WEAVIATE_HOST / WEAVIATE_URL и compose."
+            ) from exc
+
     else:
         raise ValueError(
             f"RAG_BACKEND={name!r}: неподдерживаемый retrieval backend. "
-            f"Допустимо: chroma (по умолчанию), faiss (демо/курс, явный выбор)."
+            f"Допустимо: chroma (по умолчанию), faiss, weaviate."
         )
 
     if getattr(config, "enable_retrieval_cache", False):

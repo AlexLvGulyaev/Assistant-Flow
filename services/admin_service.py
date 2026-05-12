@@ -20,9 +20,10 @@ from services.asset_repository import AssetNotFoundError, AssetValidationError
 from services.asset_repository_factory import create_asset_repository
 from services.async_job_service import AsyncJob, AsyncJobService
 from services.audio_browser_preview import ensure_mp3_browser_preview, needs_browser_mp3_preview
+from providers.rag_embeddings import build_openai_embeddings
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
-from services.retrieval.faiss_backend import count_faiss_chunks_on_disk, resolve_faiss_index_dir
+from services.retrieval.weaviate_backend import weaviate_collection_count_best_effort
 from services.retrieval.factory import normalize_rag_backend
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
@@ -383,10 +384,16 @@ class AdminService:
         return dest
 
     def get_collection_count(self) -> int:
-        """Chunk count in the active vector index (Chroma or FAISS), same semantics as CLI /stats."""
-        if normalize_rag_backend(self._config.rag_backend) == "faiss":
+        """Chunk count in the active vector index (Chroma, FAISS, or Weaviate), same semantics as CLI /stats."""
+        rb = normalize_rag_backend(self._config.rag_backend)
+        if rb == "faiss":
             idx = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
             return count_faiss_chunks_on_disk(idx)
+        if rb == "weaviate":
+            embeddings = build_openai_embeddings(self._config)
+            return weaviate_collection_count_best_effort(
+                self._config, embeddings=embeddings
+            )
         return count_chroma_chunks(self._config, persist_path=self._chroma_dir)
 
     def get_knowledge_base_status(self) -> KnowledgeBaseStatus:

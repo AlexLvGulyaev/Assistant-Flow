@@ -10,6 +10,7 @@
 #   8001  — Chroma HTTP (8001 снаружи → 8000 в контейнере; меньше конфликтов с другими Chroma)
 #   8600  — FastAPI Admin API
 #   8080  — React admin UI (статика через nginx после vite build в образе)
+#   8089  — Weaviate HTTP (хост → 8080 в контейнере weaviate; не пересекается с admin-ui)
 #
 # PostgreSQL: при первом создании volume автоматически выполняются SQL из
 # docker-entrypoint-initdb.d (schema + async_jobs). Если volume уже был без
@@ -46,6 +47,33 @@ services:
     volumes:
       - portfolio_chroma_data:/data
     # Образ может не содержать инструментов для Docker healthcheck — как в server compose.
+
+  weaviate:
+    image: semitechnologies/weaviate:1.27.0
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --scheme
+      - http
+    environment:
+      QUERY_DEFAULTS_LIMIT: "100"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: "node1"
+    ports:
+      - "8089:8080"
+    volumes:
+      - portfolio_weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
 
   assistant-flow:
     build:
@@ -102,3 +130,4 @@ services:
 volumes:
   portfolio_pg_data:
   portfolio_chroma_data:
+  portfolio_weaviate_data:

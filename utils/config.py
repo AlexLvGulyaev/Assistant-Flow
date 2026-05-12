@@ -71,6 +71,12 @@ class AppConfig:
     answer_cache_ttl_seconds: int = 86_400
     # Изолированное хранилище FAISS (не Chroma, не PostgreSQL lifecycle).
     faiss_index_dir: str = "storage/faiss"
+    # P6.9: Weaviate (local / compose); vectors supplied by AF (OpenAI embeddings), not server vectorizer.
+    weaviate_url: str = ""
+    weaviate_host: str = "weaviate"
+    weaviate_http_port: int = 8080
+    weaviate_grpc_port: int = 50051
+    weaviate_class_name: str = "AssistantFlowChunk"
     asset_storage_backend: str = "filesystem"
     asset_storage_dir: str = "/app/storage/assets"
     audio_enabled: bool = True
@@ -190,6 +196,13 @@ def load_config() -> AppConfig:
         answer_cache_ttl_seconds=_int_env("ANSWER_CACHE_TTL_SECONDS", 86_400),
         faiss_index_dir=(
             (os.getenv("FAISS_INDEX_DIR") or "").strip() or "storage/faiss"
+        ),
+        weaviate_url=(os.getenv("WEAVIATE_URL") or "").strip(),
+        weaviate_host=(os.getenv("WEAVIATE_HOST") or "weaviate").strip() or "weaviate",
+        weaviate_http_port=_int_env("WEAVIATE_HTTP_PORT", 8080),
+        weaviate_grpc_port=_int_env("WEAVIATE_GRPC_PORT", 50051),
+        weaviate_class_name=(
+            (os.getenv("WEAVIATE_CLASS_NAME") or "").strip() or "AssistantFlowChunk"
         ),
         asset_storage_backend=(
             os.getenv("ASSET_STORAGE_BACKEND", "filesystem").strip().lower()

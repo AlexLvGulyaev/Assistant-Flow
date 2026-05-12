@@ -29,6 +29,7 @@ from services.retrieval.faiss_backend import (
     resolve_faiss_index_dir,
 )
 from services.retrieval.factory import normalize_rag_backend
+from services.retrieval.weaviate_backend import WEAVIATE_PG_COLLECTION_LABEL, WeaviateBackend
 from utils.config import AppConfig
 
 
@@ -149,8 +150,11 @@ class AdminKnowledgeIndexer:
         self._doc_repo = DocumentRepository()
 
     def _vector_collection_label(self) -> str:
-        if normalize_rag_backend(self._config.rag_backend) == "faiss":
+        rb = normalize_rag_backend(self._config.rag_backend)
+        if rb == "faiss":
             return FAISS_PG_COLLECTION_LABEL
+        if rb == "weaviate":
+            return WEAVIATE_PG_COLLECTION_LABEL
         return RAG_CHROMA_COLLECTION_NAME
 
     def _open_retrieval_backend(
@@ -182,6 +186,25 @@ class AdminKnowledgeIndexer:
                     flush=True,
                 )
             return backend
+
+        if rb == "weaviate":
+            backend_w: RetrievalBackend = WeaviateBackend(
+                config=self._config,
+                embeddings=embeddings,
+            )
+            if reindex:
+                print(
+                    "[assistant-flow] vector_write_started retrieval_backend=weaviate "
+                    f"phase=full_reset class={self._config.weaviate_class_name}",
+                    flush=True,
+                )
+                backend_w.reset_for_full_reindex()
+                print(
+                    "[assistant-flow] vector_write_done retrieval_backend=weaviate "
+                    "phase=full_reset",
+                    flush=True,
+                )
+            return backend_w
 
         if not self._config.chroma_use_http:
             self._chroma_dir.mkdir(parents=True, exist_ok=True)
@@ -249,11 +272,17 @@ class AdminKnowledgeIndexer:
             vector_n = int(vector_backend.collection_count())
             mf = getattr(vector_backend, "manifest_path", None)
             mf_s = str(mf) if mf is not None else "—"
+            extra = f" manifest_path={mf_s}" if rb == "faiss" else ""
+            if rb == "weaviate":
+                extra = f" class={self._config.weaviate_class_name!r}"
             print(
-                f"[assistant-flow] faiss: vector_index count after index run: {vector_n} "
-                f"manifest_path={mf_s}",
+                f"[assistant-flow] vector_index: backend={rb} count_after_run={vector_n}{extra}",
                 flush=True,
             )
+
+        closer = getattr(vector_backend, "close", None)
+        if callable(closer):
+            closer()
 
         return AdminIndexReport(
             files_found=len(files),
@@ -344,6 +373,56 @@ class AdminKnowledgeIndexer:
                 )
             return last_for_target
 
+        if rb == "weaviate":
+            vector_backend_w: RetrievalBackend = WeaviateBackend(
+                config=self._config,
+                embeddings=embeddings,
+            )
+            print(
+                "[assistant-flow] vector_write_started retrieval_backend=weaviate "
+                "mode=single_file_full_corpus_rebuild "
+                f"class={self._config.weaviate_class_name}",
+                flush=True,
+            )
+            try:
+                vector_backend_w.reset_for_full_reindex()
+            except Exception as exc:
+                print(
+                    "[assistant-flow] vector_write_error retrieval_backend=weaviate "
+                    f"phase=full_reset error={type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                return FileIndexOutcome(
+                    path=resolved,
+                    chunks=0,
+                    error=f"vector_store reset: {exc}",
+                )
+            target_resolved = resolved.resolve()
+            last_for_target_w: FileIndexOutcome | None = None
+            for fp in iter_supported_files(self._documents_dir):
+                outcome = self._index_one_file(
+                    file_path=fp,
+                    vector_backend=vector_backend_w,
+                )
+                if fp.resolve() == target_resolved:
+                    last_for_target_w = outcome
+            print(
+                "[assistant-flow] vector_write_done retrieval_backend=weaviate "
+                f"vector_count={vector_backend_w.collection_count()}",
+                flush=True,
+            )
+            try:
+                vector_backend_w.close()
+            except Exception:
+                pass
+            if last_for_target_w is None:
+                return FileIndexOutcome(
+                    path=resolved,
+                    chunks=0,
+                    error="file not found in supported corpus iterator",
+                )
+            return last_for_target_w
+
         if not self._config.chroma_use_http:
             self._chroma_dir.mkdir(parents=True, exist_ok=True)
 
@@ -370,6 +449,9 @@ class AdminKnowledgeIndexer:
         if rb == "faiss":
             idx_path = str(getattr(vector_backend, "index_dir", "") or "")
             mf_path = str(getattr(vector_backend, "manifest_path", "") or "")
+        elif rb == "weaviate":
+            idx_path = f"weaviate:{self._config.weaviate_class_name}"
+            mf_path = ""
 
         try:
             suffix = file_path.suffix.lower()

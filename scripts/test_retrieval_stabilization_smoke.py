@@ -15,6 +15,7 @@ P6.2b: лёгкий smoke контракта retrieval (без pytest).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -118,6 +119,7 @@ def main() -> int:
         from services.rag_chroma_store import ChromaRagStore
         from services.retrieval.chroma_backend import ChromaBackend
         from services.retrieval.faiss_backend import VECTORS_FILENAME, FaissBackend, resolve_faiss_index_dir
+        from services.retrieval.factory import normalize_rag_backend
     except ImportError as exc:
         print(f"[stabilization] chroma/real_faiss SKIP: {exc}", flush=True)
         if all_failed:
@@ -161,6 +163,52 @@ def main() -> int:
             )
     except Exception as exc:
         print(f"[stabilization] faiss_config_dir SKIP: {type(exc).__name__}: {exc}", flush=True)
+
+    if normalize_rag_backend(config.rag_backend) == "weaviate":
+        try:
+            import uuid
+            from dataclasses import replace
+
+            from langchain_core.documents import Document
+
+            from services.retrieval.weaviate_backend import WeaviateBackend
+
+            wcfg = replace(
+                config,
+                weaviate_class_name=(
+                    (os.getenv("WEAVIATE_STABILIZATION_CLASS_NAME") or "").strip()
+                    or "AssistantFlowStabilizationSmoke"
+                ),
+            )
+            wb = WeaviateBackend(config=wcfg, embeddings=embeddings)
+            wb.reset_for_full_reindex()
+            wb.add_documents(
+                [
+                    Document(
+                        page_content=_QUERY + " stabilization weaviate corpus line.",
+                        metadata={
+                            "source": "stabilization_weaviate.txt",
+                            "chunk_id": "stab-w-1",
+                            "document_id": str(uuid.uuid4()),
+                            "document_version_id": str(uuid.uuid4()),
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                        },
+                    )
+                ]
+            )
+            wr = wb.search(_QUERY, top_k=_TOP_K)
+            all_failed.extend(_validate_block("weaviate_active_config", wb.backend_name, wr))
+            print(
+                f"[stabilization] weaviate backend={wb.backend_name!r} n_results={len(wr)}",
+                flush=True,
+            )
+            wb.close()
+        except Exception as exc:
+            print(
+                f"[stabilization] weaviate SKIP: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     if all_failed:
         print("FAIL:", file=sys.stderr)

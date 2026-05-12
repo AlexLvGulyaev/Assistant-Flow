@@ -18,7 +18,6 @@ from providers.gigachat_provider import GigaChatProvider
 from providers.openai_stt_provider import OpenAISTTProvider
 from providers.openai_tts_provider import OpenAITTSProvider
 from providers.openai_chat_provider import OpenAIChatProvider
-from providers.rag_embeddings import build_openai_embeddings
 from providers.stt_provider import DisabledSTTProvider, STTProvider
 from providers.tts_provider import DisabledTTSProvider, TTSProvider
 from services.audio_pipeline_service import (
@@ -30,8 +29,7 @@ from services.gigachat_service import GigaChatService
 from services.image_generation_service import ImageGenerationService
 from services.asset_repository import AssetRef, AssetRepository
 from services.asset_repository_factory import create_asset_repository
-from services.rag_chroma_store import ChromaRagStore, count_chroma_chunks
-from services.retrieval.factory import build_retrieval_backend
+from services.rag_chroma_store import count_chroma_chunks
 from services.rag_query_service import RagQueryService
 from services.rag_types import RagQueryResult
 from services.runtime_lifecycle_service import (
@@ -117,18 +115,13 @@ def build_orchestrator() -> PromptOrchestrator:
 
 def build_rag_query_service(config: AppConfig) -> RagQueryService:
     chroma_dir = _resolve_project_path(config, config.chroma_persist_dir)
-    embeddings = build_openai_embeddings(config)
-    store = ChromaRagStore(
+    manager = RetrievalBackendManager(
         config,
-        embeddings,
-        persist_directory=chroma_dir,
+        project_root=_project_root(),
+        chroma_persist_directory=chroma_dir,
     )
     try:
-        retrieval = build_retrieval_backend(
-            config,
-            chroma_store=store,
-            embeddings=embeddings,
-        )
+        retrieval = manager.get_retrieval()
         health = retrieval.healthcheck()
         idx = getattr(retrieval, "index_dir", None)
         path_note = f" index_dir={idx}" if idx is not None else ""
@@ -154,7 +147,7 @@ def build_rag_query_service(config: AppConfig) -> RagQueryService:
         )
         raise
     chat = OpenAIChatProvider(config)
-    return RagQueryService(retrieval, chat, config)
+    return RagQueryService(manager, chat, config)
 
 
 def _log_system_degraded(

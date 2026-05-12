@@ -61,6 +61,26 @@ def count_faiss_chunks_on_disk(index_dir: Path) -> int:
         return 0
 
 
+def faiss_disk_fingerprint(index_dir: Path) -> tuple[int, int, int]:
+    """
+    Mtime nanoseconds для manifest / chunks / vectors (0 если файл отсутствует).
+    Используется RetrievalBackendManager для обнаружения external reindex без restart.
+    """
+    base = Path(index_dir).resolve()
+
+    def _mt(p: Path) -> int:
+        try:
+            return int(p.stat().st_mtime_ns)
+        except OSError:
+            return 0
+
+    return (
+        _mt(base / MANIFEST_FILENAME),
+        _mt(base / CHUNKS_FILENAME),
+        _mt(base / VECTORS_FILENAME),
+    )
+
+
 def _flatten_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     """JSON-serializable metadata (str/int/float/bool; остальное → str)."""
     out: dict[str, Any] = {}
