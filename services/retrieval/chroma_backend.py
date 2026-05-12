@@ -6,6 +6,7 @@ Scores — нативная семантика Chroma (distance); см. Retrieva
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from services.retrieval.base import (
@@ -35,6 +36,29 @@ class ChromaBackend:
 
     def collection_count(self) -> int:
         return int(self._store.collection_count())
+
+    def reset_for_full_reindex(self) -> None:
+        from services.rag_chroma_store import reset_chroma_for_reindex
+
+        reset_chroma_for_reindex(
+            self._store.app_config,
+            persist_directory=self._store.persist_directory,
+        )
+        self._store.refresh_client_and_collection()
+
+    def add_documents(self, documents: list[Any]) -> list[str]:
+        return list(self._store.add_documents(documents))
+
+    def delete_vectors_for_document_before_reindex(
+        self,
+        *,
+        document_id: uuid.UUID | None,
+        source_filename: str,
+    ) -> None:
+        self._store.delete_vectors_for_document_before_reindex(
+            document_id=document_id,
+            source_filename=source_filename,
+        )
 
     def search(
         self,

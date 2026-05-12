@@ -1,4 +1,4 @@
-"""Admin UI / tooling: documents listing, Chroma status, reindex, PostgreSQL logs."""
+"""Admin UI / tooling: documents listing, vector index status, reindex, PostgreSQL logs."""
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ from services.async_job_service import AsyncJob, AsyncJobService
 from services.audio_browser_preview import ensure_mp3_browser_preview, needs_browser_mp3_preview
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_document_loader import iter_supported_files
+from services.retrieval.faiss_backend import count_faiss_chunks_on_disk, resolve_faiss_index_dir
+from services.retrieval.factory import normalize_rag_backend
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
@@ -260,6 +262,8 @@ class KnowledgeBaseStatus:
     postgres_documents: int | None
     postgres_chunks_sum: int | None
     postgres_available: bool
+    active_retrieval_backend: str = "chroma"
+    vector_index_chunk_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -379,18 +383,24 @@ class AdminService:
         return dest
 
     def get_collection_count(self) -> int:
-        """Chroma collection chunk count (same helper as CLI /stats)."""
+        """Chunk count in the active vector index (Chroma or FAISS), same semantics as CLI /stats."""
+        if normalize_rag_backend(self._config.rag_backend) == "faiss":
+            idx = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+            return count_faiss_chunks_on_disk(idx)
         return count_chroma_chunks(self._config, persist_path=self._chroma_dir)
 
     def get_knowledge_base_status(self) -> KnowledgeBaseStatus:
-        chroma_n = self.get_collection_count()
+        vector_n = self.get_collection_count()
+        rb = normalize_rag_backend(self._config.rag_backend)
         db_url = (os.getenv("DATABASE_URL") or "").strip()
         if not db_url:
             return KnowledgeBaseStatus(
-                collection_count=chroma_n,
+                collection_count=vector_n,
                 postgres_documents=None,
                 postgres_chunks_sum=None,
                 postgres_available=False,
+                active_retrieval_backend=rb,
+                vector_index_chunk_count=vector_n,
             )
         try:
             with get_connection() as conn:
@@ -398,36 +408,48 @@ class AdminService:
                 chunk_sum = self._doc_repo.sum_version_chunk_counts(conn)
                 conn.commit()
             return KnowledgeBaseStatus(
-                collection_count=chroma_n,
+                collection_count=vector_n,
                 postgres_documents=doc_n,
                 postgres_chunks_sum=chunk_sum,
                 postgres_available=True,
+                active_retrieval_backend=rb,
+                vector_index_chunk_count=vector_n,
             )
         except Exception:
             return KnowledgeBaseStatus(
-                collection_count=chroma_n,
+                collection_count=vector_n,
                 postgres_documents=None,
                 postgres_chunks_sum=None,
                 postgres_available=False,
+                active_retrieval_backend=rb,
+                vector_index_chunk_count=vector_n,
             )
 
     def run_reindex(self) -> ReindexRunResult:
-        """Full Chroma reset + index from RAG_DOCUMENTS_DIR (same as admin CLI --reindex)."""
+        """Full vector index reset + index from RAG_DOCUMENTS_DIR (same as admin CLI --reindex)."""
         execution_id = str(uuid.uuid4())
+        rb = normalize_rag_backend(self._config.rag_backend)
         try:
             doc_count_started = len(iter_supported_files(self._documents_dir))
         except FileNotFoundError:
             doc_count_started = 0
+
+        started_details: dict[str, Any] = {
+            "documents_count": doc_count_started,
+            "chunks_count": 0,
+            "retrieval_backend": rb,
+        }
+        if rb == "faiss":
+            fdir = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+            started_details["backend_index_path"] = str(fdir)
+            started_details["manifest_path"] = str(fdir / "manifest.json")
 
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
             stage="admin_reindex_started",
             status="started",
-            details={
-                "documents_count": doc_count_started,
-                "chunks_count": 0,
-            },
+            details=started_details,
         )
 
         indexer = AdminKnowledgeIndexer(
@@ -448,6 +470,7 @@ class AdminService:
                 details={
                     "documents_count": doc_count_started,
                     "chunks_count": 0,
+                    "retrieval_backend": normalize_rag_backend(self._config.rag_backend),
                 },
                 error_text=err_text,
             )
@@ -473,10 +496,16 @@ class AdminService:
         elif report.errors:
             success = False
 
-        details_done = {
+        details_done: dict[str, Any] = {
             "documents_count": report.files_found,
-            "chunks_count": report.chroma_chunk_count,
+            "chunks_count": report.vector_index_chunk_count,
+            "retrieval_backend": rb,
+            "vector_count": report.vector_index_chunk_count,
         }
+        if rb == "faiss":
+            fdir = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+            details_done["backend_index_path"] = str(fdir)
+            details_done["manifest_path"] = str(fdir / "manifest.json")
         if success:
             self._lifecycle.log_processing_event(
                 execution_id=execution_id,
@@ -499,7 +528,7 @@ class AdminService:
             success=success,
             error_message=err_msg,
             chunks_created=report.chunks_created,
-            collection_count=report.chroma_chunk_count,
+            collection_count=report.vector_index_chunk_count,
             files_indexed_ok=report.files_indexed_ok,
             files_found=report.files_found,
             used_postgres=report.used_postgres,
@@ -876,16 +905,23 @@ class AdminService:
             return {"success": False, "error": "source file not found on disk"}
 
         execution_id = str(uuid.uuid4())
+        rb = normalize_rag_backend(self._config.rag_backend)
+        reindex_details: dict[str, Any] = {
+            "document_id": str(document_id),
+            "filename": source_fn or path.name,
+            "path": str(path),
+            "retrieval_backend": rb,
+        }
+        if rb == "faiss":
+            fdir = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+            reindex_details["backend_index_path"] = str(fdir)
+            reindex_details["manifest_path"] = str(fdir / "manifest.json")
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
             stage="admin_document_reindex_started",
             status="started",
-            details={
-                "document_id": str(document_id),
-                "filename": source_fn or path.name,
-                "path": str(path),
-            },
+            details=reindex_details,
         )
         indexer = AdminKnowledgeIndexer(
             self._config,
@@ -912,16 +948,23 @@ class AdminService:
                 "chunks": outcome.chunks,
                 "document_id": str(document_id),
             }
+        done_details: dict[str, Any] = {
+            "document_id": str(document_id),
+            "filename": source_fn or path.name,
+            "chunks": outcome.chunks,
+            "retrieval_backend": rb,
+            "vector_count": self.get_collection_count(),
+        }
+        if rb == "faiss":
+            fdir_done = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+            done_details["backend_index_path"] = str(fdir_done)
+            done_details["manifest_path"] = str(fdir_done / "manifest.json")
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
             stage="admin_document_reindex_done",
             status="success",
-            details={
-                "document_id": str(document_id),
-                "filename": source_fn or path.name,
-                "chunks": outcome.chunks,
-            },
+            details=done_details,
         )
         return {
             "success": True,

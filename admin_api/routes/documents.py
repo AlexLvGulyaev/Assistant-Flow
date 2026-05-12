@@ -101,11 +101,11 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
 
     kb = svc.get_knowledge_base_status()
     pg_sum = kb.postgres_chunks_sum
-    chroma_n = kb.collection_count
+    vector_n = kb.collection_count
     global_mismatch = (
         kb.postgres_available
         and pg_sum is not None
-        and pg_sum != chroma_n
+        and pg_sum != vector_n
     )
 
     return {
@@ -114,7 +114,9 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
         "items": items,
         "embedding_model": getattr(svc.app_config, "openai_embedding_model", None),
         "global_index_sync": {
-            "chroma_collection_chunks": chroma_n,
+            "chroma_collection_chunks": vector_n,
+            "vector_index_chunks": kb.vector_index_chunk_count or vector_n,
+            "active_retrieval_backend": kb.active_retrieval_backend,
             "postgres_chunks_sum_active_versions": pg_sum,
             "postgres_available": kb.postgres_available,
             "global_chunks_mismatch": global_mismatch,

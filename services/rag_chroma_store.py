@@ -242,6 +242,11 @@ class ChromaRagStore:
         )
         self._collection = _get_or_create_collection(self._client, collection_name)
 
+    @property
+    def app_config(self) -> AppConfig:
+        """Конфиг приложения (для ChromaBackend / reset без дублирования параметров)."""
+        return self._config
+
     def refresh_client_and_collection(self) -> None:
         """Recreate Chroma client and collection handle (e.g. after external reindex)."""
         self._client = chromadb_client_for_config(

@@ -258,6 +258,8 @@ export interface DocumentsObservability {
 
 export interface DocumentsGlobalIndexSync {
   chroma_collection_chunks?: number;
+  vector_index_chunks?: number;
+  active_retrieval_backend?: string;
   postgres_chunks_sum_active_versions?: number | null;
   postgres_available?: boolean;
   global_chunks_mismatch?: boolean;

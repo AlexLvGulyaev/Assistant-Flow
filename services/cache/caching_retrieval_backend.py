@@ -8,6 +8,7 @@ Hybrid memory context сюда не попадает (только vector retrie
 from __future__ import annotations
 
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from services.cache.base import CacheNamespaces
@@ -20,6 +21,7 @@ from services.cache.retrieval_serializers import (
     serialize_search_results,
 )
 from services.cache.sqlite_cache import get_sqlite_cache_store
+from services.cache.invalidate import invalidate_retrieval_cache
 from services.retrieval.base import RetrievalBackend, RetrievalHealth, RetrievalSearchResult
 from services.retrieval_security.context import RetrievalSecurityContext
 
@@ -46,6 +48,30 @@ class CachingRetrievalBackend:
 
     def collection_count(self) -> int:
         return int(self._inner.collection_count())
+
+    def reset_for_full_reindex(self) -> None:
+        self._inner.reset_for_full_reindex()
+        if self._config.enable_retrieval_cache:
+            invalidate_retrieval_cache("retrieval_backend_reset_for_full_reindex")
+
+    def add_documents(self, documents: list[Any]) -> list[str]:
+        ids = list(self._inner.add_documents(documents))
+        if self._config.enable_retrieval_cache and ids:
+            invalidate_retrieval_cache("retrieval_backend_add_documents")
+        return ids
+
+    def delete_vectors_for_document_before_reindex(
+        self,
+        *,
+        document_id: uuid.UUID | None,
+        source_filename: str,
+    ) -> None:
+        self._inner.delete_vectors_for_document_before_reindex(
+            document_id=document_id,
+            source_filename=source_filename,
+        )
+        if self._config.enable_retrieval_cache:
+            invalidate_retrieval_cache("retrieval_backend_delete_vectors")
 
     def search(
         self,

@@ -94,17 +94,17 @@ def main() -> int:
             failed.append("faiss без embeddings: ожидалось упоминание embeddings")
 
     empty_faiss = tempfile.mkdtemp(prefix="af_faiss_empty_")
-    try:
-        build_retrieval_backend(
-            _minimal_app_config(rag_backend="faiss", faiss_index_dir=empty_faiss),
-            chroma_store=None,
-            embeddings=MagicMock(),
-        )
-        failed.append("faiss без vectors.faiss должен raise ValueError")
-    except ValueError as e:
-        msg = str(e).lower()
-        if "faiss" not in msg and "индекс" not in msg:
-            failed.append("faiss без индекса: ожидалось понятное сообщение")
+    emb = MagicMock()
+    emb.embed_query.return_value = [0.0] * 4
+    b_faiss = build_retrieval_backend(
+        _minimal_app_config(rag_backend="faiss", faiss_index_dir=empty_faiss),
+        chroma_store=None,
+        embeddings=emb,
+    )
+    if getattr(b_faiss, "backend_name", None) != "faiss":
+        failed.append("faiss без vectors.faiss → backend_name=faiss (пустой operational индекс)")
+    if b_faiss.collection_count() != 0:
+        failed.append("faiss пустой индекс: collection_count должен быть 0")
 
     try:
         build_retrieval_backend(_minimal_app_config(rag_backend="unknown_xyz"), chroma_store=store)

@@ -44,6 +44,7 @@ def main() -> int:
     from providers.openai_chat_provider import OpenAIChatProvider
     from providers.rag_embeddings import build_openai_embeddings
     from services.rag_chroma_store import ChromaRagStore, reset_chroma_for_reindex
+    from services.retrieval.chroma_backend import ChromaBackend
     from services.retrieval.factory import build_retrieval_backend
     from services.rag_document_loader import load_and_split_directory
     from services.rag_local_indexer import LocalRagIndexer
@@ -84,7 +85,7 @@ def main() -> int:
             embeddings,
             persist_directory=chroma_dir,
         )
-        indexer = LocalRagIndexer(config, store)
+        indexer = LocalRagIndexer(config, ChromaBackend(store))
         n = indexer.index_documents_dir(docs_dir)
         c = store.collection_count()
         return n, c, store

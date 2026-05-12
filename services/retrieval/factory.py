@@ -2,7 +2,8 @@
 Фабрика retrieval backend по AppConfig.
 
 - chroma (по умолчанию): ChromaBackend + chroma_store.
-- faiss: явный демо-контур; требует embeddings и готовый индекс под FAISS_INDEX_DIR.
+- faiss: secondary operational backend; embeddings + FAISS_INDEX_DIR (пустой каталог —
+  пустой индекс до operational indexer).
 """
 
 from __future__ import annotations
@@ -34,8 +35,8 @@ def build_retrieval_backend(
     Собирает RetrievalBackend для runtime RAG.
 
     Raises:
-        ValueError: неподдерживаемый RAG_BACKEND, отсутствуют обязательные аргументы,
-            нет FAISS-индекса при RAG_BACKEND=faiss (без молчаливого fallback на Chroma).
+        ValueError: неподдерживаемый RAG_BACKEND, отсутствуют обязательные аргументы
+            (без молчаливого fallback на Chroma).
     """
     name = normalize_rag_backend(config.rag_backend)
     backend: RetrievalBackend
@@ -67,19 +68,19 @@ def build_retrieval_backend(
         project_root = Path(__file__).resolve().parents[2]
         index_dir = resolve_faiss_index_dir(config, project_root=project_root)
         vec_file = index_dir / VECTORS_FILENAME
-        if not vec_file.is_file():
-            raise ValueError(
-                "RAG_BACKEND=faiss: индекс не найден — отсутствует файл "
-                f"{vec_file}. Укажите FAISS_INDEX_DIR или соберите индекс: "
-                "python scripts/build_faiss_demo_index.py. Fallback на Chroma не выполняется."
-            )
+        allow_empty = not vec_file.is_file()
         try:
-            backend = FaissBackend(index_dir=index_dir, embeddings=embeddings)
+            backend = FaissBackend(
+                index_dir=index_dir,
+                embeddings=embeddings,
+                app_config=config,
+                allow_empty=allow_empty,
+            )
         except Exception as exc:
             raise ValueError(
-                "RAG_BACKEND=faiss: не удалось загрузить FAISS-индекс "
-                f"из {index_dir}: {type(exc).__name__}: {exc}. "
-                "Проверьте chunks.json и manifest; пересоберите демо-индекс при необходимости."
+                "RAG_BACKEND=faiss: не удалось инициализировать FAISS backend "
+                f"в {index_dir}: {type(exc).__name__}: {exc}. "
+                "Проверьте FAISS_INDEX_DIR, chunks.json и manifest."
             ) from exc
 
     else:

@@ -1,4 +1,4 @@
-"""Admin-only: index files from disk into Chroma and optionally record metadata in PostgreSQL."""
+"""Admin-only: index files from disk into active retrieval backend (Chroma default, FAISS optional)."""
 
 from __future__ import annotations
 
@@ -19,9 +19,16 @@ from services.rag_chroma_store import (
     ChromaRagStore,
     RAG_CHROMA_COLLECTION_NAME,
     count_chroma_chunks,
-    reset_chroma_for_reindex,
 )
 from services.rag_document_loader import iter_supported_files, load_and_split_file
+from services.retrieval.base import RetrievalBackend
+from services.retrieval.chroma_backend import ChromaBackend
+from services.retrieval.faiss_backend import (
+    FAISS_PG_COLLECTION_LABEL,
+    FaissBackend,
+    resolve_faiss_index_dir,
+)
+from services.retrieval.factory import normalize_rag_backend
 from utils.config import AppConfig
 
 
@@ -116,6 +123,8 @@ class AdminIndexReport:
     files_indexed_ok: int
     chunks_created: int
     chroma_chunk_count: int
+    """Совместимость UI: число чанков в активном vector index (Chroma или FAISS)."""
+    vector_index_chunk_count: int
     used_postgres: bool
     outcomes: list[FileIndexOutcome] = field(default_factory=list)
 
@@ -139,27 +148,78 @@ class AdminKnowledgeIndexer:
         self._use_postgres = use_postgres
         self._doc_repo = DocumentRepository()
 
-    def run(self, *, reindex: bool) -> AdminIndexReport:
-        files = iter_supported_files(self._documents_dir)
-        outcomes: list[FileIndexOutcome] = []
+    def _vector_collection_label(self) -> str:
+        if normalize_rag_backend(self._config.rag_backend) == "faiss":
+            return FAISS_PG_COLLECTION_LABEL
+        return RAG_CHROMA_COLLECTION_NAME
 
-        if reindex:
-            reset_chroma_for_reindex(
-                self._config,
-                persist_directory=self._chroma_dir,
+    def _open_retrieval_backend(
+        self, embeddings, *, reindex: bool
+    ) -> RetrievalBackend:
+        rb = normalize_rag_backend(self._config.rag_backend)
+        if rb == "faiss":
+            project_root = Path(__file__).resolve().parents[1]
+            index_dir = resolve_faiss_index_dir(
+                self._config, project_root=project_root
             )
+            index_dir.mkdir(parents=True, exist_ok=True)
+            backend: RetrievalBackend = FaissBackend(
+                index_dir=index_dir,
+                embeddings=embeddings,
+                app_config=self._config,
+                allow_empty=True,
+            )
+            if reindex:
+                print(
+                    "[assistant-flow] vector_write_started retrieval_backend=faiss "
+                    f"phase=full_reset backend_index_path={index_dir}",
+                    flush=True,
+                )
+                backend.reset_for_full_reindex()
+                print(
+                    "[assistant-flow] vector_write_done retrieval_backend=faiss "
+                    "phase=full_reset",
+                    flush=True,
+                )
+            return backend
+
         if not self._config.chroma_use_http:
             self._chroma_dir.mkdir(parents=True, exist_ok=True)
-
-        database_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
-        pg_active = self._use_postgres and database_url_set
-
-        embeddings = build_openai_embeddings(self._config)
         store = ChromaRagStore(
             self._config,
             embeddings,
             persist_directory=self._chroma_dir,
         )
+        chroma_backend: RetrievalBackend = ChromaBackend(store)
+        if reindex:
+            print(
+                "[assistant-flow] vector_write_started retrieval_backend=chroma "
+                f"phase=full_reset persist_directory={self._chroma_dir}",
+                flush=True,
+            )
+            chroma_backend.reset_for_full_reindex()
+            print(
+                "[assistant-flow] vector_write_done retrieval_backend=chroma "
+                "phase=full_reset",
+                flush=True,
+            )
+        return chroma_backend
+
+    def run(self, *, reindex: bool) -> AdminIndexReport:
+        files = list(iter_supported_files(self._documents_dir))
+        outcomes: list[FileIndexOutcome] = []
+
+        database_url_set = bool((os.getenv("DATABASE_URL") or "").strip())
+        pg_active = self._use_postgres and database_url_set
+
+        embeddings = build_openai_embeddings(self._config)
+        rb = normalize_rag_backend(self._config.rag_backend)
+        print(
+            f"[assistant-flow] indexer: retrieval_backend={rb} reindex={reindex} "
+            f"files_found={len(files)}",
+            flush=True,
+        )
+        vector_backend = self._open_retrieval_backend(embeddings, reindex=reindex)
 
         chunks_total = 0
         ok_files = 0
@@ -167,7 +227,7 @@ class AdminKnowledgeIndexer:
         for file_path in files:
             outcome = self._index_one_file(
                 file_path=file_path,
-                store=store,
+                vector_backend=vector_backend,
             )
             outcomes.append(outcome)
             if outcome.error:
@@ -175,21 +235,32 @@ class AdminKnowledgeIndexer:
             ok_files += 1
             chunks_total += outcome.chunks
 
-        chroma_n = count_chroma_chunks(
-            self._config,
-            persist_path=self._chroma_dir,
-        )
-        print(
-            f"[assistant-flow] chroma: collection {RAG_CHROMA_COLLECTION_NAME!r} "
-            f"count after index run: {chroma_n}",
-            flush=True,
-        )
+        if rb == "chroma":
+            vector_n = count_chroma_chunks(
+                self._config,
+                persist_path=self._chroma_dir,
+            )
+            print(
+                f"[assistant-flow] chroma: collection {RAG_CHROMA_COLLECTION_NAME!r} "
+                f"count after index run: {vector_n}",
+                flush=True,
+            )
+        else:
+            vector_n = int(vector_backend.collection_count())
+            mf = getattr(vector_backend, "manifest_path", None)
+            mf_s = str(mf) if mf is not None else "—"
+            print(
+                f"[assistant-flow] faiss: vector_index count after index run: {vector_n} "
+                f"manifest_path={mf_s}",
+                flush=True,
+            )
 
         return AdminIndexReport(
             files_found=len(files),
             files_indexed_ok=ok_files,
             chunks_created=chunks_total,
-            chroma_chunk_count=chroma_n,
+            chroma_chunk_count=vector_n,
+            vector_index_chunk_count=vector_n,
             used_postgres=pg_active,
             outcomes=outcomes,
         )
@@ -217,26 +288,88 @@ class AdminKnowledgeIndexer:
         if not resolved.is_file():
             return FileIndexOutcome(path=resolved, chunks=0, error="not a file")
 
+        embeddings = build_openai_embeddings(self._config)
+        rb = normalize_rag_backend(self._config.rag_backend)
+
+        if rb == "faiss":
+            project_root = Path(__file__).resolve().parents[1]
+            index_dir = resolve_faiss_index_dir(
+                self._config, project_root=project_root
+            )
+            index_dir.mkdir(parents=True, exist_ok=True)
+            vector_backend: RetrievalBackend = FaissBackend(
+                index_dir=index_dir,
+                embeddings=embeddings,
+                app_config=self._config,
+                allow_empty=True,
+            )
+            print(
+                "[assistant-flow] vector_write_started retrieval_backend=faiss "
+                "mode=single_file_full_corpus_rebuild "
+                f"backend_index_path={index_dir}",
+                flush=True,
+            )
+            try:
+                vector_backend.reset_for_full_reindex()
+            except Exception as exc:
+                print(
+                    "[assistant-flow] vector_write_error retrieval_backend=faiss "
+                    f"phase=full_reset error={type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                return FileIndexOutcome(
+                    path=resolved,
+                    chunks=0,
+                    error=f"vector_store reset: {exc}",
+                )
+            target_resolved = resolved.resolve()
+            last_for_target: FileIndexOutcome | None = None
+            for fp in iter_supported_files(self._documents_dir):
+                outcome = self._index_one_file(
+                    file_path=fp,
+                    vector_backend=vector_backend,
+                )
+                if fp.resolve() == target_resolved:
+                    last_for_target = outcome
+            print(
+                "[assistant-flow] vector_write_done retrieval_backend=faiss "
+                f"vector_count={vector_backend.collection_count()}",
+                flush=True,
+            )
+            if last_for_target is None:
+                return FileIndexOutcome(
+                    path=resolved,
+                    chunks=0,
+                    error="file not found in supported corpus iterator",
+                )
+            return last_for_target
+
         if not self._config.chroma_use_http:
             self._chroma_dir.mkdir(parents=True, exist_ok=True)
 
-        embeddings = build_openai_embeddings(self._config)
         store = ChromaRagStore(
             self._config,
             embeddings,
             persist_directory=self._chroma_dir,
         )
-        return self._index_one_file(file_path=resolved, store=store)
+        chroma_b = ChromaBackend(store)
+        return self._index_one_file(file_path=resolved, vector_backend=chroma_b)
 
     def _index_one_file(
         self,
         *,
         file_path: Path,
-        store: ChromaRagStore,
+        vector_backend: RetrievalBackend,
     ) -> FileIndexOutcome:
         abs_path = str(file_path.resolve())
         title = file_path.stem
         source_filename = file_path.name
+        rb = normalize_rag_backend(self._config.rag_backend)
+        idx_path = ""
+        mf_path = ""
+        if rb == "faiss":
+            idx_path = str(getattr(vector_backend, "index_dir", "") or "")
+            mf_path = str(getattr(vector_backend, "manifest_path", "") or "")
 
         try:
             suffix = file_path.suffix.lower()
@@ -303,12 +436,31 @@ class AdminKnowledgeIndexer:
         chunks = self._attach_chroma_metadata(raw_chunks, doc_id, ver_id)
 
         try:
-            store.delete_vectors_for_document_before_reindex(
+            print(
+                "[assistant-flow] vector_write_started "
+                f"retrieval_backend={rb} file={source_filename!r} "
+                f"backend_index_path={idx_path or '—'} manifest_path={mf_path or '—'}",
+                flush=True,
+            )
+            vector_backend.delete_vectors_for_document_before_reindex(
                 document_id=doc_id,
                 source_filename=source_filename,
             )
-            chroma_ids = store.add_documents(chunks)
+            vector_ids = vector_backend.add_documents(chunks)
+            print(
+                "[assistant-flow] vector_write_done "
+                f"retrieval_backend={rb} file={source_filename!r} "
+                f"vector_count={vector_backend.collection_count()} "
+                f"chunks_added={len(chunks)}",
+                flush=True,
+            )
         except Exception as exc:
+            print(
+                "[assistant-flow] vector_write_error "
+                f"retrieval_backend={rb} file={source_filename!r} "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
             if pg_enabled and doc_id and ver_id and job_id:
                 self._postgres_fail(job_id, doc_id, str(exc))
             return FileIndexOutcome(
@@ -317,7 +469,7 @@ class AdminKnowledgeIndexer:
                 document_id=doc_id,
                 version_id=ver_id,
                 job_id=job_id,
-                error=f"chroma: {exc}",
+                error=f"vector_store: {exc}",
             )
 
         if pg_enabled and doc_id and ver_id and job_id:
@@ -326,7 +478,7 @@ class AdminKnowledgeIndexer:
                     document_id=doc_id,
                     version_id=ver_id,
                     lc_chunks=chunks,
-                    chroma_ids=chroma_ids,
+                    vector_ids=vector_ids,
                 )
             except Exception as exc:
                 err_text = f"postgres chunk metadata: {exc}"
@@ -355,7 +507,7 @@ class AdminKnowledgeIndexer:
                     document_id=doc_id,
                     version_id=ver_id,
                     job_id=job_id,
-                    error=f"postgres finalize: {exc} (chroma already updated)",
+                    error=f"postgres finalize: {exc} (vector index already updated)",
                 )
             _log_doc_index_event(
                 phase="postgres_finalize",
@@ -380,17 +532,17 @@ class AdminKnowledgeIndexer:
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         lc_chunks: list[Document],
-        chroma_ids: list[str],
+        vector_ids: list[str],
     ) -> None:
-        """Persist per-chunk rows for admin UI / RAG diagnostics (vectors stay in Chroma)."""
-        if len(lc_chunks) != len(chroma_ids):
+        """Persist per-chunk rows for admin UI / RAG diagnostics (vectors in active backend)."""
+        if len(lc_chunks) != len(vector_ids):
             raise RuntimeError(
-                f"chroma id count mismatch: chunks={len(lc_chunks)} ids={len(chroma_ids)}"
+                f"vector id count mismatch: chunks={len(lc_chunks)} ids={len(vector_ids)}"
             )
-        collection = RAG_CHROMA_COLLECTION_NAME
+        collection = self._vector_collection_label()
         with get_connection() as conn:
             with conn.transaction():
-                for i, (doc, cid) in enumerate(zip(lc_chunks, chroma_ids)):
+                for i, (doc, cid) in enumerate(zip(lc_chunks, vector_ids)):
                     text = doc.page_content or ""
                     preview = text[:4000] if len(text) > 4000 else text
                     self._doc_repo.insert_document_chunk(

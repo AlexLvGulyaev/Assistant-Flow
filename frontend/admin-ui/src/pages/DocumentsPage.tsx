@@ -536,8 +536,13 @@ export function DocumentsPage() {
                 </button>
                 {indexPopOpen ? (
                   <div className="docs-toolbar__pop" role="dialog" aria-label="Глобальный статус индекса">
-                    <DocFieldRow label="Векторов в Chroma">
-                      <span className="mono">{gis?.chroma_collection_chunks ?? "—"}</span>
+                    <DocFieldRow label="Векторов в индексе">
+                      <span className="mono">
+                        {gis?.vector_index_chunks ?? gis?.chroma_collection_chunks ?? "—"}
+                      </span>
+                    </DocFieldRow>
+                    <DocFieldRow label="Активный backend">
+                      <span className="mono">{gis?.active_retrieval_backend ?? "—"}</span>
                     </DocFieldRow>
                     <DocFieldRow label="Σ chunk_count (активные версии)">
                       <span className="mono">

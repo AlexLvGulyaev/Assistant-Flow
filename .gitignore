@@ -51,3 +51,4 @@ legacy/PEr*_source/.git/
 .tmp/
 storage/assets/
 legacy/
+.cursor/

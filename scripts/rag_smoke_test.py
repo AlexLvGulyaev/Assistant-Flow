@@ -56,6 +56,7 @@ def main() -> None:
     )
     from services.rag_local_indexer import LocalRagIndexer
     from services.rag_query_service import RagQueryService
+    from services.retrieval.chroma_backend import ChromaBackend
     from services.retrieval.factory import build_retrieval_backend
     from utils.config import load_config
 
@@ -83,7 +84,7 @@ def main() -> None:
         embeddings,
         persist_directory=chroma_dir,
     )
-    indexer = LocalRagIndexer(config, store)
+    indexer = LocalRagIndexer(config, ChromaBackend(store))
 
     print(f"Indexing from: {docs_dir}")
     n = indexer.index_documents_dir(docs_dir)

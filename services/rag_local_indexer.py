@@ -1,4 +1,4 @@
-"""Index local documents into Chroma (admin / tooling — not exposed to Telegram users)."""
+"""Index local documents into the active vector backend (admin / tooling)."""
 
 from __future__ import annotations
 
@@ -6,17 +6,17 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
-from services.rag_chroma_store import ChromaRagStore
 from services.rag_document_loader import load_and_split_directory
+from services.retrieval.base import RetrievalBackend
 from utils.config import AppConfig
 
 
 class LocalRagIndexer:
     """Build or refresh the vector index from files on disk."""
 
-    def __init__(self, config: AppConfig, store: ChromaRagStore) -> None:
+    def __init__(self, config: AppConfig, vector_backend: RetrievalBackend) -> None:
         self._config = config
-        self._store = store
+        self._vector_backend = vector_backend
 
     def index_documents_dir(
         self,
@@ -24,20 +24,20 @@ class LocalRagIndexer:
     ) -> int:
         """
         Load, chunk, and upsert all supported files under directory (recursive).
-        Returns number of chunks indexed. To reindex from scratch, use
-        reset_chroma_for_reindex (see rag_smoke_test / admin_index_documents) or
-        delete the local persist dir when CHROMA_USE_HTTP=false.
+        Returns number of chunks indexed. For a clean Chroma rebuild use
+        ``reset_chroma_for_reindex`` / ``ChromaBackend.reset_for_full_reindex`` or
+        ``admin_index_documents.py --reindex``.
         """
         source_dir = Path(directory) if directory else Path(self._config.rag_documents_dir)
         chunks = load_and_split_directory(source_dir, self._config)
         if not chunks:
             return 0
-        self._store.add_documents(chunks)
+        self._vector_backend.add_documents(chunks)
         return len(chunks)
 
     def index_documents(self, chunks: list[Document]) -> int:
         """Index an explicit list of Document chunks (for tests or custom pipelines)."""
         if not chunks:
             return 0
-        self._store.add_documents(chunks)
+        self._vector_backend.add_documents(chunks)
         return len(chunks)

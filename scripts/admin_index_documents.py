@@ -104,7 +104,10 @@ def main() -> int:
             print(f"Files found:              {report.files_found}", flush=True)
             print(f"Files indexed (no error): {report.files_indexed_ok}", flush=True)
             print(f"Chunks created (this run): {report.chunks_created}", flush=True)
-            print(f"Chunks in Chroma (total):  {report.chroma_chunk_count}", flush=True)
+            print(
+                f"Vector index chunks (total): {report.vector_index_chunk_count}",
+                flush=True,
+            )
             print(f"PostgreSQL metadata:       {report.used_postgres}", flush=True)
         else:
             print(

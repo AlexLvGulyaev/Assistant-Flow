@@ -1,11 +1,13 @@
 """
 Базовые типы и контракт retrieval backend (P6.1).
 
-Индексация (add/reset) вынесена на последующие этапы — см. TODO в Protocol.
+Операционная индексация (reset/add/delete перед reindex) — часть единого контракта
+для Chroma (default) и FAISS (secondary, RAG_BACKEND=faiss).
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -60,12 +62,7 @@ class RetrievalHealth:
 
 @runtime_checkable
 class RetrievalBackend(Protocol):
-    """
-    Единый контракт query-side retrieval.
-
-    TODO (последующие этапы P6): методы индексации (add_chunks, reset и т.д.)
-    после стабилизации abstraction на чтении.
-    """
+    """Единый контракт retrieval: чтение + операционная запись для admin indexer."""
 
     @property
     def backend_name(self) -> str:
@@ -74,6 +71,26 @@ class RetrievalBackend(Protocol):
 
     def collection_count(self) -> int:
         """Число записей в активной коллекции/индексе (best-effort)."""
+        ...
+
+    def reset_for_full_reindex(self) -> None:
+        """Полный сброс векторного индекса перед полной переиндексацией корпуса."""
+        ...
+
+    def add_documents(self, documents: list[Any]) -> list[str]:
+        """
+        Добавить чанки с эмбеддингами. ``documents`` — ``langchain_core.documents.Document``.
+        Возвращает стабильные id записей (Chroma uuid / FAISS uuid string).
+        """
+        ...
+
+    def delete_vectors_for_document_before_reindex(
+        self,
+        *,
+        document_id: uuid.UUID | None,
+        source_filename: str,
+    ) -> None:
+        """Удалить векторы документа перед повторной индексацией одного файла (идемпотентность)."""
         ...
 
     def search(

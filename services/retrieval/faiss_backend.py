@@ -1,18 +1,20 @@
 """
-FAISS retrieval backend (P6.2a): secondary / demo, изолирован от Chroma.
+FAISS retrieval backend: operational secondary backend (RAG_BACKEND=faiss).
 
 Формат каталога индекса (FAISS_INDEX_DIR):
 - vectors.faiss — FAISS IndexFlatL2 (float32)
 - chunks.json — массив объектов {"page_content": str, "metadata": dict} в порядке строк индекса
-- manifest.json (опционально) — {"embedding_dim": int, "embedding_model": str}
+- manifest.json — backend, embedding_dim/model, revision, counts, source, timestamps
 
-Scores: L2 distance в **шкале FAISS** (backend-local); сравнение с Chroma без normalization запрещено
-до отдельного hybrid-слоя (см. RetrievalSearchResult, PROJECT_STATE §29.1).
+Scores: L2 distance в шкале FAISS (backend-local).
 """
 
 from __future__ import annotations
 
 import json
+import shutil
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +36,8 @@ VECTORS_FILENAME = "vectors.faiss"
 CHUNKS_FILENAME = "chunks.json"
 MANIFEST_FILENAME = "manifest.json"
 
+FAISS_PG_COLLECTION_LABEL = "faiss"
+
 
 def resolve_faiss_index_dir(config: "AppConfig", *, project_root: Path | None = None) -> Path:
     """Абсолютный путь к каталогу FAISS-индекса (относительные пути — от project_root или cwd)."""
@@ -45,23 +49,65 @@ def resolve_faiss_index_dir(config: "AppConfig", *, project_root: Path | None = 
     return (base / p).resolve()
 
 
+def count_faiss_chunks_on_disk(index_dir: Path) -> int:
+    """Лёгкий подсчёт чанков по chunks.json (для /stats без загрузки FAISS)."""
+    p = Path(index_dir).resolve() / CHUNKS_FILENAME
+    if not p.is_file():
+        return 0
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return len(raw) if isinstance(raw, list) else 0
+    except Exception:
+        return 0
+
+
+def _flatten_metadata(meta: dict[str, Any]) -> dict[str, Any]:
+    """JSON-serializable metadata (str/int/float/bool; остальное → str)."""
+    out: dict[str, Any] = {}
+    for k, v in meta.items():
+        if v is None:
+            continue
+        key = str(k)
+        if isinstance(v, (str, int, float, bool)):
+            out[key] = v
+        else:
+            out[key] = str(v)
+    return out
+
+
 class FaissBackend:
-    """Query-only FAISS: загрузка с диска, поиск через тот же embedding provider, что и у AF."""
+    """FAISS: загрузка/персист, индексация, поиск; совместимость эмбеддингов — строго по manifest."""
 
     def __init__(
         self,
         *,
         index_dir: Path,
         embeddings: "Embeddings",
+        app_config: "AppConfig | None" = None,
+        allow_empty: bool = False,
     ) -> None:
         self._index_dir = Path(index_dir).resolve()
         self._embeddings = embeddings
+        self._app_config = app_config
         self._vectors_path = self._index_dir / VECTORS_FILENAME
         self._chunks_path = self._index_dir / CHUNKS_FILENAME
         self._manifest_path = self._index_dir / MANIFEST_FILENAME
         self._index: Any = None
         self._chunks: list[dict[str, Any]] = []
         self._manifest: dict[str, Any] = {}
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+
+        has_vectors = self._vectors_path.is_file() and self._chunks_path.is_file()
+        if not has_vectors:
+            if not allow_empty:
+                raise FileNotFoundError(
+                    f"FAISS: отсутствует индекс в {self._index_dir} "
+                    f"(нужны {VECTORS_FILENAME} и {CHUNKS_FILENAME}). "
+                    f"Операционная индексация: admin_index_documents / AdminKnowledgeIndexer."
+                )
+            self._init_empty_index()
+            self._persist()
+            return
         self._reload_from_disk()
 
     @property
@@ -72,20 +118,48 @@ class FaissBackend:
     def index_dir(self) -> Path:
         return self._index_dir
 
+    @property
+    def manifest_path(self) -> Path:
+        return self._manifest_path
+
+    def _probe_embedding_dim(self) -> int:
+        vec = self._embeddings.embed_query("__af_faiss_dim_probe__")
+        n = len(vec)
+        if n <= 0:
+            raise RuntimeError("FAISS: embedding probe returned empty vector")
+        return n
+
+    def _expected_embedding_model(self) -> str:
+        if self._app_config is not None:
+            return str(self._app_config.openai_embedding_model or "").strip() or "unknown"
+        return str(self._manifest.get("embedding_model") or "unknown")
+
+    def _init_empty_index(self, *, knowledge_base_revision: int = 0) -> None:
+        import faiss  # noqa: PLC0415
+
+        dim = self._probe_embedding_dim()
+        self._index = faiss.IndexFlatL2(dim)
+        self._chunks = []
+        now = datetime.now(timezone.utc).isoformat()
+        self._manifest = {
+            "backend": "faiss",
+            "embedding_dim": dim,
+            "embedding_model": self._expected_embedding_model(),
+            "created_at": now,
+            "updated_at": now,
+            "chunk_count": 0,
+            "document_count": 0,
+            "knowledge_base_revision": int(knowledge_base_revision),
+            "source": "operational_indexer",
+        }
+
     def _reload_from_disk(self) -> None:
-        import faiss  # noqa: PLC0415 — тяжёлая зависимость, только для FAISS-контура
+        import faiss  # noqa: PLC0415
 
         if not self._vectors_path.is_file():
-            raise FileNotFoundError(
-                f"FAISS: отсутствует файл индекса {self._vectors_path} "
-                f"(ожидается каталог {self._index_dir}). "
-                f"Соберите демо-индекс: python scripts/build_faiss_demo_index.py"
-            )
+            raise FileNotFoundError(f"FAISS: отсутствует {self._vectors_path}")
         if not self._chunks_path.is_file():
-            raise FileNotFoundError(
-                f"FAISS: отсутствует {self._chunks_path}. "
-                f"Соберите демо-индекс: python scripts/build_faiss_demo_index.py"
-            )
+            raise FileNotFoundError(f"FAISS: отсутствует {self._chunks_path}")
 
         self._index = faiss.read_index(str(self._vectors_path))
         raw = json.loads(self._chunks_path.read_text(encoding="utf-8"))
@@ -112,11 +186,191 @@ class FaissBackend:
             raise ValueError(
                 f"FAISS: manifest embedding_dim={dim_meta} не совпадает с index.d={self._index.d}"
             )
+        self._assert_embedding_contract_readonly()
+
+    def _assert_embedding_contract_readonly(self) -> None:
+        """При загрузке с диска: сверить manifest с AppConfig (если передан)."""
+        if self._app_config is None:
+            return
+        exp_model = str(self._app_config.openai_embedding_model or "").strip()
+        man_model = str(self._manifest.get("embedding_model") or "").strip()
+        if man_model and exp_model and man_model != exp_model:
+            raise ValueError(
+                f"FAISS manifest embedding_model={man_model!r} не совпадает с "
+                f"OPENAI/конфигом openai_embedding_model={exp_model!r}. "
+                "Переиндексируйте с тем же провайдером или удалите индекс."
+            )
+
+    def _assert_runtime_embedding_contract(self) -> None:
+        """Перед search/add при непустом индексе: сверка embedding model (размерность — отдельно при query)."""
+        if self._index is None or int(self._index.ntotal) == 0:
+            return
+        if self._app_config is not None:
+            exp_model = str(self._app_config.openai_embedding_model or "").strip()
+            man_model = str(self._manifest.get("embedding_model") or "").strip()
+            if man_model and exp_model and man_model != exp_model:
+                raise ValueError(
+                    f"FAISS: индекс собран с embedding_model={man_model!r}, "
+                    f"сейчас в конфиге {exp_model!r}. Поиск запрещён до переиндексации."
+                )
 
     def collection_count(self) -> int:
         if self._index is None:
             return 0
         return int(self._index.ntotal)
+
+    def reset_for_full_reindex(self) -> None:
+        """Полностью очищает каталог индекса и создаёт пустой индекс той же размерности."""
+        old_rev = 0
+        if self._manifest_path.is_file():
+            try:
+                old_rev = int(
+                    json.loads(self._manifest_path.read_text(encoding="utf-8")).get(
+                        "knowledge_base_revision"
+                    )
+                    or 0
+                )
+            except Exception:
+                old_rev = 0
+        if self._index_dir.exists():
+            shutil.rmtree(self._index_dir)
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+        self._vectors_path = self._index_dir / VECTORS_FILENAME
+        self._chunks_path = self._index_dir / CHUNKS_FILENAME
+        self._manifest_path = self._index_dir / MANIFEST_FILENAME
+        self._init_empty_index(knowledge_base_revision=old_rev + 1)
+        self._persist()
+
+    def add_documents(self, documents: list[Any]) -> list[str]:
+        import faiss  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+
+        if not documents:
+            return []
+        self._assert_runtime_embedding_contract()
+        texts: list[str] = []
+        metas: list[dict[str, Any]] = []
+        for d in documents:
+            texts.append(str(getattr(d, "page_content", None) or ""))
+            raw_meta = getattr(d, "metadata", None)
+            metas.append(_flatten_metadata(dict(raw_meta) if isinstance(raw_meta, dict) else {}))
+        vectors = self._embeddings.embed_documents(texts)
+        if not vectors:
+            raise RuntimeError("FAISS: embed_documents returned empty")
+        dim = len(vectors[0])
+        if self._index is None:
+            raise RuntimeError("FAISS: index not initialized")
+        if int(self._index.d) != dim:
+            raise ValueError(
+                f"FAISS: batch embedding dim={dim} != index dim={self._index.d} "
+                "(несовместимый эмбеддер или повреждённый индекс)."
+            )
+        man_dim = self._manifest.get("embedding_dim")
+        if man_dim is not None and int(man_dim) != dim:
+            raise ValueError(
+                f"FAISS: manifest embedding_dim={man_dim} != фактическая размерность батча {dim}"
+            )
+
+        arr = np.array(vectors, dtype=np.float32)
+        self._index.add(arr)
+        ids: list[str] = []
+        for text, meta in zip(texts, metas):
+            cid = str(uuid.uuid4())
+            ids.append(cid)
+            meta = dict(meta)
+            meta["chunk_id"] = cid
+            self._chunks.append({"page_content": text, "metadata": meta})
+
+        self._update_manifest_counts()
+        self._persist()
+        return ids
+
+    def _update_manifest_counts(self) -> None:
+        doc_keys: set[str] = set()
+        for row in self._chunks:
+            md = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            did = md.get("document_id")
+            src = md.get("source")
+            if did:
+                doc_keys.add(f"id:{did}")
+            elif src:
+                doc_keys.add(f"src:{src}")
+        now = datetime.now(timezone.utc).isoformat()
+        self._manifest["chunk_count"] = len(self._chunks)
+        self._manifest["document_count"] = len(doc_keys)
+        self._manifest["updated_at"] = now
+        if self._app_config is not None:
+            self._manifest["embedding_model"] = self._expected_embedding_model()
+            self._manifest["embedding_dim"] = int(self._index.d) if self._index is not None else 0
+
+    def delete_vectors_for_document_before_reindex(
+        self,
+        *,
+        document_id: uuid.UUID | None,
+        source_filename: str,
+    ) -> None:
+        """
+        Пересборка индекса по оставшимся чанкам (без хранения матрицы векторов на диске).
+        Дорого при большом корпусе — допустимая simple-safe стратегия для FAISS.
+        """
+        import faiss  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+
+        fn = (source_filename or "").strip()
+        doc_s = str(document_id) if document_id is not None else ""
+
+        kept: list[dict[str, Any]] = []
+        for row in self._chunks:
+            if not isinstance(row, dict):
+                continue
+            md = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            md_doc = str(md.get("document_id") or "")
+            md_src = str(md.get("source") or "")
+            drop = False
+            if document_id is not None and fn:
+                if md_doc == doc_s or md_src == fn:
+                    drop = True
+            elif document_id is not None:
+                if md_doc == doc_s:
+                    drop = True
+            elif fn:
+                if md_src == fn:
+                    drop = True
+            if not drop:
+                kept.append(row)
+
+        if len(kept) == len(self._chunks):
+            return
+
+        dim = int(self._index.d) if self._index is not None else self._probe_embedding_dim()
+        new_index = faiss.IndexFlatL2(dim)
+        if kept:
+            texts = [str(r.get("page_content") or "") for r in kept]
+            vecs = self._embeddings.embed_documents(texts)
+            arr = np.array(vecs, dtype=np.float32)
+            if arr.shape[1] != dim:
+                raise ValueError(
+                    f"FAISS delete/rebuild: embedding dim {arr.shape[1]} != index dim {dim}"
+                )
+            new_index.add(arr)
+        self._index = new_index
+        self._chunks = kept
+        self._update_manifest_counts()
+        self._persist()
+
+    def _persist(self) -> None:
+        import faiss  # noqa: PLC0415
+
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+        faiss.write_index(self._index, str(self._vectors_path))
+        self._chunks_path.write_text(
+            json.dumps(self._chunks, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self._manifest_path.write_text(
+            json.dumps(self._manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def search(
         self,
@@ -129,6 +383,8 @@ class FaissBackend:
 
         if not (query or "").strip() or top_k <= 0:
             return []
+
+        self._assert_runtime_embedding_contract()
 
         ctx = security_context or RetrievalSecurityContext.permissive_default()
         if not ctx.is_fully_unrestricted():
@@ -150,7 +406,6 @@ class FaissBackend:
         ntotal = int(self._index.ntotal)
         requested = int(top_k)
         if not ctx.is_fully_unrestricted():
-            # FAISS без metadata-индекса: расширяем выборку, затем фильтруем до top_k.
             requested = min(ntotal, max(requested * 8, requested))
         k = min(requested, ntotal)
         if k <= 0:
@@ -196,7 +451,7 @@ class FaissBackend:
             return RetrievalHealth(
                 backend=self.backend_name,
                 ok=True,
-                detail="; ".join(detail_parts),
+                detail="; ".join(detail_parts + [f"manifest={self._manifest_path.name}"]),
                 collection_count=n,
             )
         except Exception as exc:

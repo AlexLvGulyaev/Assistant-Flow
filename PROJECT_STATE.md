@@ -2559,4 +2559,52 @@ Unknown stage fallback допустим, но все OCR known stages должн
 
 - Ввести **индексацию в FAISS** (или экспорт из общего chunk pipeline) под тем же контрактом метаданных, что и Chroma; связать с **PG** и **reindex**; не полагаться на demo-скрипт как на единственный writer.
 
+---
+
+## 45. FAISS operational indexing integration (append-only)
+
+### 45.1 Роль backend
+
+- **Chroma** остаётся **default production** retrieval backend (`RAG_BACKEND` unset / `chroma`).
+- **FAISS** — **полноценный secondary operational** backend, включается **явно** через `RAG_BACKEND=faiss` и каталог `FAISS_INDEX_DIR` (по умолчанию `storage/faiss`).
+- **Нет** silent switch: фабрика и indexer читают только `AppConfig.rag_backend`.
+
+### 45.2 Documents → indexing → retrieval
+
+- **`AdminKnowledgeIndexer`** пишет векторы через **`RetrievalBackend`**: `reset_for_full_reindex`, `delete_vectors_for_document_before_reindex`, `add_documents` (реализации: **`ChromaBackend`**, **`FaissBackend`**).
+- **PostgreSQL** lifecycle (`documents`, `document_versions`, `document_chunks`, `indexing_jobs`) **не зависит** от выбора векторного backend; поле `chroma_collection` / id по-прежнему используется как **generic vector store metadata** — для FAISS в `chroma_collection` пишется метка **`faiss`**, id — uuid строки чанков.
+- **Персистенция FAISS**: `vectors.faiss`, `chunks.json`, `manifest.json` в `FAISS_INDEX_DIR`; после рестарта загрузка через тот же `FaissBackend`.
+
+### 45.3 Reindex semantics
+
+- **Full reindex** (`--reindex` / `run_reindex`): **Chroma** — прежний сброс коллекции/persist; **FAISS** — `reset_for_full_reindex()` (очистка каталога индекса + пустой индекс, инкремент `knowledge_base_revision` в manifest), затем полная переиндексация файлов с диска — **без** stale векторов.
+- **Single-document reindex / upload** при **FAISS**: на первом этапе — **полная пересборка FAISS** по всему активному корпусу (`iter_supported_files`), затем отчёт по целевому файлу (simple safe strategy).
+
+### 45.4 Embedding compatibility
+
+- **`manifest.json`** хранит `embedding_model`, `embedding_dim`, revision, counts, `source=operational_indexer`.
+- При **несовпадении** модели (manifest vs `AppConfig.openai_embedding_model`) или размерности батча/запроса vs индекса — **ошибка с явным текстом**, поиск по несовместимому индексу не выполняется.
+
+### 45.5 Admin / API / UI
+
+- **`get_collection_count`** / **`KnowledgeBaseStatus`**: при `faiss` счётчик с **`chunks.json`** (disk), не из Chroma; добавлены нейтральные поля **`vector_index_chunk_count`**, **`active_retrieval_backend`**.
+- **`/api/documents` `global_index_sync`**: добавлены **`vector_index_chunks`**, **`active_retrieval_backend`**; **`chroma_collection_chunks`** оставлен как совместимый алиас числового счётчика.
+- **Admin UI Documents**: подпись «Векторов в индексе», строка «Активный backend».
+
+### 45.6 Observability
+
+- В stdout indexer и в **`processing_logs`** (через `AdminService`) добавляются поля: **`retrieval_backend`**, **`vector_count`**, пути **`backend_index_path`**, **`manifest_path`** (для FAISS), стадии **`vector_write_*`** в логах indexer (без сырых векторов).
+
+### 45.7 Tests
+
+- **`scripts/test_faiss_operational_indexing_smoke.py`** — operational indexer, FAISS файлы, manifest, retrieval по фразе, повторный full reindex без роста chunk count.
+- **`scripts/test_retrieval_backend_factory.py`**: пустой каталог FAISS + embeddings → успешный backend (count 0).
+
+### 45.8 Known limitations / deferred
+
+- **Нет** точечного vector delete/update в FAISS без пересборки затронутых векторов (кроме targeted delete path, который пересобирает индекс из оставшихся чанков с re-embed).
+- **Нет** multi-backend dual-write.
+- **Нет** переключателя backend в Admin UI (только env/config).
+- **`scripts/build_faiss_demo_index.py`** остаётся вспомогательным демо-сборщиком, **не** основным operational writer.
+
 
