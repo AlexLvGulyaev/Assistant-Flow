@@ -264,6 +264,23 @@ _OCR_PIPELINE_STAGES: frozenset[str] = frozenset(
 )
 
 
+def _is_document_lifecycle_stage(stage_norm: str) -> bool:
+    """Upload / preprocessing / indexing / reindex for knowledge documents (not chat text)."""
+    if stage_norm.startswith("admin_document"):
+        return True
+    if stage_norm.startswith("document_preprocessing_"):
+        return True
+    if stage_norm.startswith("document_processed_"):
+        return True
+    if stage_norm.startswith("document_compatibility_"):
+        return True
+    if stage_norm.startswith("document_indexing_"):
+        return True
+    if stage_norm.startswith("document_upload_"):
+        return True
+    return False
+
+
 def infer_modality_route(details: Any, *, stage: str | None = None) -> str:
     """
     Normalized modality for React filters (matches RouteFilter on Logs page).
@@ -276,6 +293,9 @@ def infer_modality_route(details: Any, *, stage: str | None = None) -> str:
     dr = str(d.get("downstream_route") or "").strip().lower()
     mode = str(d.get("mode") or "").strip().lower()
     st = str(stage or "").strip().lower()
+
+    if _is_document_lifecycle_stage(st):
+        return "document"
 
     if route == "vision_ocr" or dr == "vision_ocr" or mode == "ocr":
         return "text"
@@ -305,6 +325,8 @@ def infer_modality_route(details: Any, *, stage: str | None = None) -> str:
 def infer_modality(details: Any, *, stage: str | None = None) -> str | None:
     """High-level modality label for operators (``text`` includes OCR)."""
     mr = infer_modality_route(details, stage=stage)
+    if mr == "document":
+        return "document"
     if mr == "other":
         return None
     return mr

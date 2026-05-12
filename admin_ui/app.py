@@ -299,6 +299,16 @@ _EVENT_TYPE_RU: dict[str, str] = {
     "ocr_response_sent": "OCR-ответ отправлен",
     "database_schema": "Служебное событие схемы БД",
     "admin_document_uploaded": "Загрузка документа (админка)",
+    "admin_document_uploaded_raw": "Сырой документ сохранён (assets)",
+    "document_preprocessing_started": "Preprocessing запущен",
+    "document_preprocessing_done": "Preprocessing завершён",
+    "document_preprocessing_error": "Ошибка preprocessing",
+    "document_processed_artifact_saved": "Сохранён processed .cleaned.txt",
+    "document_compatibility_file_written": "Записан compatibility .txt (RAG dir)",
+    "document_indexing_started": "Индексация документа запущена",
+    "document_indexing_done": "Индексация документа завершена",
+    "document_indexing_error": "Ошибка индексации документа",
+    "document_upload_pipeline_done": "Загрузка документа (pipeline) завершена",
     "admin_reindex_started": "Переиндексация запущена",
     "admin_reindex_done": "Переиндексация завершена",
     "admin_reindex_error": "Ошибка переиндексации",
@@ -1108,17 +1118,25 @@ def infer_event_severity(
         "processing_done",
         "admin_reindex_done",
         "admin_document_uploaded",
+        "admin_document_uploaded_raw",
+        "document_preprocessing_done",
+        "document_processed_artifact_saved",
+        "document_compatibility_file_written",
+        "document_indexing_done",
+        "document_upload_pipeline_done",
     ):
         if stat == "success":
             return "success"
-    if stg in ("image_generation_started", "stt_started", "tts_started"):
+    if stg in ("image_generation_started", "stt_started", "tts_started", "document_indexing_started", "document_preprocessing_started"):
         return "warning"
     if stg == "image_provider_done":
         return "error" if stat == "error" else "success"
-    if stg in ("image_generation_error", "audio_generation_error"):
+    if stg in ("image_generation_error", "audio_generation_error", "document_preprocessing_error", "document_indexing_error"):
         return "error"
     if stg == "admin_reindex_started":
         return "warning"
+    if stg == "document_upload_pipeline_done" and stat == "error":
+        return "error"
     if stat == "success":
         return "success"
     if stat in ("started", "skipped", "retry"):

@@ -19,6 +19,7 @@ class SummaryRoutes(BaseModel):
     rag: int
     images: int
     audio_voice: int
+    documents: int = 0
     other_unknown: int
 
 

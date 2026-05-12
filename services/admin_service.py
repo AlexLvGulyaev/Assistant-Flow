@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 import mimetypes
 
 from repositories.connection import get_connection
@@ -20,7 +20,7 @@ from repositories.platform_settings_repository import (
     PlatformSettingsRepository,
 )
 from repositories.processing_logs_repository import ProcessingLogsRepository
-from services.admin_knowledge_indexer import AdminKnowledgeIndexer
+from services.admin_knowledge_indexer import AdminKnowledgeIndexer, FileIndexOutcome
 from services.asset_repository import AssetNotFoundError, AssetValidationError
 from services.asset_repository_factory import create_asset_repository
 from services.async_job_service import AsyncJob, AsyncJobService
@@ -48,6 +48,7 @@ from services.retrieval.factory import (
     effective_rag_backend_from_sources,
     normalize_rag_backend,
 )
+from services.preprocessing.preprocessing_service import PreprocessingService
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
@@ -113,6 +114,17 @@ SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
     "processing_done",
     "admin_reindex_started",
     "admin_reindex_done",
+    "admin_document_uploaded_raw",
+    "document_preprocessing_started",
+    "document_preprocessing_done",
+    "document_preprocessing_error",
+    "document_processed_artifact_saved",
+    "document_compatibility_file_written",
+    "document_indexing_started",
+    "document_indexing_done",
+    "document_indexing_error",
+    "document_upload_pipeline_done",
+    "admin_document_uploaded",
     "processing_error",
 )
 
@@ -270,6 +282,90 @@ def _resolve_dir(raw: str) -> Path:
     return p if p.is_absolute() else _PROJECT_ROOT / p
 
 
+def _preprocessing_pipeline_component_names(ext: str) -> tuple[str, str, str]:
+    """Stable machine-readable names for upload pipeline logs (Phase 1)."""
+    if ext in (".html", ".htm"):
+        return "HtmlExtractor", "html_cleaner + text_cleaner", "text_normalizer"
+    return "TxtExtractor", "text_cleaner", "text_normalizer"
+
+
+def _rag_extra_compatibility_write_roots(*, primary_root: Path) -> list[Path]:
+    """
+    Directories where cleaned ``{stem}.txt`` should be mirrored in addition to
+    ``RAG_DOCUMENTS_DIR``.
+
+    - ``RAG_DOCUMENTS_COMPATIBILITY_DIR`` when set and distinct from primary.
+    - ``/app/data/documents`` when it exists (Docker compose bind mount) and
+      differs from primary — fixes uploads when ``RAG_DOCUMENTS_DIR`` points
+      outside the mounted corpus path.
+    """
+    primary_resolved = primary_root.resolve()
+    seen: set[str] = {str(primary_resolved)}
+    out: list[Path] = []
+    env_raw = (os.getenv("RAG_DOCUMENTS_COMPATIBILITY_DIR") or "").strip()
+    if env_raw:
+        e = _resolve_dir(env_raw)
+        key = str(e.resolve())
+        if key not in seen:
+            seen.add(key)
+            out.append(e)
+    docker_compat = Path("/app/data/documents")
+    try:
+        if docker_compat.is_dir():
+            key = str(docker_compat.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(docker_compat)
+    except OSError:
+        pass
+    return out
+
+
+def _write_cleaned_rag_txt_everywhere(
+    config: AppConfig, *, index_name: str, cleaned_bytes: bytes
+) -> tuple[Path, list[Path]]:
+    """Write canonical cleaned UTF-8 to primary ``RAG_DOCUMENTS_DIR`` and compatibility roots."""
+    primary_root = _resolve_dir(config.rag_documents_dir)
+    primary_root.mkdir(parents=True, exist_ok=True)
+    primary = primary_root / index_name
+    primary.write_bytes(cleaned_bytes)
+    if not primary.is_file():
+        raise RuntimeError(f"RAG primary write failed: {primary}")
+    written: list[Path] = [primary]
+    for root in _rag_extra_compatibility_write_roots(primary_root=primary_root):
+        root.mkdir(parents=True, exist_ok=True)
+        dest = root / index_name
+        dest.write_bytes(cleaned_bytes)
+        if not dest.is_file():
+            raise RuntimeError(f"RAG compatibility mirror write failed: {dest}")
+        written.append(dest)
+    return primary, written
+
+
+def _document_upload_log_snapshot_from_summary(us: dict[str, Any]) -> dict[str, Any]:
+    """Common ``details`` shape for indexing / pipeline-done processing_logs rows."""
+    pre = us.get("preprocessing")
+    if not isinstance(pre, dict):
+        pre = {}
+    return {
+        "upload_id": us.get("upload_id"),
+        "execution_id": us.get("upload_id"),
+        "original_upload_filename": us.get("original_upload_filename"),
+        "indexed_target_filename": us.get("indexed_target_filename"),
+        "raw_asset_ref": us.get("raw_asset_ref"),
+        "processed_asset_ref": us.get("processed_asset_ref"),
+        "cleaned_asset_ref": us.get("cleaned_asset_ref"),
+        "compatibility_path": us.get("compatibility_path"),
+        "compatibility_paths_written": us.get("compatibility_paths_written"),
+        "preprocessing": pre,
+        "original_size_bytes": us.get("original_bytes"),
+        "cleaned_size_bytes": us.get("cleaned_bytes"),
+        "extractor": us.get("extractor"),
+        "cleaner": us.get("cleaner"),
+        "normalizer": us.get("normalizer"),
+    }
+
+
 @dataclass(frozen=True)
 class ReindexRunResult:
     success: bool
@@ -398,60 +494,204 @@ class AdminService:
                 out.append(p.name)
         return sorted(out)
 
-    def save_uploaded_txt(self, filename: str, data: bytes) -> Path:
-        """Save a single .txt file into RAG_DOCUMENTS_DIR (MVP)."""
+    def save_uploaded_document(self, filename: str, data: bytes) -> tuple[Path, dict[str, Any]]:
+        """
+        Raw asset (immutable) → preprocessing → cleaned UTF-8 → RAG compatibility ``.txt``.
+
+        Returns ``(index_path, upload_summary)`` where ``index_path`` is always
+        ``RAG_DOCUMENTS_DIR / {stem}.txt`` (canonical input for chunking/indexing).
+
+        Emits machine stages for observability (same ``execution_id`` / ``upload_id``
+        for correlation). Cleaned bytes are also mirrored under
+        ``/app/data/documents`` or ``RAG_DOCUMENTS_COMPATIBILITY_DIR`` when those
+        paths differ from the resolved primary ``RAG_DOCUMENTS_DIR``.
+        """
         safe = Path(filename).name
-        if not safe.lower().endswith(".txt"):
-            raise ValueError("Only .txt files are supported in MVP.")
+        ext = Path(safe).suffix.lower()
+        if ext not in (".txt", ".html", ".htm"):
+            raise ValueError("Only .txt, .html, .htm uploads are supported.")
         if not safe or safe in (".", ".."):
             raise ValueError("Invalid file name.")
+        stem = Path(safe).stem
+        if not stem:
+            raise ValueError("Invalid file name (missing basename).")
         if not isinstance(data, (bytes, bytearray)) or len(data) == 0:
             raise ValueError("Uploaded file is empty.")
-        content_type = mimetypes.guess_type(safe)[0] or "text/plain"
-        asset_ref = self._asset_repository.save_bytes(
-            bytes(data),
-            namespace="documents",
-            filename=safe,
-            content_type=content_type,
-        )
-        src = self._asset_repository.resolve_path(asset_ref)
-        if not src.exists() or not src.is_file():
-            raise RuntimeError(
-                f"AssetRepository saved file is not accessible: {src}"
+
+        pipeline_id = str(uuid.uuid4())
+        index_name = f"{stem}.txt"
+        extractor, cleaner, normalizer = _preprocessing_pipeline_component_names(ext)
+
+        def _emit(
+            stage: str,
+            status: str,
+            details: dict[str, Any],
+            *,
+            error_text: str | None = None,
+        ) -> None:
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage=stage,
+                status=status,
+                details=details,
+                error_text=error_text,
             )
 
-        # Always copy to active RAG compatibility directory from config.
-        rag_documents_dir = _resolve_dir(self._config.rag_documents_dir)
-        rag_documents_dir.mkdir(parents=True, exist_ok=True)
-        dest = rag_documents_dir / safe
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-        if not dest.exists() or not dest.is_file():
-            raise RuntimeError(
-                f"Compatibility copy failed for uploaded document: {dest}"
-            )
-        execution_id = str(uuid.uuid4())
-        self._lifecycle.log_processing_event(
-            execution_id=execution_id,
-            intake_event_id=None,
-            stage="admin_document_uploaded",
-            status="success",
-            details={
-                "filename": safe,
-                "source": "admin_ui",
-                "asset_ref": asset_ref.relative_path,
-                "asset_storage_path": str(src),
-                "asset_storage_exists": src.exists(),
-                "content_type": asset_ref.content_type,
-                "size": asset_ref.size_bytes,
-                "size_bytes": asset_ref.size_bytes,
-                "sha256": asset_ref.sha256,
-                # Compatibility copy used by current RAG indexer and document preview.
-                "compatibility_path": str(dest),
-                "compatibility_exists": dest.exists(),
-                "rag_documents_dir": str(rag_documents_dir),
+        raw_bytes = bytes(data)
+        raw_ct = mimetypes.guess_type(safe)[0] or (
+            "text/html" if ext in (".html", ".htm") else "text/plain"
+        )
+        raw_ref = self._asset_repository.save_bytes(
+            raw_bytes,
+            namespace="documents",
+            filename=safe,
+            content_type=raw_ct,
+        )
+        raw_src = self._asset_repository.resolve_path(raw_ref)
+        if not raw_src.exists() or not raw_src.is_file():
+            raise RuntimeError(f"AssetRepository raw asset not accessible: {raw_src}")
+
+        base: dict[str, Any] = {
+            "upload_id": pipeline_id,
+            "execution_id": pipeline_id,
+            "source": "admin_api",
+            "filename": index_name,
+            "source_filename": index_name,
+            "original_upload_filename": safe,
+            "indexed_target_filename": index_name,
+            "raw_asset_ref": raw_ref.relative_path,
+            "original_size_bytes": len(raw_bytes),
+            "extractor": extractor,
+            "cleaner": cleaner,
+            "normalizer": normalizer,
+            "rag_documents_dir_config": self._config.rag_documents_dir,
+            "rag_documents_dir_resolved": str(_resolve_dir(self._config.rag_documents_dir)),
+        }
+        _emit(
+            "admin_document_uploaded_raw",
+            "success",
+            {
+                **base,
+                "content_type": raw_ct,
+                "asset_storage_path": str(raw_src),
+                "asset_storage_exists": raw_src.exists(),
+                "size_bytes": raw_ref.size_bytes,
+                "sha256": raw_ref.sha256,
             },
         )
+
+        _emit(
+            "document_preprocessing_started",
+            "started",
+            {**base, "preprocessing": {"status": "started"}},
+        )
+
+        preprocessor = PreprocessingService()
+        try:
+            cleaned_text, diag = preprocessor.run(raw_bytes, original_filename=safe)
+        except Exception as exc:
+            fmt = "html" if ext in (".html", ".htm") else "txt"
+            fail_diag = PreprocessingService.failure_diag(
+                original_filename=safe,
+                original_bytes=len(raw_bytes),
+                err=str(exc),
+                fmt=cast(Any, fmt),
+            ).to_log_dict()
+            _emit(
+                "document_preprocessing_error",
+                "error",
+                {
+                    **base,
+                    "preprocessing": fail_diag,
+                    "cleaned_size_bytes": 0,
+                    "processed_asset_ref": None,
+                    "cleaned_asset_ref": None,
+                    "compatibility_path": None,
+                    "compatibility_paths_written": [],
+                },
+                error_text=str(exc),
+            )
+            raise
+
+        cleaned_bytes = cleaned_text.encode("utf-8")
+        pre_block = diag.to_log_dict()
+        _emit(
+            "document_preprocessing_done",
+            "success",
+            {
+                **base,
+                "preprocessing": pre_block,
+                "cleaned_size_bytes": len(cleaned_bytes),
+            },
+        )
+
+        cleaned_fname = f"{stem}.cleaned.txt"
+        cleaned_ref = self._asset_repository.save_bytes(
+            cleaned_bytes,
+            namespace="processed_documents",
+            filename=cleaned_fname,
+            content_type="text/plain",
+        )
+        cleaned_src = self._asset_repository.resolve_path(cleaned_ref)
+        if not cleaned_src.exists() or not cleaned_src.is_file():
+            raise RuntimeError(
+                f"AssetRepository cleaned artifact not accessible: {cleaned_src}"
+            )
+
+        base["processed_asset_ref"] = cleaned_ref.relative_path
+        base["cleaned_asset_ref"] = cleaned_ref.relative_path
+
+        _emit(
+            "document_processed_artifact_saved",
+            "success",
+            {
+                **base,
+                "preprocessing": pre_block,
+                "cleaned_size_bytes": cleaned_ref.size_bytes,
+                "cleaned_asset_path": str(cleaned_src),
+            },
+        )
+
+        dest, all_written = _write_cleaned_rag_txt_everywhere(
+            self._config, index_name=index_name, cleaned_bytes=cleaned_bytes
+        )
+        primary_root = _resolve_dir(self._config.rag_documents_dir)
+        _emit(
+            "document_compatibility_file_written",
+            "success",
+            {
+                **base,
+                "preprocessing": pre_block,
+                "cleaned_size_bytes": cleaned_ref.size_bytes,
+                "compatibility_path": str(dest),
+                "compatibility_paths_written": [str(p) for p in all_written],
+                "compatibility_primary_equals_config": str(dest.resolve())
+                == str((primary_root / index_name).resolve()),
+            },
+        )
+
+        upload_summary: dict[str, Any] = {
+            "upload_id": pipeline_id,
+            "original_upload_filename": safe,
+            "indexed_target_filename": index_name,
+            "preprocessing": pre_block,
+            "raw_asset_ref": raw_ref.relative_path,
+            "cleaned_asset_ref": cleaned_ref.relative_path,
+            "processed_asset_ref": cleaned_ref.relative_path,
+            "original_bytes": len(raw_bytes),
+            "cleaned_bytes": len(cleaned_bytes),
+            "compatibility_path": str(dest),
+            "compatibility_paths_written": [str(p) for p in all_written],
+            "extractor": extractor,
+            "cleaner": cleaner,
+            "normalizer": normalizer,
+        }
+        return dest, upload_summary
+
+    def save_uploaded_txt(self, filename: str, data: bytes) -> Path:
+        """Backward-compatible wrapper: same as ``save_uploaded_document`` but returns path only."""
+        dest, _summary = self.save_uploaded_document(filename, data)
         return dest
 
     def get_collection_count(self) -> int:
@@ -1250,23 +1490,149 @@ class AdminService:
             return []
 
     def upload_txt_and_index(self, filename: str, data: bytes) -> dict[str, Any]:
-        """Save ``.txt`` via asset pipeline, copy to RAG dir, then index one file."""
-        dest = self.save_uploaded_txt(filename, data)
+        """Save document via preprocessing pipeline, then index canonical ``.txt``."""
+        dest, upload_summary = self.save_uploaded_document(filename, data)
+        pipeline_id = str(upload_summary.get("upload_id") or uuid.uuid4())
+        snap = _document_upload_log_snapshot_from_summary(upload_summary)
+        self._lifecycle.log_processing_event(
+            execution_id=pipeline_id,
+            intake_event_id=None,
+            stage="document_indexing_started",
+            status="started",
+            details={**snap, "index_path": str(dest)},
+        )
         indexer = AdminKnowledgeIndexer(
             self._indexing_config(),
             documents_dir=self._documents_dir,
             chroma_dir=self._chroma_dir,
             use_postgres=True,
         )
-        outcome = indexer.index_single_file(dest)
+        outcome: FileIndexOutcome | None = None
+        try:
+            outcome = indexer.index_single_file(dest)
+        except Exception as exc:
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_indexing_error",
+                status="error",
+                details={**snap, "index_path": str(dest), "error": str(exc)},
+                error_text=str(exc),
+            )
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_upload_pipeline_done",
+                status="error",
+                details={
+                    **snap,
+                    "index_path": str(dest),
+                    "success": False,
+                    "error": str(exc),
+                    "chunks": None,
+                    "document_id": None,
+                },
+                error_text=str(exc),
+            )
+            return {
+                "upload_id": pipeline_id,
+                "filename": dest.name,
+                "original_filename": upload_summary.get("original_upload_filename"),
+                "path": str(dest),
+                "success": False,
+                "error": str(exc),
+                "chunks": None,
+                "document_id": None,
+                "preprocessing": upload_summary.get("preprocessing"),
+                "original_bytes": upload_summary.get("original_bytes"),
+                "cleaned_bytes": upload_summary.get("cleaned_bytes"),
+                "raw_asset_ref": upload_summary.get("raw_asset_ref"),
+                "cleaned_asset_ref": upload_summary.get("cleaned_asset_ref"),
+                "processed_asset_ref": upload_summary.get("processed_asset_ref"),
+                "compatibility_path": upload_summary.get("compatibility_path"),
+                "compatibility_paths_written": upload_summary.get(
+                    "compatibility_paths_written"
+                ),
+            }
+
+        assert outcome is not None
         doc_id = str(outcome.document_id) if outcome.document_id else None
+        if outcome.error:
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_indexing_error",
+                status="error",
+                details={
+                    **snap,
+                    "index_path": str(dest),
+                    "error": outcome.error,
+                    "chunks": outcome.chunks,
+                    "document_id": doc_id,
+                },
+                error_text=outcome.error,
+            )
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_upload_pipeline_done",
+                status="error",
+                details={
+                    **snap,
+                    "index_path": str(dest),
+                    "success": False,
+                    "error": outcome.error,
+                    "chunks": outcome.chunks,
+                    "document_id": doc_id,
+                },
+                error_text=outcome.error,
+            )
+        else:
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_indexing_done",
+                status="success",
+                details={
+                    **snap,
+                    "index_path": str(dest),
+                    "chunks": outcome.chunks,
+                    "document_id": doc_id,
+                },
+            )
+            self._lifecycle.log_processing_event(
+                execution_id=pipeline_id,
+                intake_event_id=None,
+                stage="document_upload_pipeline_done",
+                status="success",
+                details={
+                    **snap,
+                    "index_path": str(dest),
+                    "success": True,
+                    "chunks": outcome.chunks,
+                    "document_id": doc_id,
+                },
+            )
+
         return {
+            "upload_id": pipeline_id,
             "filename": dest.name,
+            "original_filename": upload_summary.get("original_upload_filename"),
             "path": str(dest),
             "success": outcome.error is None,
             "error": outcome.error,
             "chunks": outcome.chunks,
             "document_id": doc_id,
+            "preprocessing": upload_summary.get("preprocessing"),
+            "original_bytes": upload_summary.get("original_bytes"),
+            "cleaned_bytes": upload_summary.get("cleaned_bytes"),
+            "raw_asset_ref": upload_summary.get("raw_asset_ref"),
+            "cleaned_asset_ref": upload_summary.get("cleaned_asset_ref"),
+            "processed_asset_ref": upload_summary.get("processed_asset_ref"),
+            "compatibility_path": upload_summary.get("compatibility_path"),
+            "compatibility_paths_written": upload_summary.get(
+                "compatibility_paths_written"
+            ),
         }
 
     def reindex_document_file(self, document_id: uuid.UUID) -> dict[str, Any]:
@@ -1623,6 +1989,7 @@ class AdminService:
                 "text": 0,
                 "image_generation": 0,
                 "audio": 0,
+                "document": 0,
             },
             "rag_quality": dict(empty_rq),
         }
@@ -1651,6 +2018,7 @@ class AdminService:
             "text": int(by_route_raw.get("text", 0)),
             "image_generation": int(by_route_raw.get("image_generation", 0)),
             "audio": int(by_route_raw.get("audio", 0)),
+            "document": int(by_route_raw.get("document", 0)),
         }
         # Dashboard status table: terminal outcomes only (exclude e.g. ``started``).
         by_status_dashboard = {
@@ -1699,7 +2067,8 @@ class AdminService:
         rag_r = int(br.get("rag", 0))
         img_r = int(br.get("image_generation", 0))
         aud_r = int(br.get("audio", 0))
-        routed_known = text_r + rag_r + img_r + aud_r
+        doc_r = int(br.get("document", 0))
+        routed_known = text_r + rag_r + img_r + aud_r + doc_r
         other_unknown = max(0, sessions_total - routed_known)
 
         by_stage_raw = dash.get("by_stage") or {}
@@ -1734,6 +2103,7 @@ class AdminService:
                 "rag": rag_r,
                 "images": img_r,
                 "audio_voice": aud_r,
+                "documents": doc_r,
                 "other_unknown": other_unknown,
             },
             "lifecycle_events": lifecycle_rows,

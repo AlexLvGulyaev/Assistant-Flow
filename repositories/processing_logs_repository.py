@@ -86,7 +86,12 @@ class ProcessingLogsRepository:
         Count requests by normalized route in the time window.
         One request = one ``execution_id`` (not raw event row).
         Route inference accepts route/mode/stage aliases (text_response, text_answer_done,
-        rag_answer_done, etc.) and picks the latest known route per execution_id.
+        rag_answer_done, document stages, ``details.route``/``mode`` for document, etc.)
+        and picks the latest known route per execution_id.
+
+        Note: PostgreSQL ``LIKE`` treats ``_`` as a wildcard, so patterns such as
+        ``'admin_document%'`` do **not** match literal ``admin_document…`` stages; use
+        regex ``~ '^admin_document'`` instead.
         """
         h = _sanitize_hours(hours)
         with conn.cursor() as cur:
@@ -122,6 +127,13 @@ class ProcessingLogsRepository:
                                     'audio_generation_error'
                                  )
                             THEN 'audio'
+                            WHEN stage ~ '^admin_document'
+                                 OR stage ~ '^document_(upload|preprocessing|processed|compatibility|indexing)_'
+                                 OR LOWER(COALESCE(details->>'route', '')) IN ('document', 'document_response')
+                                 OR LOWER(COALESCE(details->>'downstream_route', ''))
+                                    IN ('document', 'document_response')
+                                 OR LOWER(COALESCE(details->>'mode', '')) = 'document'
+                            THEN 'document'
                             ELSE NULL
                         END AS route_bucket
                     FROM processing_logs
@@ -258,10 +270,12 @@ class ProcessingLogsRepository:
                 FROM processing_logs
                 WHERE LOWER(COALESCE(details->>'filename', '')) = LOWER(%s)
                    OR LOWER(COALESCE(details->>'source_filename', '')) = LOWER(%s)
+                   OR LOWER(COALESCE(details->>'indexed_target_filename', '')) = LOWER(%s)
+                   OR LOWER(COALESCE(details->>'original_upload_filename', '')) = LOWER(%s)
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                (fn, fn, lim),
+                (fn, fn, fn, fn, lim),
             )
             return list(cur.fetchall())
 

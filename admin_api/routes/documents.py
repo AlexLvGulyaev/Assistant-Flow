@@ -16,6 +16,33 @@ _DOCS_CAP = 400
 _LOGS_CAP = 500
 
 
+def _preprocessing_public_from_upload(details: dict[str, Any]) -> dict[str, Any] | None:
+    """Subset of upload log for Documents UI (no secrets)."""
+    pre = details.get("preprocessing")
+    if not isinstance(pre, dict) or not pre:
+        return None
+    status = str(pre.get("status") or ("ok" if pre.get("extraction_success") else "error"))
+    ob = details.get("original_size_bytes")
+    if ob is None:
+        ob = details.get("size_bytes")
+    out: dict[str, Any] = {
+        "status": status,
+        "original_format": pre.get("original_format"),
+        "original_bytes": ob,
+        "cleaned_bytes": details.get("cleaned_size_bytes", details.get("cleaned_bytes")),
+        "removed_line_count": pre.get("removed_line_count"),
+        "original_upload_filename": details.get("original_upload_filename"),
+        "indexed_target_filename": details.get("indexed_target_filename"),
+    }
+    if pre.get("preview_raw"):
+        out["preview_raw"] = pre.get("preview_raw")
+    if pre.get("preview_cleaned"):
+        out["preview_cleaned"] = pre.get("preview_cleaned")
+    if pre.get("error"):
+        out["error"] = pre.get("error")
+    return out
+
+
 @router.get("/documents")
 def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[str, Any]:
     svc = get_admin_service()
@@ -40,6 +67,16 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
         for e in logs_entries
         if str(e.get("stage") or "")
         in (
+            "admin_document_uploaded_raw",
+            "document_preprocessing_started",
+            "document_preprocessing_done",
+            "document_preprocessing_error",
+            "document_processed_artifact_saved",
+            "document_compatibility_file_written",
+            "document_indexing_started",
+            "document_indexing_done",
+            "document_indexing_error",
+            "document_upload_pipeline_done",
             "admin_document_uploaded",
             "admin_document_reindex_started",
             "admin_document_reindex_done",
@@ -50,12 +87,30 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
     timeline_by_file: dict[str, dict[str, Any]] = {}
     for ev in docs_timeline:
         details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
-        filename = str((details or {}).get("filename") or "").strip()
-        if not filename:
+        keys = [
+            str((details or {}).get("indexed_target_filename") or "").strip().lower(),
+            str((details or {}).get("filename") or "").strip().lower(),
+            str((details or {}).get("original_upload_filename") or "").strip().lower(),
+        ]
+        for key in keys:
+            if key and key not in timeline_by_file:
+                timeline_by_file[key] = ev
+
+    preprocess_by_indexed: dict[str, dict[str, Any]] = {}
+    for ev in logs_entries:
+        st = str(ev.get("stage") or "")
+        if st not in ("document_upload_pipeline_done", "admin_document_uploaded"):
             continue
-        key = filename.lower()
-        if key not in timeline_by_file:
-            timeline_by_file[key] = ev
+        details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
+        pub = _preprocessing_public_from_upload(details)
+        if pub is None:
+            continue
+        itn = str(details.get("indexed_target_filename") or "").strip().lower()
+        fn = str(details.get("filename") or "").strip().lower()
+        ouf = str(details.get("original_upload_filename") or "").strip().lower()
+        for key in (itn, fn, ouf):
+            if key and key not in preprocess_by_indexed:
+                preprocess_by_indexed[key] = pub
 
     items: list[dict[str, Any]] = []
     for row in docs_limited:
@@ -80,6 +135,7 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
             else "pending"
         )
         linked = timeline_by_file.get(filename.lower())
+        preprocessing = preprocess_by_indexed.get(filename.lower())
         items.append(
             {
                 "document_id": str(row.get("document_id") or ""),
@@ -96,7 +152,8 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
                 "modified_at": None,
                 "path_category": None,
                 "last_indexing_event": linked,
-            }
+                "preprocessing": preprocessing,
+            },
         )
 
     kb = svc.get_knowledge_base_status()

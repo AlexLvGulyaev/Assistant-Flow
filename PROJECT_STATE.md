@@ -1,5 +1,7 @@
 # PROJECT STATE
 
+> **Навигация:** накопительный engineering/advisory backlog по Assistant Flow — **[§47. Предложения по развитию](#section-af-47-development-backlog)** (номер раздела фиксирован).
+
 ## 1. Project Overview
 
 Project: `assistant-flow`
@@ -2656,4 +2658,76 @@ Unknown stage fallback допустим, но все OCR known stages должн
 
 - **§45.8** частично устарел: переключатель backend в Admin UI **есть** (Retrieval Settings); в настоящем параграфе зафиксировано разделение **control plane vs high-level overview**.
 - RAG-страница для «живой» полосы делает дополнительный **`GET /api/overview`** (compact `retrieval`); при недоступности overview полоса скрывается, логи RAG по-прежнему грузятся.
+
+---
+
+## 47. Предложения по развитию
+
+<a id="section-af-47-development-backlog"></a>
+
+Раздел является **накопительным operational knowledge log** для проекта **Assistant Flow** (без охвата сторонних учебных проектов: HR Assistant, competitor analyzer и т.п.). Здесь фиксируются только **рекомендации по развитию**: доработки, архитектурные и операционные указания, технический долг, направления эволюции; **положительные оценки не включаются**.
+
+**Правило ведения (фиксированная нумерация):** номер раздела **47** после создания **не меняется**. Новые записи добавляются **исключительно** как подразделы **`### 47.k`** следующие по возрастанию **`k`** (хронология вперёд; старые **`### 47.*`** не переписываются). Запрещено заводить новые верхнеуровневые разделы под тот же смысл или менять номер **47**.
+
+**Правило оформления записи (`### 47.k`):** для каждой записи указывать поля (в свободной форме, но полный охват):
+
+- **Источник** (модуль / урок / этап курса / внутренняя ревизия — только AF);
+- **Предложения по развитию** (конкретные действия);
+- **Architectural implications**;
+- **Operational implications**;
+- **Текущий статус реализации** — одно из: `planned` | `in progress` | `implemented` | `partially implemented` | `postponed` (при необходимости — по подпунктам).
+
+### 47.1
+
+**Источник:** Assistant Flow — PEm09 (модуль 4).
+
+**Предложения по развитию:**
+
+- сузить разрыв между архитектурной моделью и эксплуатацией (явные operational invariants, проверяемые в рантайме и в CI);
+- добавить минимальную аутентификацию/авторизацию на **Admin API** (защита операционного контура);
+- унифицировать логирование (единый контракт полей, корреляция `execution_id`, уровни шума);
+- перейти к **единому источнику** операционных логов (**PostgreSQL** / `processing_logs` как целевой контур; сократить или изолировать смешение с legacy **SQLite** там, где оно ещё встречается);
+- улучшить **operational onboarding** (что запускать, в каком порядке, какие health-эндпоинты смотреть);
+- подготовить **runbook**: FastAPI + React Admin UI + **docker-compose** (воспроизводимый стенд, секреты, миграции, smoke-порядок);
+- упростить вход нового разработчика (карта модулей, «где менять retrieval», «где смотреть логи»);
+- приоритизировать **operational maturity** и эксплуатационные инварианты вместо раздувания функциональных фич без наблюдаемости.
+
+**Architectural implications:**
+
+- сдвиг от feature-centric к **operational platform engineering**;
+- усиление **production readiness** и формализации **operational invariants** (что считается «зелёным» продом для AF).
+
+**Operational implications:**
+
+- упрощение **deployment** и повышение **reproducibility** среды;
+- снижение стоимости **onboarding**;
+- централизация **observability** и снижение риска «двух истин» по логам.
+
+**Текущий статус реализации:** **`partially implemented`**. Обоснование (срез по репозиторию AF): health/overview/RAG-диагностика и **React Admin UI** развиваются; **PostgreSQL** используется для метаданных и `processing_logs`; полноценный **auth на Admin API**, полный отказ от дублирующих SQLite-путей для операционного контура и формальный **runbook** под compose — в основном **`planned`** / **`in progress`**; onboarding улучшается точечно (документация, `PROJECT_STATE`), но без единого «паспорта эксплуатации».
+
+### 47.2
+
+**Источник:** Assistant Flow — PEr01 (модуль 5).
+
+**Предложения по развитию:**
+
+- добавить **наглядные примеры** влияния конкретных chunks на generation (trace: chunk → prompt context → ответ);
+- усилить **observability retrieval** (метрики задержки, пустой индекс, смена backend, согласованность счётчиков);
+- ввести **retrieval quality metrics** (coverage, hit-rate, threshold violations, пустые retrieval);
+- рассмотреть **reranking** / второй этап ранжирования поверх vector search (отдельный слой, совместимый с multi-backend);
+- контролировать **chunk size** и политику разбиения (связь с индексацией и стоимостью контекста);
+- контролировать **отсутствие leakage** системных / инструктивных промптов в пользовательскую историю и внешние логи.
+
+**Architectural implications:**
+
+- эволюция от «RAG demo» к **retrieval observability platform**;
+- закрепление **retrieval diagnostics** и измеримого **quality layer** поверх retrieval (без смешения несовместимых score между backend без явной нормализации).
+
+**Operational implications:**
+
+- развитие **diagnostic tooling** (Admin UI, лог-схемы, предупреждения reindex);
+- контроль **semantic consistency** и всего пайплайна **retrieval → generation**;
+- задел под **quality benchmarking** (регрессии по фиксированным наборам запросов).
+
+**Текущий статус реализации:** **`partially implemented`**. Обоснование: **Retrieval Settings**, **multi-backend** (Chroma / FAISS / Weaviate), **RetrievalBackendManager**, обогащённые **RAG diagnostics** (`active_backend`, chunk-level backend, readiness в UI), **P6.x** слои (evaluation, security, cache groundwork) и операционные страницы **Overview / Documents / RAG** закрывают часть запросов; **reranking**, формальные **quality metrics** в виде дашбордов/алертов, системные **semantic tests** на leakage и детальные учебные «chunk impact» сценарии — в основном **`planned`** / **`postponed`** до выделения объёма работ.
 

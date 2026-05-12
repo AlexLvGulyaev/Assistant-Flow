@@ -145,6 +145,7 @@ export function DocumentsPage() {
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (extFilter !== "all" && d.extension !== extFilter) return false;
       if (!q) return true;
+      const pre = d.preprocessing;
       const hay = [
         d.filename,
         d.extension,
@@ -152,6 +153,10 @@ export function DocumentsPage() {
         d.status_raw,
         String(d.chunk_count ?? ""),
         String(d.active_version ?? ""),
+        pre?.original_upload_filename,
+        pre?.indexed_target_filename,
+        pre?.status,
+        pre?.original_format,
       ]
         .join(" ")
         .toLowerCase();
@@ -366,10 +371,14 @@ export function DocumentsPage() {
     try {
       const r = await uploadDocument(f);
       if (r.success) {
+        const sizes =
+          r.original_bytes != null && r.cleaned_bytes != null
+            ? ` · raw ${formatBytes(r.original_bytes)} → cleaned ${formatBytes(r.cleaned_bytes)}`
+            : "";
         setUploadHint(
           r.chunks != null
-            ? `Загружено, индексация завершена · чанков: ${r.chunks}`
-            : "Загружено"
+            ? `Загружено, индексация завершена · чанков: ${r.chunks}${sizes}`
+            : `Загружено${sizes}`
         );
         setRefreshKey((k) => k + 1);
         if (r.document_id) {
@@ -477,7 +486,7 @@ export function DocumentsPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,text/plain"
+            accept=".txt,.html,.htm,text/plain,text/html"
             className="docs-file-input"
             aria-hidden
             onChange={onFileChange}
@@ -730,6 +739,28 @@ export function DocumentsPage() {
                       </span>
                     </div>
                     <div className="logs-item__preview">{d.filename || "—"}</div>
+                    {d.preprocessing ? (
+                      <div className="logs-item__row logs-item__meta muted" title="preprocessing">
+                        <span>
+                          pre: {d.preprocessing.status === "ok" ? "ok" : "err"}
+                          {d.preprocessing.original_format
+                            ? ` · ${d.preprocessing.original_format}`
+                            : ""}
+                          {" · "}
+                          {formatBytes(d.preprocessing.original_bytes)} →{" "}
+                          {formatBytes(d.preprocessing.cleaned_bytes)}
+                          {d.preprocessing.removed_line_count != null
+                            ? ` · −${d.preprocessing.removed_line_count} строк`
+                            : ""}
+                        </span>
+                      </div>
+                    ) : null}
+                    {d.preprocessing?.original_upload_filename &&
+                    d.preprocessing.original_upload_filename !== d.filename ? (
+                      <div className="logs-item__row logs-item__meta muted mono truncate">
+                        исходный: {d.preprocessing.original_upload_filename}
+                      </div>
+                    ) : null}
                     <div className="logs-item__row logs-item__meta muted">
                       <span className="mono truncate" title={d.document_id}>
                         {shortId(d.document_id)}
@@ -836,11 +867,51 @@ export function DocumentsPage() {
                       </table>
                     </div>
                     <div className="docs-op-grid docs-op-grid--summary docs-op-grid--panel">
-                      <DocFieldRow label="Файл">
+                      <DocFieldRow label="Файл (индекс)">
                         <span className="mono" title={String(selected.filename)}>
                           {String(selected.filename)}
                         </span>
                       </DocFieldRow>
+                      {selected.preprocessing?.original_upload_filename ? (
+                        <DocFieldRow label="Исходный файл">
+                          <span
+                            className="mono"
+                            title={String(selected.preprocessing.original_upload_filename)}
+                          >
+                            {String(selected.preprocessing.original_upload_filename)}
+                          </span>
+                        </DocFieldRow>
+                      ) : null}
+                      {selected.preprocessing ? (
+                        <>
+                          <DocFieldRow label="Preprocessing">
+                            <span className="mono">
+                              {selected.preprocessing.status === "ok" ? "OK" : "ошибка"}
+                              {selected.preprocessing.original_format
+                                ? ` · ${selected.preprocessing.original_format}`
+                                : ""}
+                            </span>
+                          </DocFieldRow>
+                          {selected.preprocessing.error ? (
+                            <DocFieldRow label="Preprocessing error">
+                              <span className="mono docs-card-err">
+                                {String(selected.preprocessing.error)}
+                              </span>
+                            </DocFieldRow>
+                          ) : null}
+                          <DocFieldRow label="Размер raw → cleaned">
+                            <span className="mono">
+                              {formatBytes(selected.preprocessing.original_bytes)} →{" "}
+                              {formatBytes(selected.preprocessing.cleaned_bytes)}
+                            </span>
+                          </DocFieldRow>
+                          <DocFieldRow label="Удалено строк (эврист.)">
+                            <span className="mono">
+                              {selected.preprocessing.removed_line_count ?? "—"}
+                            </span>
+                          </DocFieldRow>
+                        </>
+                      ) : null}
                       <DocFieldRow label="Статус PostgreSQL">
                         <StatusBadge status={docStatusRaw || "—"} />
                       </DocFieldRow>
@@ -883,6 +954,33 @@ export function DocumentsPage() {
                         </span>
                       </DocFieldRow>
                     </div>
+                    {selected.preprocessing &&
+                    (selected.preprocessing.preview_raw ||
+                      selected.preprocessing.preview_cleaned) ? (
+                      <div className="docs-preprocessing-previews docs-op-grid--panel">
+                        <div className="docs-zone-title docs-zone-title--sub">
+                          Preprocessing preview (обрезано)
+                        </div>
+                        <div className="docs-preprocessing-previews__grid">
+                          {selected.preprocessing.preview_raw ? (
+                            <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell">
+                              <div className="docs-zone-title">До очистки</div>
+                              <pre className="docs-preview-body mono docs-preview-body--short">
+                                {selected.preprocessing.preview_raw}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {selected.preprocessing.preview_cleaned ? (
+                            <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell">
+                              <div className="docs-zone-title">После</div>
+                              <pre className="docs-preview-body mono docs-preview-body--short">
+                                {selected.preprocessing.preview_cleaned}
+                              </pre>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
                     <p
                       className={`docs-sync-oneline mono docs-sync-oneline--panel ${detail.chunks_sync_ok ? "docs-sync-oneline--ok" : "docs-sync-oneline--warn"}`}
                       title={
@@ -1030,6 +1128,13 @@ export function DocumentsPage() {
       </div>
     </div>
   );
+}
+
+function formatBytes(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function shortId(id: string): string {

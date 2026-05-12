@@ -275,6 +275,8 @@ export interface SummaryRoutesBlock {
   rag: number;
   images: number;
   audio_voice: number;
+  /** Distinct execution_id in ``document`` bucket (upload / preprocess / index pipeline). */
+  documents?: number;
   other_unknown: number;
 }
 
@@ -322,7 +324,7 @@ export interface LogItem {
   mode?: string | null;
   /** High-level modality (``text`` includes OCR). From Admin API ``log_row_to_entry``. */
   modality?: string | null;
-  /** Logs filter bucket: ``text`` | ``rag`` | ``image`` | ``audio`` | ``other``. */
+  /** Logs filter bucket: ``text`` | ``rag`` | ``image`` | ``audio`` | ``document`` | ``other``. */
   modality_route?: string | null;
   details?: Record<string, unknown> | string | null;
   error_text?: string | null;
@@ -333,6 +335,20 @@ export interface LogsRecentResponse {
   offset?: number;
   count?: number;
   items?: LogItem[];
+}
+
+/** Merged from ``document_upload_pipeline_done`` / legacy ``admin_document_uploaded`` logs. */
+export interface DocumentPreprocessingPublic {
+  status?: string;
+  original_format?: string | null;
+  original_bytes?: number | null;
+  cleaned_bytes?: number | null;
+  removed_line_count?: number | null;
+  original_upload_filename?: string | null;
+  indexed_target_filename?: string | null;
+  preview_raw?: string | null;
+  preview_cleaned?: string | null;
+  error?: string | null;
 }
 
 export interface DocumentItem {
@@ -349,6 +365,7 @@ export interface DocumentItem {
   modified_at?: string | null;
   path_category?: string | null;
   last_indexing_event?: LogItem | null;
+  preprocessing?: DocumentPreprocessingPublic | null;
 }
 
 export interface DocumentsObservability {
@@ -422,12 +439,22 @@ export interface DocumentDetailResponse {
 }
 
 export interface UploadDocumentResponse {
+  upload_id?: string | null;
   filename?: string;
+  original_filename?: string | null;
   path?: string;
   success?: boolean;
   error?: string | null;
   chunks?: number;
   document_id?: string | null;
+  preprocessing?: DocumentPreprocessingPublic | null;
+  original_bytes?: number | null;
+  cleaned_bytes?: number | null;
+  raw_asset_ref?: string | null;
+  cleaned_asset_ref?: string | null;
+  processed_asset_ref?: string | null;
+  compatibility_path?: string | null;
+  compatibility_paths_written?: string[] | null;
 }
 
 export interface ReindexRequestBody {

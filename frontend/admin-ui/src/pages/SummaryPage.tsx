@@ -8,6 +8,7 @@ import { OperationalRefreshButton } from "../components/OperationalRefreshButton
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { stageToActionRu } from "../utils/operationalLabels";
 
 const HOUR_OPTIONS = [24, 48, 168];
 
@@ -129,7 +130,11 @@ export function SummaryPage() {
     voice_pipeline_stage_events: 0,
   };
   const lastAdminStage =
-    lifecycle.find((x) => x.stage.startsWith("admin_"))?.stage ?? "—";
+    lifecycle.find(
+      (x) => x.stage.startsWith("admin_") || x.stage.startsWith("document")
+    )?.stage ?? "—";
+  const lastAdminStageLabel =
+    lastAdminStage === "—" ? "—" : stageToActionRu(lastAdminStage, null);
 
   return (
     <div className="page summary-page">
@@ -171,6 +176,8 @@ export function SummaryPage() {
             <dd>{routes.images}</dd>
             <dt>Аудио / voice</dt>
             <dd>{routes.audio_voice}</dd>
+            <dt>Документ</dt>
+            <dd>{formatNum(routes.documents ?? 0)}</dd>
             <dt>Прочие / без маршрута</dt>
             <dd>{routes.other_unknown}</dd>
           </dl>
@@ -186,7 +193,9 @@ export function SummaryPage() {
             <dl className="kv summary-kv">
               {lifecycle.map((row) => (
                 <Fragment key={row.stage}>
-                  <dt className="mono">{row.stage}</dt>
+                  <dt className="mono" title={row.stage}>
+                    {stageToActionRu(row.stage, null)}
+                  </dt>
                   <dd>{row.events}</dd>
                 </Fragment>
               ))}
@@ -236,10 +245,18 @@ export function SummaryPage() {
             <dd>{formatNum(data.admin_events)}</dd>
             <dt>Запуски переиндексации</dt>
             <dd>{formatNum(data.reindex_starts)}</dd>
-            <dt>Загрузки документов</dt>
-            <dd>{formatNum(lifecycleMap.get("admin_document_uploaded") ?? 0)}</dd>
+            <dt>Загрузки документов (pipeline)</dt>
+            <dd>
+              {formatNum(
+                lifecycleMap.get("document_upload_pipeline_done") ??
+                  lifecycleMap.get("admin_document_uploaded") ??
+                  0
+              )}
+            </dd>
             <dt>Последнее событие admin/reindex</dt>
-            <dd className="mono">{lastAdminStage}</dd>
+            <dd className="mono" title={lastAdminStage}>
+              {lastAdminStageLabel}
+            </dd>
             <dt>Сессии аудио-маршрута</dt>
             <dd>{formatNum(audioDet.sessions_route_bucket)}</dd>
             <dt>События voice pipeline</dt>

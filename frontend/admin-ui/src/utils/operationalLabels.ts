@@ -30,6 +30,16 @@ const EVENT_TYPE_RU: Record<string, string> = {
   ocr_response_sent: "OCR-ответ отправлен",
   database_schema: "Служебное событие схемы БД",
   admin_document_uploaded: "Документ загружен",
+  admin_document_uploaded_raw: "Сырой документ сохранён (assets)",
+  document_preprocessing_started: "Preprocessing запущен",
+  document_preprocessing_done: "Preprocessing завершён",
+  document_preprocessing_error: "Ошибка preprocessing",
+  document_processed_artifact_saved: "Сохранён processed .cleaned.txt",
+  document_compatibility_file_written: "Записан compatibility .txt (RAG dir)",
+  document_indexing_started: "Индексация документа запущена",
+  document_indexing_done: "Индексация документа завершена",
+  document_indexing_error: "Ошибка индексации документа",
+  document_upload_pipeline_done: "Загрузка документа (pipeline) завершена",
   admin_reindex_started: "Переиндексация (полная) запущена",
   admin_reindex_done: "Переиндексация завершена",
   admin_reindex_error: "Ошибка переиндексации",
@@ -79,6 +89,7 @@ const ROUTE_ALIASES: Record<string, string> = {
   audio: "audio",
   voice: "audio",
   voice_response: "audio",
+  documents: "document",
 };
 
 export const ROUTE_LABEL_RU: Record<string, string> = {
@@ -86,6 +97,7 @@ export const ROUTE_LABEL_RU: Record<string, string> = {
   text: "Текст",
   image_generation: "Генерация изображений",
   audio: "Аудио",
+  document: "Документ",
   unknown: "Прочее",
 };
 
@@ -104,6 +116,7 @@ export type NormalizedRouteKey =
   | "text"
   | "image_generation"
   | "audio"
+  | "document"
   | "unknown";
 
 /** Normalize lifecycle ``stage`` / machine ids (trim, BOM, NFKC, collapse spaces → _). */
@@ -127,6 +140,7 @@ export function normalizeRouteKey(route: string | null | undefined): NormalizedR
   if (norm === "text") return "text";
   if (norm === "image_generation") return "image_generation";
   if (norm === "audio") return "audio";
+  if (norm === "document") return "document";
   return "unknown";
 }
 

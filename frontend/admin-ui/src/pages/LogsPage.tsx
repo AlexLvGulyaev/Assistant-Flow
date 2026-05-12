@@ -30,7 +30,7 @@ const WINDOW_OPTIONS: Array<{ label: string; ms: number }> = [
   { label: "7d", ms: 7 * 24 * 60 * 60 * 1000 },
 ];
 
-type RouteFilter = "all" | "text" | "rag" | "image" | "audio" | "other";
+type RouteFilter = "all" | "text" | "rag" | "image" | "audio" | "document" | "other";
 type StatusFilter = "all" | "success" | "error" | "other";
 
 interface SessionView {
@@ -274,6 +274,7 @@ export function LogsPage() {
                   <option value="rag">rag</option>
                   <option value="image">image</option>
                   <option value="audio">audio</option>
+                  <option value="document">документ</option>
                   <option value="other">прочее</option>
                 </select>
                 <select
@@ -546,6 +547,7 @@ function pickRouteKey(rows: LogItem[]): string {
   if (f === "audio") return "audio";
   if (f === "rag") return "rag";
   if (f === "text") return "text";
+  if (f === "document") return "document";
   if (f === "other") {
     for (const r of rows) {
       const det = r.details;
@@ -721,8 +723,14 @@ function pickRoute(rows: LogItem[]): RouteFilter {
     const mr = String(ordered[i].modality_route ?? "")
       .trim()
       .toLowerCase();
-    if (mr === "text" || mr === "rag" || mr === "image" || mr === "audio") {
-      return mr;
+    if (
+      mr === "text" ||
+      mr === "rag" ||
+      mr === "image" ||
+      mr === "audio" ||
+      mr === "document"
+    ) {
+      return mr as RouteFilter;
     }
   }
   const vals = ordered
@@ -743,6 +751,21 @@ function pickRoute(rows: LogItem[]): RouteFilter {
     if (v.includes("audio") || v.includes("voice")) return "audio";
     if (v === "image_generation" || v === "image_response" || v === "image") return "image";
     if (v.includes("text")) return "text";
+  }
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const st = String(ordered[i].stage ?? "")
+      .trim()
+      .toLowerCase();
+    if (st.startsWith("admin_document")) return "document";
+    if (
+      st.startsWith("document_preprocessing_") ||
+      st.startsWith("document_processed_") ||
+      st.startsWith("document_compatibility_") ||
+      st.startsWith("document_indexing_") ||
+      st.startsWith("document_upload_")
+    ) {
+      return "document";
+    }
   }
   return "other";
 }

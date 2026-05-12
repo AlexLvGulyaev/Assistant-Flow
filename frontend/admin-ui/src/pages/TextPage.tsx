@@ -1042,6 +1042,11 @@ function isForeignStage(stageRaw: string): boolean {
   if (s.startsWith("voice_")) return true;
   if (s.startsWith("audio_generation")) return true;
   if (s.startsWith("admin_document") || s.startsWith("admin_reindex")) return true;
+  if (
+    /^document_(upload|preprocessing|processed|compatibility|indexing)_/.test(s)
+  ) {
+    return true;
+  }
   return false;
 }
 
