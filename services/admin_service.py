@@ -48,7 +48,7 @@ from services.retrieval.factory import (
     effective_rag_backend_from_sources,
     normalize_rag_backend,
 )
-from services.preprocessing.preprocessing_service import PreprocessingService
+from services.preprocessing.preprocessing_service import Format, PreprocessingService
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
@@ -125,6 +125,11 @@ SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
     "document_indexing_error",
     "document_upload_pipeline_done",
     "admin_document_uploaded",
+    "document_edit_started",
+    "document_edit_saved",
+    "document_reindex_started",
+    "document_reindex_done",
+    "document_reindex_error",
     "processing_error",
 )
 
@@ -286,6 +291,8 @@ def _preprocessing_pipeline_component_names(ext: str) -> tuple[str, str, str]:
     """Stable machine-readable names for upload pipeline logs (Phase 1)."""
     if ext in (".html", ".htm"):
         return "HtmlExtractor", "html_cleaner + text_cleaner", "text_normalizer"
+    if ext == ".pdf":
+        return "PdfExtractor", "text_cleaner", "text_normalizer"
     return "TxtExtractor", "text_cleaner", "text_normalizer"
 
 
@@ -508,8 +515,8 @@ class AdminService:
         """
         safe = Path(filename).name
         ext = Path(safe).suffix.lower()
-        if ext not in (".txt", ".html", ".htm"):
-            raise ValueError("Only .txt, .html, .htm uploads are supported.")
+        if ext not in (".txt", ".html", ".htm", ".pdf"):
+            raise ValueError("Only .txt, .html, .htm, .pdf uploads are supported.")
         if not safe or safe in (".", ".."):
             raise ValueError("Invalid file name.")
         stem = Path(safe).stem
@@ -540,7 +547,9 @@ class AdminService:
 
         raw_bytes = bytes(data)
         raw_ct = mimetypes.guess_type(safe)[0] or (
-            "text/html" if ext in (".html", ".htm") else "text/plain"
+            "text/html"
+            if ext in (".html", ".htm")
+            else ("application/pdf" if ext == ".pdf" else "text/plain")
         )
         raw_ref = self._asset_repository.save_bytes(
             raw_bytes,
@@ -591,12 +600,17 @@ class AdminService:
         try:
             cleaned_text, diag = preprocessor.run(raw_bytes, original_filename=safe)
         except Exception as exc:
-            fmt = "html" if ext in (".html", ".htm") else "txt"
+            if ext in (".html", ".htm"):
+                fmt = "html"
+            elif ext == ".pdf":
+                fmt = "pdf"
+            else:
+                fmt = "txt"
             fail_diag = PreprocessingService.failure_diag(
                 original_filename=safe,
                 original_bytes=len(raw_bytes),
                 err=str(exc),
-                fmt=cast(Any, fmt),
+                fmt=cast(Format, fmt),
             ).to_log_dict()
             _emit(
                 "document_preprocessing_error",
@@ -1635,8 +1649,18 @@ class AdminService:
             ),
         }
 
-    def reindex_document_file(self, document_id: uuid.UUID) -> dict[str, Any]:
-        """Re-embed one on-disk document (no global Chroma reset)."""
+    def reindex_document_file(
+        self,
+        document_id: uuid.UUID,
+        *,
+        reindex_log_kind: str = "admin",
+    ) -> dict[str, Any]:
+        """Re-embed one on-disk document (no global Chroma reset).
+
+        ``reindex_log_kind``:
+        - ``admin`` — стадии ``admin_document_reindex_*`` (кнопка «Переиндексировать»);
+        - ``document`` — ``document_reindex_*`` (после правки canonical текста).
+        """
         if not (self._config.database_url or "").strip():
             return {"success": False, "error": "DATABASE_URL not configured"}
         row: dict[str, Any] | None = None
@@ -1668,10 +1692,26 @@ class AdminService:
             fdir = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
             reindex_details["backend_index_path"] = str(fdir)
             reindex_details["manifest_path"] = str(fdir / "manifest.json")
+        kind = (reindex_log_kind or "admin").strip().lower()
+        st_started = (
+            "document_reindex_started"
+            if kind == "document"
+            else "admin_document_reindex_started"
+        )
+        st_err = (
+            "document_reindex_error"
+            if kind == "document"
+            else "admin_document_reindex_error"
+        )
+        st_done = (
+            "document_reindex_done"
+            if kind == "document"
+            else "admin_document_reindex_done"
+        )
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
-            stage="admin_document_reindex_started",
+            stage=st_started,
             status="started",
             details=reindex_details,
         )
@@ -1686,7 +1726,7 @@ class AdminService:
             self._lifecycle.log_processing_event(
                 execution_id=execution_id,
                 intake_event_id=None,
-                stage="admin_document_reindex_error",
+                stage=st_err,
                 status="error",
                 details={
                     "document_id": str(document_id),
@@ -1714,7 +1754,7 @@ class AdminService:
         self._lifecycle.log_processing_event(
             execution_id=execution_id,
             intake_event_id=None,
-            stage="admin_document_reindex_done",
+            stage=st_done,
             status="success",
             details=done_details,
         )
@@ -1725,11 +1765,138 @@ class AdminService:
             "document_id": str(document_id),
         }
 
+    def save_canonical_document_text_edit(
+        self,
+        document_id: uuid.UUID,
+        *,
+        new_text: str,
+        editor_source: str = "admin_ui",
+    ) -> dict[str, Any]:
+        """
+        Human-in-the-loop: перезапись **canonical indexed .txt** на диске, зеркала
+        compatibility, затем переиндексация (новая ``document_versions`` при смене hash).
+
+        Не трогает raw upload / preprocessing artifacts.
+        """
+        if not (self._config.database_url or "").strip():
+            return {"success": False, "error": "DATABASE_URL not configured"}
+        src = (editor_source or "admin_ui").strip() or "admin_ui"
+        text = str(new_text).replace("\r\n", "\n").replace("\r", "\n")
+        if len(text) > 12_000_000:
+            return {"success": False, "error": "text too large (max ~12M chars)"}
+
+        execution_id = str(uuid.uuid4())
+        row: dict[str, Any] | None = None
+        prev_vn = 0
+        next_vn = 1
+        old_text = ""
+        try:
+            with get_connection() as conn:
+                row = self._doc_repo.get_document(conn, document_id)
+                if not row:
+                    conn.commit()
+                    return {"success": False, "error": "document not found"}
+                active = self._doc_repo.find_active_version_for_document(conn, document_id)
+                prev_vn = int(active["version_number"]) if active else 0
+                next_vn = int(self._doc_repo.max_version_number(conn, document_id)) + 1
+                conn.commit()
+        except Exception as exc:
+            return {"success": False, "error": f"postgres: {exc}"}
+
+        storage = str(row.get("storage_path") or "").strip()
+        source_fn = str(row.get("source_filename") or "").strip()
+        path = Path(storage) if storage else Path()
+        if not path.is_file() and source_fn:
+            path = self._documents_dir / source_fn
+        if not path.is_file():
+            return {"success": False, "error": "canonical file not found on disk"}
+        index_name = path.name
+        if not index_name.lower().endswith((".txt", ".md")):
+            return {"success": False, "error": "only .txt / .md canonical files are editable"}
+
+        try:
+            old_text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return {"success": False, "error": f"read failed: {exc}"}
+
+        cleaned_bytes = text.encode("utf-8")
+        diff_size = abs(len(text) - len(old_text))
+
+        base_log: dict[str, Any] = {
+            "document_id": str(document_id),
+            "filename": source_fn or index_name,
+            "indexed_target_filename": index_name,
+            "editor_source": src,
+            "previous_version": prev_vn,
+            "expected_new_version": next_vn,
+            "edited_characters": len(text),
+            "diff_size": diff_size,
+        }
+        self._lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=None,
+            stage="document_edit_started",
+            status="started",
+            details=base_log,
+        )
+
+        try:
+            _write_cleaned_rag_txt_everywhere(
+                self._config, index_name=index_name, cleaned_bytes=cleaned_bytes
+            )
+        except Exception as exc:
+            self._lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=None,
+                stage="document_edit_saved",
+                status="error",
+                details={**base_log, "error": str(exc)[:2000]},
+                error_text=str(exc)[:8000],
+            )
+            return {"success": False, "error": str(exc), "document_id": str(document_id)}
+
+        self._lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=None,
+            stage="document_edit_saved",
+            status="success",
+            details={
+                **base_log,
+                "new_version": next_vn,
+                "cleaned_size_bytes": len(cleaned_bytes),
+            },
+        )
+
+        r = self.reindex_document_file(document_id, reindex_log_kind="document")
+        out: dict[str, Any] = {
+            **r,
+            "edit_execution_id": execution_id,
+            "previous_version": prev_vn,
+            "expected_new_version": next_vn,
+            "editor_source": src,
+            "edited_characters": len(text),
+            "diff_size": diff_size,
+        }
+        if not r.get("success"):
+            return out
+        try:
+            with get_connection() as conn:
+                act = self._doc_repo.find_active_version_for_document(conn, document_id)
+                conn.commit()
+            if act:
+                out["new_version"] = int(act.get("version_number") or next_vn)
+            else:
+                out["new_version"] = next_vn
+        except Exception:
+            out["new_version"] = next_vn
+        return out
+
     def get_document_detail_bundle(
         self,
         document_id: uuid.UUID,
         *,
         version_number: int | None = None,
+        include_full_canonical_text: bool = False,
     ) -> dict[str, Any]:
         """Document row, versions, chunk rows, FS preview, and raw timeline rows."""
         if not (self._config.database_url or "").strip():
@@ -1792,6 +1959,19 @@ class AdminService:
         except OSError:
             file_size_bytes = None
         text_preview = _read_kb_text_preview(path, 12000)
+        canonical_text_full: str | None = None
+        if include_full_canonical_text:
+            if path.is_file() and path.suffix.lower() in (".txt", ".md"):
+                try:
+                    ft = path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    return {"error": "load_failed", "message": str(exc)}
+                if len(ft) > 12_000_000:
+                    return {
+                        "error": "load_failed",
+                        "message": "canonical file too large for editor",
+                    }
+                canonical_text_full = ft
         declared = int((selected or {}).get("chunk_count") or 0)
         doc_id_str = str(doc.get("document_id") or "")
         chunk_sync_ok = True
@@ -1904,6 +2084,7 @@ class AdminService:
             "chunk_counts_by_version": cc_norm,
             "text_preview": text_preview,
             "preview_available": text_preview is not None,
+            "canonical_text_full": canonical_text_full,
             "embedding_model": embed_model,
             "file_size_bytes": file_size_bytes,
             "timeline_rows": timeline_rows,

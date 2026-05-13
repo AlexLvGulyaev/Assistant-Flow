@@ -33,6 +33,10 @@ storage/assets/audio/
 storage/assets/images/
 storage/assets/documents/
 storage/assets/.browser_audio_preview/
+storage/assets/processed_documents
+storage/assets/incoming_images
+storage/assets/telegram
+storage/faiss
 
 # Archives / local bundles
 *.zip

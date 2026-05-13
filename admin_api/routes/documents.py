@@ -40,6 +40,12 @@ def _preprocessing_public_from_upload(details: dict[str, Any]) -> dict[str, Any]
         out["preview_cleaned"] = pre.get("preview_cleaned")
     if pre.get("error"):
         out["error"] = pre.get("error")
+    if pre.get("extractor") is not None:
+        out["extractor"] = pre.get("extractor")
+    if pre.get("page_count") is not None:
+        out["page_count"] = pre.get("page_count")
+    if pre.get("extracted_characters") is not None:
+        out["extracted_characters"] = pre.get("extracted_characters")
     return out
 
 
@@ -78,6 +84,11 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
             "document_indexing_error",
             "document_upload_pipeline_done",
             "admin_document_uploaded",
+            "document_edit_started",
+            "document_edit_saved",
+            "document_reindex_started",
+            "document_reindex_done",
+            "document_reindex_error",
             "admin_document_reindex_started",
             "admin_document_reindex_done",
             "admin_document_reindex_error",
@@ -194,6 +205,11 @@ class ReindexRequest(BaseModel):
     document_id: str | None = Field(default=None)
 
 
+class DocumentTextEditRequest(BaseModel):
+    text: str = Field(default="", max_length=12_000_000)
+    editor_source: str = Field(default="admin_ui", max_length=64)
+
+
 @router.post("/documents/upload")
 async def api_documents_upload(file: UploadFile = File(...)) -> dict[str, Any]:
     svc = get_admin_service()
@@ -239,23 +255,27 @@ def api_documents_reindex(body: ReindexRequest) -> dict[str, Any]:
 def api_document_detail(
     document_id: str,
     version_number: int | None = Query(default=None, ge=1),
+    full_canonical_text: bool = Query(default=False),
 ) -> dict[str, Any]:
     try:
         uid = uuid.UUID(document_id.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid document_id") from exc
     svc = get_admin_service()
-    bundle = svc.get_document_detail_bundle(uid, version_number=version_number)
+    bundle = svc.get_document_detail_bundle(
+        uid,
+        version_number=version_number,
+        include_full_canonical_text=full_canonical_text,
+    )
     err = bundle.get("error")
     if err == "not_found":
         raise HTTPException(status_code=404, detail="document not found")
     if err == "postgres_unavailable":
         raise HTTPException(status_code=503, detail="PostgreSQL not configured")
     if err == "load_failed":
-        raise HTTPException(
-            status_code=500,
-            detail=str(bundle.get("message") or "load_failed"),
-        )
+        msg = str(bundle.get("message") or "load_failed")
+        code = 413 if "too large" in msg.lower() else 500
+        raise HTTPException(status_code=code, detail=msg)
 
     raw_rows = bundle.pop("timeline_rows", [])
     timeline = [log_row_to_entry(r) for r in raw_rows]
@@ -263,6 +283,29 @@ def api_document_detail(
     timeline.sort(key=lambda e: str(e.get("created_at") or ""))
     bundle["timeline"] = timeline
     return bundle
+
+
+@router.post("/documents/{document_id}/edit-text")
+def api_document_edit_text(
+    document_id: str,
+    body: DocumentTextEditRequest,
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(document_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid document_id") from exc
+    svc = get_admin_service()
+    result = svc.save_canonical_document_text_edit(
+        uid,
+        new_text=body.text,
+        editor_source=body.editor_source,
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=str(result.get("error") or "edit failed"),
+        )
+    return result
 
 
 def _to_iso(value: Any) -> str | None:

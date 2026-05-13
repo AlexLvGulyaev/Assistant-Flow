@@ -10,6 +10,7 @@ import {
 import {
   fetchDocumentDetail,
   fetchDocuments,
+  postDocumentTextEdit,
   postDocumentsReindex,
   uploadDocument,
   type DocumentDetailResponse,
@@ -32,6 +33,8 @@ import {
 
 const PAGE_SIZE = 10;
 const DOC_FETCH_LIMIT = 400;
+
+type LargeDocViewerMode = "closed" | "raw" | "indexed_view" | "indexed_edit";
 
 function DocFieldRow({
   label,
@@ -78,6 +81,12 @@ export function DocumentsPage() {
   const [indexPopOpen, setIndexPopOpen] = useState(false);
   const summaryPopRef = useRef<HTMLDivElement | null>(null);
   const indexPopRef = useRef<HTMLDivElement | null>(null);
+  const largeViewerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [largeViewerMode, setLargeViewerMode] = useState<LargeDocViewerMode>("closed");
+  const [largeViewerText, setLargeViewerText] = useState("");
+  const [largeViewerLoading, setLargeViewerLoading] = useState(false);
+  const [largeViewerActionBusy, setLargeViewerActionBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +204,18 @@ export function DocumentsPage() {
     });
   }, [detail?.timeline]);
 
+  const canEditIndexedText = useMemo(() => {
+    if (!detail?.preview_available || !detail.text_preview) return false;
+    const av = detail.active_version?.version_number;
+    const sv = detail.selected_version?.version_number;
+    return av != null && sv != null && av === sv;
+  }, [detail]);
+
+  const hasIndexedPreview = useMemo(
+    () => !!(detail?.preview_available && detail.text_preview),
+    [detail?.preview_available, detail?.text_preview]
+  );
+
   useEffect(() => {
     setCurrentPage(0);
   }, [statusFilter, extFilter, search]);
@@ -206,6 +227,36 @@ export function DocumentsPage() {
   useEffect(() => {
     setSelectedVersionNumber(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    setLargeViewerMode("closed");
+    setLargeViewerText("");
+    setLargeViewerLoading(false);
+  }, [selectedId, selectedVersionNumber]);
+
+  useEffect(() => {
+    if (largeViewerMode === "closed") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (largeViewerActionBusy) return;
+      e.preventDefault();
+      setLargeViewerMode("closed");
+      setLargeViewerText("");
+      setLargeViewerLoading(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [largeViewerMode, largeViewerActionBusy]);
+
+  useEffect(() => {
+    if (largeViewerMode !== "indexed_edit" || largeViewerLoading) return;
+    const el = largeViewerTextareaRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      el.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [largeViewerMode, largeViewerLoading]);
 
   useEffect(() => {
     if (!pageDocs.length) {
@@ -446,6 +497,46 @@ export function DocumentsPage() {
     rop?.effective_backend ?? gis?.active_retrieval_backend ?? undefined
   );
 
+  function closeLargeViewer() {
+    if (largeViewerActionBusy) return;
+    setLargeViewerMode("closed");
+    setLargeViewerText("");
+    setLargeViewerLoading(false);
+  }
+
+  function openRawLargeViewer() {
+    const raw = selected?.preprocessing?.preview_raw;
+    if (!raw) return;
+    setActionHint(null);
+    setLargeViewerText(raw);
+    setLargeViewerLoading(false);
+    setLargeViewerMode("raw");
+  }
+
+  async function openIndexedLargeViewer(mode: "indexed_view" | "indexed_edit") {
+    if (!selectedId) return;
+    setActionHint(null);
+    setLargeViewerMode(mode);
+    setLargeViewerLoading(true);
+    setLargeViewerText("");
+    try {
+      const d = await fetchDocumentDetail(
+        selectedId,
+        selectedVersionNumber ?? undefined,
+        { fullCanonicalText: true }
+      );
+      setDetail(d);
+      setLargeViewerText(d.canonical_text_full ?? d.text_preview ?? "");
+    } catch (e) {
+      setActionHint(
+        e instanceof Error ? e.message : "Не удалось загрузить полный текст"
+      );
+      setLargeViewerMode("closed");
+    } finally {
+      setLargeViewerLoading(false);
+    }
+  }
+
   return (
     <div className="page logs-page docs-page docs-page-viewport">
       <header className="docs-page-header-row">
@@ -486,7 +577,7 @@ export function DocumentsPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.html,.htm,text/plain,text/html"
+            accept=".txt,.html,.htm,.pdf,text/plain,text/html,application/pdf"
             className="docs-file-input"
             aria-hidden
             onChange={onFileChange}
@@ -752,6 +843,12 @@ export function DocumentsPage() {
                           {d.preprocessing.removed_line_count != null
                             ? ` · −${d.preprocessing.removed_line_count} строк`
                             : ""}
+                          {d.preprocessing.page_count != null
+                            ? ` · ${d.preprocessing.page_count} стр.`
+                            : ""}
+                          {d.preprocessing.extractor
+                            ? ` · ${d.preprocessing.extractor}`
+                            : ""}
                         </span>
                       </div>
                     ) : null}
@@ -910,6 +1007,16 @@ export function DocumentsPage() {
                               {selected.preprocessing.removed_line_count ?? "—"}
                             </span>
                           </DocFieldRow>
+                          {selected.preprocessing.page_count != null ? (
+                            <DocFieldRow label="Страниц (PDF)">
+                              <span className="mono">{selected.preprocessing.page_count}</span>
+                            </DocFieldRow>
+                          ) : null}
+                          {selected.preprocessing.extractor ? (
+                            <DocFieldRow label="Экстрактор">
+                              <span className="mono">{selected.preprocessing.extractor}</span>
+                            </DocFieldRow>
+                          ) : null}
                         </>
                       ) : null}
                       <DocFieldRow label="Статус PostgreSQL">
@@ -954,30 +1061,26 @@ export function DocumentsPage() {
                         </span>
                       </DocFieldRow>
                     </div>
-                    {selected.preprocessing &&
-                    (selected.preprocessing.preview_raw ||
-                      selected.preprocessing.preview_cleaned) ? (
-                      <div className="docs-preprocessing-previews docs-op-grid--panel">
-                        <div className="docs-zone-title docs-zone-title--sub">
-                          Preprocessing preview (обрезано)
+                    {selected.preprocessing?.preview_raw ? (
+                      <div className="docs-preprocessing-previews docs-preprocessing-previews--bleed">
+                        <div className="docs-preview-head docs-preprocessing-previews__head">
+                          <div className="docs-zone-title docs-zone-title--sub docs-preprocessing-previews__head-title">
+                            Preprocessing · до очистки (raw)
+                          </div>
+                          <button
+                            type="button"
+                            className="docs-action-btn docs-action-btn--secondary"
+                            onClick={openRawLargeViewer}
+                          >
+                            Открыть RAW
+                          </button>
                         </div>
-                        <div className="docs-preprocessing-previews__grid">
-                          {selected.preprocessing.preview_raw ? (
-                            <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell">
-                              <div className="docs-zone-title">До очистки</div>
-                              <pre className="docs-preview-body mono docs-preview-body--short">
-                                {selected.preprocessing.preview_raw}
-                              </pre>
-                            </div>
-                          ) : null}
-                          {selected.preprocessing.preview_cleaned ? (
-                            <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell">
-                              <div className="docs-zone-title">После</div>
-                              <pre className="docs-preview-body mono docs-preview-body--short">
-                                {selected.preprocessing.preview_cleaned}
-                              </pre>
-                            </div>
-                          ) : null}
+                        <div className="docs-preprocessing-previews__grid docs-preprocessing-previews__grid--single">
+                          <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell docs-preprocessing-previews__cell--full">
+                            <pre className="docs-preview-body mono docs-preview-body--preproc-raw">
+                              {selected.preprocessing.preview_raw}
+                            </pre>
+                          </div>
                         </div>
                       </div>
                     ) : null}
@@ -1002,10 +1105,36 @@ export function DocumentsPage() {
                   <div className="docs-panel-document__body">
                     <div className="docs-panel-document__body-stack">
                       <div className="docs-panel-block docs-panel-block--preview">
-                        <div className="docs-zone-title">Предпросмотр</div>
-                        <div className="docs-panel-block__scroll docs-panel-block__scroll--tall">
+                        <div className="docs-zone-title docs-preview-head">
+                          <span>Предпросмотр</span>
+                          <span className="docs-preview-head__actions">
+                            {hasIndexedPreview ? (
+                              <button
+                                type="button"
+                                className="docs-action-btn docs-action-btn--secondary"
+                                disabled={detailLoading || largeViewerActionBusy}
+                                onClick={() => void openIndexedLargeViewer("indexed_view")}
+                              >
+                                Открыть документ
+                              </button>
+                            ) : null}
+                            {canEditIndexedText ? (
+                              <button
+                                type="button"
+                                className="docs-action-btn docs-action-btn--secondary"
+                                disabled={detailLoading || largeViewerActionBusy}
+                                onClick={() => void openIndexedLargeViewer("indexed_edit")}
+                              >
+                                Редактировать
+                              </button>
+                            ) : null}
+                          </span>
+                        </div>
+                        <div className="docs-panel-block__scroll docs-panel-block__scroll--preview">
                           {detail.preview_available && detail.text_preview ? (
-                            <pre className="docs-preview-body mono">{detail.text_preview}</pre>
+                            <pre className="docs-preview-body mono">
+                              {detail.text_preview}
+                            </pre>
                           ) : (
                             <p className="muted docs-preview-panel__empty">
                               Нет предпросмотра (.txt / .md) или файл не на диске.
@@ -1126,6 +1255,118 @@ export function DocumentsPage() {
         </div>
       )}
       </div>
+
+      {largeViewerMode !== "closed" && selected && detail ? (
+        <>
+          <div
+            className="docs-doc-viewer__scrim"
+            aria-hidden
+            onClick={() => {
+              if (!largeViewerActionBusy) closeLargeViewer();
+            }}
+          />
+          <aside
+            className="docs-doc-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="docs-doc-viewer-title"
+          >
+            <header className="docs-doc-viewer__header">
+              <h2 id="docs-doc-viewer-title" className="docs-doc-viewer__title">
+                {largeViewerMode === "raw"
+                  ? "Preprocessing · RAW"
+                  : largeViewerMode === "indexed_view"
+                    ? "Indexed · canonical (просмотр)"
+                    : "Indexed · canonical (редактирование)"}
+              </h2>
+              <div className="docs-doc-viewer__header-actions">
+                {largeViewerMode === "indexed_view" && canEditIndexedText ? (
+                  <button
+                    type="button"
+                    className="docs-action-btn docs-action-btn--secondary"
+                    disabled={largeViewerLoading || largeViewerActionBusy}
+                    onClick={() => setLargeViewerMode("indexed_edit")}
+                  >
+                    Редактировать
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="docs-action-btn docs-action-btn--ghost"
+                  disabled={largeViewerActionBusy}
+                  onClick={closeLargeViewer}
+                >
+                  Закрыть (Esc)
+                </button>
+              </div>
+            </header>
+            <div className="docs-doc-viewer__body">
+              {largeViewerLoading ? (
+                <p className="docs-doc-viewer__loading">Загрузка полного текста…</p>
+              ) : largeViewerMode === "indexed_edit" ? (
+                <textarea
+                  ref={largeViewerTextareaRef}
+                  className="docs-doc-viewer__textarea mono"
+                  value={largeViewerText}
+                  onChange={(e) => setLargeViewerText(e.target.value)}
+                  spellCheck={false}
+                  aria-label="Редактирование canonical indexed text"
+                />
+              ) : (
+                <pre className="docs-doc-viewer__pre mono">{largeViewerText}</pre>
+              )}
+            </div>
+            {largeViewerMode === "indexed_edit" ? (
+              <footer className="docs-doc-viewer__footer">
+                <button
+                  type="button"
+                  className="docs-action-btn docs-action-btn--primary"
+                  disabled={largeViewerActionBusy || !selected.document_id}
+                  onClick={async () => {
+                    if (!selected.document_id) return;
+                    setLargeViewerActionBusy(true);
+                    setActionHint(null);
+                    try {
+                      await postDocumentTextEdit(selected.document_id, {
+                        text: largeViewerText,
+                        editor_source: "admin_ui",
+                      });
+                      setLargeViewerMode("closed");
+                      setLargeViewerText("");
+                      setLargeViewerLoading(false);
+                      const d = await fetchDocumentDetail(
+                        selected.document_id,
+                        selectedVersionNumber ?? undefined
+                      );
+                      setDetail(d);
+                      setRefreshKey((k) => k + 1);
+                      setActionHint(
+                        "Текст сохранён как новая версия, выполнена переиндексация."
+                      );
+                    } catch (e) {
+                      setActionHint(
+                        e instanceof Error ? e.message : "Ошибка сохранения"
+                      );
+                    } finally {
+                      setLargeViewerActionBusy(false);
+                    }
+                  }}
+                >
+                  Сохранить как новую версию
+                </button>
+                <button
+                  type="button"
+                  className="docs-action-btn docs-action-btn--ghost"
+                  disabled={largeViewerActionBusy}
+                  onClick={closeLargeViewer}
+                >
+                  Отмена
+                </button>
+              </footer>
+            ) : null}
+          </aside>
+        </>
+      ) : null}
     </div>
   );
 }

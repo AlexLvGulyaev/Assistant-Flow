@@ -278,6 +278,10 @@ def _is_document_lifecycle_stage(stage_norm: str) -> bool:
         return True
     if stage_norm.startswith("document_upload_"):
         return True
+    if stage_norm.startswith("document_edit_"):
+        return True
+    if stage_norm.startswith("document_reindex_"):
+        return True
     return False
 
 

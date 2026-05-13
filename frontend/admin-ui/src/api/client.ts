@@ -77,13 +77,21 @@ export async function fetchDocuments(limit = 200): Promise<DocumentsResponse> {
   return parseJson<DocumentsResponse>(res);
 }
 
+export type FetchDocumentDetailOptions = {
+  fullCanonicalText?: boolean;
+};
+
 export async function fetchDocumentDetail(
   documentId: string,
-  versionNumber?: number | null
+  versionNumber?: number | null,
+  opts?: FetchDocumentDetailOptions
 ): Promise<DocumentDetailResponse> {
   const q = new URLSearchParams();
   if (versionNumber != null && Number.isFinite(versionNumber)) {
     q.set("version_number", String(versionNumber));
+  }
+  if (opts?.fullCanonicalText) {
+    q.set("full_canonical_text", "true");
   }
   const suffix = q.toString() ? `?${q.toString()}` : "";
   const res = await fetch(
@@ -110,6 +118,48 @@ export async function uploadDocument(file: File): Promise<UploadDocumentResponse
     throw new Error(`Upload: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
   }
   return parseJson<UploadDocumentResponse>(res);
+}
+
+export interface DocumentTextEditBody {
+  text: string;
+  editor_source?: string;
+}
+
+export interface DocumentTextEditResponse {
+  success?: boolean;
+  error?: string | null;
+  chunks?: number | null;
+  document_id?: string | null;
+  edit_execution_id?: string;
+  previous_version?: number;
+  new_version?: number;
+  expected_new_version?: number;
+  editor_source?: string;
+  edited_characters?: number;
+  diff_size?: number;
+}
+
+export async function postDocumentTextEdit(
+  documentId: string,
+  body: DocumentTextEditBody
+): Promise<DocumentTextEditResponse> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/documents/${encodeURIComponent(documentId)}/edit-text`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: body.text,
+        editor_source: body.editor_source ?? "admin_ui",
+      }),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await parseFastApiError(res, `Сохранение текста: ${res.status}`)
+    );
+  }
+  return parseJson<DocumentTextEditResponse>(res);
 }
 
 export async function postDocumentsReindex(
@@ -343,6 +393,10 @@ export interface DocumentPreprocessingPublic {
   original_format?: string | null;
   original_bytes?: number | null;
   cleaned_bytes?: number | null;
+  /** PyMuPDF Phase 2: ``pdf_pymupdf`` внутри блока preprocessing в логах. */
+  extractor?: string | null;
+  page_count?: number | null;
+  extracted_characters?: number | null;
   removed_line_count?: number | null;
   original_upload_filename?: string | null;
   indexed_target_filename?: string | null;
@@ -431,6 +485,8 @@ export interface DocumentDetailResponse {
   chunks_sync_diagnostic?: string | null;
   chunk_counts_by_version?: DocumentChunkCountByVersion[];
   text_preview?: string | null;
+  /** Полный canonical .txt/.md; приходит только при `full_canonical_text=true`. */
+  canonical_text_full?: string | null;
   preview_available?: boolean;
   embedding_model?: string | null;
   file_size_bytes?: number | null;

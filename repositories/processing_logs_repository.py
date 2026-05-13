@@ -128,7 +128,7 @@ class ProcessingLogsRepository:
                                  )
                             THEN 'audio'
                             WHEN stage ~ '^admin_document'
-                                 OR stage ~ '^document_(upload|preprocessing|processed|compatibility|indexing)_'
+                                 OR stage ~ '^document_(upload|preprocessing|processed|compatibility|indexing|edit|reindex)_'
                                  OR LOWER(COALESCE(details->>'route', '')) IN ('document', 'document_response')
                                  OR LOWER(COALESCE(details->>'downstream_route', ''))
                                     IN ('document', 'document_response')

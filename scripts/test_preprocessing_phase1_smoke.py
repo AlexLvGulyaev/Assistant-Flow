@@ -23,6 +23,7 @@ def main() -> None:
     assert "nav skip" not in text
     assert "Hello world" in text
     assert d.original_format == "html"
+    assert d.cleaned_size_bytes > 0
 
     t2, d2 = svc.run(b"line1\n\nline2\n", original_filename="x.txt")
     assert "line1" in t2 and "line2" in t2
