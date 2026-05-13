@@ -362,6 +362,7 @@ class DocumentRepository:
             cur.execute(
                 """
                 SELECT
+                    id,
                     chunk_index,
                     chunk_text_preview,
                     token_count,

@@ -79,6 +79,7 @@ export async function fetchDocuments(limit = 200): Promise<DocumentsResponse> {
 
 export type FetchDocumentDetailOptions = {
   fullCanonicalText?: boolean;
+  fullPreprocessingRaw?: boolean;
 };
 
 export async function fetchDocumentDetail(
@@ -92,6 +93,9 @@ export async function fetchDocumentDetail(
   }
   if (opts?.fullCanonicalText) {
     q.set("full_canonical_text", "true");
+  }
+  if (opts?.fullPreprocessingRaw) {
+    q.set("full_preprocessing_raw", "true");
   }
   const suffix = q.toString() ? `?${q.toString()}` : "";
   const res = await fetch(
@@ -458,6 +462,7 @@ export interface DocumentDetailVersion {
 }
 
 export interface DocumentDetailChunk {
+  chunk_id?: string | null;
   chunk_index?: number;
   chunk_text_preview?: string | null;
   token_count?: number | null;
@@ -487,6 +492,8 @@ export interface DocumentDetailResponse {
   text_preview?: string | null;
   /** Полный canonical .txt/.md; приходит только при `full_canonical_text=true`. */
   canonical_text_full?: string | null;
+  preprocessing_raw_full?: string | null;
+  preprocessing_raw_full_error?: string | null;
   preview_available?: boolean;
   embedding_model?: string | null;
   file_size_bytes?: number | null;

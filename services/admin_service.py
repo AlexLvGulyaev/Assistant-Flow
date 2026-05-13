@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 from typing import Any, cast
+import json
 import mimetypes
 
 from repositories.connection import get_connection
@@ -1897,6 +1898,7 @@ class AdminService:
         *,
         version_number: int | None = None,
         include_full_canonical_text: bool = False,
+        include_full_preprocessing_raw: bool = False,
     ) -> dict[str, Any]:
         """Document row, versions, chunk rows, FS preview, and raw timeline rows."""
         if not (self._config.database_url or "").strip():
@@ -1941,7 +1943,7 @@ class AdminService:
                 timeline_rows = self._proc_repo.list_logs_for_document_filename(
                     conn,
                     filename=str(doc.get("source_filename") or ""),
-                    limit=120,
+                    limit=200,
                 )
                 conn.commit()
         except Exception as exc:
@@ -1972,6 +1974,60 @@ class AdminService:
                         "message": "canonical file too large for editor",
                     }
                 canonical_text_full = ft
+        preprocessing_raw_full: str | None = None
+        preprocessing_raw_full_error: str | None = None
+        if include_full_preprocessing_raw:
+            det_upload: dict[str, Any] | None = None
+            for row in timeline_rows:
+                st = str(row.get("stage") or "")
+                if st not in ("document_upload_pipeline_done", "admin_document_uploaded"):
+                    continue
+                raw_d = row.get("details")
+                if isinstance(raw_d, str):
+                    try:
+                        raw_d = json.loads(raw_d)
+                    except Exception:
+                        raw_d = {}
+                if not isinstance(raw_d, dict):
+                    continue
+                if raw_d.get("raw_asset_ref"):
+                    det_upload = raw_d
+                    break
+            if not det_upload:
+                preprocessing_raw_full_error = (
+                    "не найден лог загрузки с raw_asset_ref в последних событиях по файлу"
+                )
+            else:
+                rel = str(det_upload.get("raw_asset_ref") or "").strip()
+                orig_fn = str(
+                    det_upload.get("original_upload_filename")
+                    or doc.get("source_filename")
+                    or ""
+                ).strip()
+                if not rel:
+                    preprocessing_raw_full_error = "raw_asset_ref пустой в логе"
+                elif not orig_fn:
+                    preprocessing_raw_full_error = "нет original_upload_filename в логе"
+                else:
+                    try:
+                        raw_bytes = self._asset_repository.read_bytes(rel)
+                    except (AssetNotFoundError, AssetValidationError, OSError) as exc:
+                        preprocessing_raw_full_error = f"чтение raw asset: {exc}"
+                    else:
+                        try:
+                            pre = PreprocessingService()
+                            full_raw = pre.raw_preview_full_text(
+                                raw_bytes, original_filename=orig_fn
+                            )
+                        except Exception as exc:
+                            preprocessing_raw_full_error = f"extract: {exc}"
+                        else:
+                            if len(full_raw) > 12_000_000:
+                                preprocessing_raw_full_error = (
+                                    "полный RAW текст слишком большой (>12M символов)"
+                                )
+                            else:
+                                preprocessing_raw_full = full_raw
         declared = int((selected or {}).get("chunk_count") or 0)
         doc_id_str = str(doc.get("document_id") or "")
         chunk_sync_ok = True
@@ -2054,6 +2110,9 @@ class AdminService:
         chunks_out: list[dict[str, Any]] = []
         for c in chunks_raw:
             co = dict(c)
+            cid = co.get("id")
+            if cid is not None:
+                co["chunk_id"] = str(cid)
             ca = co.get("created_at")
             if isinstance(ca, datetime):
                 co["created_at"] = ca.astimezone(timezone.utc).isoformat()
@@ -2085,6 +2144,8 @@ class AdminService:
             "text_preview": text_preview,
             "preview_available": text_preview is not None,
             "canonical_text_full": canonical_text_full,
+            "preprocessing_raw_full": preprocessing_raw_full,
+            "preprocessing_raw_full_error": preprocessing_raw_full_error,
             "embedding_model": embed_model,
             "file_size_bytes": file_size_bytes,
             "timeline_rows": timeline_rows,

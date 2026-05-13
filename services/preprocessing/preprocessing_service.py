@@ -61,6 +61,25 @@ class PreprocessingService:
 
     _PREVIEW = 480
 
+    def raw_preview_full_text(self, raw: bytes, *, original_filename: str) -> str:
+        """
+        Полная строка той же фазы, что и ``preview_raw`` в ``PreprocessingDiagnostics``,
+        без усечения (для admin viewer).
+        """
+        if not isinstance(raw, (bytes, bytearray)) or len(raw) == 0:
+            raise ValueError("empty payload")
+        safe = Path(original_filename).name
+        ext = Path(safe).suffix.lower()
+        if ext == ".txt":
+            return TxtExtractor().extract(raw, original_filename=safe)
+        if ext in (".html", ".htm"):
+            return HtmlExtractor().extract(raw, original_filename=safe)
+        if ext == ".pdf":
+            pdf_ex = PdfExtractor()
+            extracted = pdf_ex.extract(raw, original_filename=safe)
+            return clean_pdf_extracted_text(extracted)
+        raise ValueError(f"unsupported extension for preprocessing: {ext!r}")
+
     def run(self, raw: bytes, *, original_filename: str) -> tuple[str, PreprocessingDiagnostics]:
         if not isinstance(raw, (bytes, bytearray)) or len(raw) == 0:
             raise ValueError("empty payload")

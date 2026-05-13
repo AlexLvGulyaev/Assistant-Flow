@@ -256,6 +256,7 @@ def api_document_detail(
     document_id: str,
     version_number: int | None = Query(default=None, ge=1),
     full_canonical_text: bool = Query(default=False),
+    full_preprocessing_raw: bool = Query(default=False),
 ) -> dict[str, Any]:
     try:
         uid = uuid.UUID(document_id.strip())
@@ -266,6 +267,7 @@ def api_document_detail(
         uid,
         version_number=version_number,
         include_full_canonical_text=full_canonical_text,
+        include_full_preprocessing_raw=full_preprocessing_raw,
     )
     err = bundle.get("error")
     if err == "not_found":

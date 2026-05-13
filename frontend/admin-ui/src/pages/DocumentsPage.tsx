@@ -13,6 +13,7 @@ import {
   postDocumentTextEdit,
   postDocumentsReindex,
   uploadDocument,
+  type DocumentDetailChunk,
   type DocumentDetailResponse,
   type DocumentsResponse,
   type RetrievalPlatformCompact,
@@ -51,6 +52,49 @@ function DocFieldRow({
   );
 }
 
+function ChunkDetailPair({
+  label,
+  children,
+  when = true,
+}: {
+  label: string;
+  children: ReactNode;
+  when?: boolean;
+}) {
+  if (!when) return null;
+  return (
+    <div className="docs-chunk-detail-kv__pair">
+      <div className="docs-chunk-detail-kv__label">{label}</div>
+      <div className="docs-chunk-detail-kv__val">{children}</div>
+    </div>
+  );
+}
+
+/** Пустой объект `{}` из API — не показываем раскрываемый JSON. */
+function isChunkMetadataEmpty(meta: unknown): boolean {
+  if (meta == null) return true;
+  if (typeof meta !== "object" || Array.isArray(meta)) return false;
+  return Object.keys(meta as Record<string, unknown>).length === 0;
+}
+
+/** Длинные строки из metadata, не дублирующие уже показанные id. */
+function extraLongMetadataIdRows(
+  meta: unknown,
+  dedupeValues: Set<string>,
+  minLen = 24
+): { key: string; val: string }[] {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return [];
+  const out: { key: string; val: string }[] = [];
+  for (const [k, v] of Object.entries(meta as Record<string, unknown>)) {
+    if (typeof v !== "string" && typeof v !== "number") continue;
+    const s = String(v).trim();
+    if (s.length < minLen) continue;
+    if (dedupeValues.has(s)) continue;
+    out.push({ key: k, val: s });
+  }
+  return out;
+}
+
 export function DocumentsPage() {
   const [data, setData] = useState<DocumentsResponse | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -87,6 +131,9 @@ export function DocumentsPage() {
   const [largeViewerText, setLargeViewerText] = useState("");
   const [largeViewerLoading, setLargeViewerLoading] = useState(false);
   const [largeViewerActionBusy, setLargeViewerActionBusy] = useState(false);
+  const [chunkDetailModal, setChunkDetailModal] = useState<DocumentDetailChunk | null>(
+    null
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -232,21 +279,26 @@ export function DocumentsPage() {
     setLargeViewerMode("closed");
     setLargeViewerText("");
     setLargeViewerLoading(false);
+    setChunkDetailModal(null);
   }, [selectedId, selectedVersionNumber]);
 
   useEffect(() => {
-    if (largeViewerMode === "closed") return;
+    if (largeViewerMode === "closed" && !chunkDetailModal) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (largeViewerActionBusy) return;
       e.preventDefault();
+      if (chunkDetailModal) {
+        setChunkDetailModal(null);
+        return;
+      }
       setLargeViewerMode("closed");
       setLargeViewerText("");
       setLargeViewerLoading(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [largeViewerMode, largeViewerActionBusy]);
+  }, [largeViewerMode, largeViewerActionBusy, chunkDetailModal]);
 
   useEffect(() => {
     if (largeViewerMode !== "indexed_edit" || largeViewerLoading) return;
@@ -496,6 +548,26 @@ export function DocumentsPage() {
   const vectorStoreDisplay = formatRetrievalBackendTitle(
     rop?.effective_backend ?? gis?.active_retrieval_backend ?? undefined
   );
+  const chunkModalDocIdStr =
+    detail && selected
+      ? String(
+          (detail.document as { document_id?: string } | undefined)?.document_id ??
+            selected.document_id ??
+            ""
+        )
+      : "";
+
+  const chunkDetailLongMetadataRows = useMemo(() => {
+    if (!chunkDetailModal || !detail) return [];
+    const dedupeMetaVals = new Set<string>();
+    if (chunkModalDocIdStr) dedupeMetaVals.add(chunkModalDocIdStr);
+    if (detail.selected_version_id) dedupeMetaVals.add(detail.selected_version_id);
+    const rowId = chunkDetailModal.chunk_id?.trim();
+    if (rowId) dedupeMetaVals.add(rowId);
+    const vecId = String(chunkDetailModal.chroma_id ?? "").trim();
+    if (vecId) dedupeMetaVals.add(vecId);
+    return extraLongMetadataIdRows(chunkDetailModal.metadata, dedupeMetaVals);
+  }, [chunkDetailModal, chunkModalDocIdStr, detail]);
 
   function closeLargeViewer() {
     if (largeViewerActionBusy) return;
@@ -504,13 +576,31 @@ export function DocumentsPage() {
     setLargeViewerLoading(false);
   }
 
-  function openRawLargeViewer() {
-    const raw = selected?.preprocessing?.preview_raw;
-    if (!raw) return;
+  async function openRawLargeViewer() {
+    if (!selectedId || !selected?.preprocessing?.preview_raw) return;
     setActionHint(null);
-    setLargeViewerText(raw);
-    setLargeViewerLoading(false);
     setLargeViewerMode("raw");
+    setLargeViewerLoading(true);
+    setLargeViewerText("");
+    try {
+      const d = await fetchDocumentDetail(
+        selectedId,
+        selectedVersionNumber ?? undefined,
+        { fullPreprocessingRaw: true }
+      );
+      setDetail(d);
+      if (d.preprocessing_raw_full_error) {
+        setActionHint(d.preprocessing_raw_full_error);
+        setLargeViewerMode("closed");
+        return;
+      }
+      setLargeViewerText(d.preprocessing_raw_full ?? "");
+    } catch (e) {
+      setActionHint(e instanceof Error ? e.message : "Не удалось загрузить полный RAW");
+      setLargeViewerMode("closed");
+    } finally {
+      setLargeViewerLoading(false);
+    }
   }
 
   async function openIndexedLargeViewer(mode: "indexed_view" | "indexed_edit") {
@@ -1069,10 +1159,11 @@ export function DocumentsPage() {
                           </div>
                           <button
                             type="button"
-                            className="docs-action-btn docs-action-btn--secondary"
-                            onClick={openRawLargeViewer}
+                            className="inline-action-link"
+                            disabled={detailLoading || largeViewerActionBusy}
+                            onClick={() => void openRawLargeViewer()}
                           >
-                            Открыть RAW
+                            открыть RAW
                           </button>
                         </div>
                         <div className="docs-preprocessing-previews__grid docs-preprocessing-previews__grid--single">
@@ -1111,21 +1202,11 @@ export function DocumentsPage() {
                             {hasIndexedPreview ? (
                               <button
                                 type="button"
-                                className="docs-action-btn docs-action-btn--secondary"
+                                className="inline-action-link"
                                 disabled={detailLoading || largeViewerActionBusy}
                                 onClick={() => void openIndexedLargeViewer("indexed_view")}
                               >
-                                Открыть документ
-                              </button>
-                            ) : null}
-                            {canEditIndexedText ? (
-                              <button
-                                type="button"
-                                className="docs-action-btn docs-action-btn--secondary"
-                                disabled={detailLoading || largeViewerActionBusy}
-                                onClick={() => void openIndexedLargeViewer("indexed_edit")}
-                              >
-                                Редактировать
+                                открыть документ
                               </button>
                             ) : null}
                           </span>
@@ -1178,16 +1259,25 @@ export function DocumentsPage() {
                                 return (
                                   <div key={`${c.chunk_index}-${idx}`} className="docs-chunk-card">
                                     <div className="docs-chunk-card__head">
-                                      <span className="mono">#{c.chunk_index ?? idx}</span>
-                                      <span className="muted">
-                                        {text.length} симв.
-                                        {c.token_count != null ? ` · ${c.token_count} ток.` : ""}
-                                      </span>
-                                      <span className="mono muted" title={vectorIdRaw ?? undefined}>
-                                        {vectorIdShort
-                                          ? `${vectorStoreDisplay} · id ${vectorIdShort}`
-                                          : `${vectorStoreDisplay} · нет id в метаданных`}
-                                      </span>
+                                      <div className="docs-chunk-card__head-main">
+                                        <span className="mono">#{c.chunk_index ?? idx}</span>
+                                        <span className="muted">
+                                          {text.length} симв.
+                                          {c.token_count != null ? ` · ${c.token_count} ток.` : ""}
+                                        </span>
+                                        <span className="mono muted" title={vectorIdRaw ?? undefined}>
+                                          {vectorIdShort
+                                            ? `${vectorStoreDisplay} · id ${vectorIdShort}`
+                                            : `${vectorStoreDisplay} · нет id в метаданных`}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="inline-action-link"
+                                        onClick={() => setChunkDetailModal(c)}
+                                      >
+                                        показать детали
+                                      </button>
                                     </div>
                                     <div className="docs-chunk-card__body docs-chunk-card__body--scroll">
                                       {text || "—"}
@@ -1257,33 +1347,33 @@ export function DocumentsPage() {
       </div>
 
       {largeViewerMode !== "closed" && selected && detail ? (
-        <>
+        <div
+          className="rag-chunk-modal-backdrop rag-chunk-modal-backdrop--light"
+          role="presentation"
+          onClick={() => {
+            if (!largeViewerActionBusy) closeLargeViewer();
+          }}
+        >
           <div
-            className="docs-doc-viewer__scrim"
-            aria-hidden
-            onClick={() => {
-              if (!largeViewerActionBusy) closeLargeViewer();
-            }}
-          />
-          <aside
-            className="docs-doc-viewer"
+            className="rag-chunk-modal rag-chunk-modal--document"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="docs-doc-viewer-title"
+            aria-labelledby="docs-text-modal-title"
+            onClick={(e) => e.stopPropagation()}
           >
-            <header className="docs-doc-viewer__header">
-              <h2 id="docs-doc-viewer-title" className="docs-doc-viewer__title">
+            <div className="rag-chunk-modal__head">
+              <h2 id="docs-text-modal-title" className="rag-chunk-modal__title">
                 {largeViewerMode === "raw"
-                  ? "Preprocessing · RAW"
+                  ? "Preprocessing · RAW (полный текст)"
                   : largeViewerMode === "indexed_view"
                     ? "Indexed · canonical (просмотр)"
                     : "Indexed · canonical (редактирование)"}
               </h2>
-              <div className="docs-doc-viewer__header-actions">
+              <div className="docs-modal-head-actions">
                 {largeViewerMode === "indexed_view" && canEditIndexedText ? (
                   <button
                     type="button"
-                    className="docs-action-btn docs-action-btn--secondary"
+                    className="inline-action-link"
                     disabled={largeViewerLoading || largeViewerActionBusy}
                     onClick={() => setLargeViewerMode("indexed_edit")}
                   >
@@ -1292,35 +1382,40 @@ export function DocumentsPage() {
                 ) : null}
                 <button
                   type="button"
-                  className="docs-action-btn docs-action-btn--ghost"
+                  className="rag-chunk-modal__close"
                   disabled={largeViewerActionBusy}
                   onClick={closeLargeViewer}
+                  aria-label="Закрыть"
                 >
-                  Закрыть (Esc)
+                  ×
                 </button>
               </div>
-            </header>
-            <div className="docs-doc-viewer__body">
+            </div>
+            <div className="rag-chunk-modal__main rag-chunk-modal__main--docs">
               {largeViewerLoading ? (
-                <p className="docs-doc-viewer__loading">Загрузка полного текста…</p>
+                <p className="rag-chunk-modal__body rag-chunk-modal__body--docs-fill muted">
+                  Загрузка полного текста…
+                </p>
               ) : largeViewerMode === "indexed_edit" ? (
                 <textarea
                   ref={largeViewerTextareaRef}
-                  className="docs-doc-viewer__textarea mono"
+                  className="rag-chunk-modal__textarea rag-chunk-modal__body--docs-fill"
                   value={largeViewerText}
                   onChange={(e) => setLargeViewerText(e.target.value)}
                   spellCheck={false}
                   aria-label="Редактирование canonical indexed text"
                 />
               ) : (
-                <pre className="docs-doc-viewer__pre mono">{largeViewerText}</pre>
+                <pre className="mono rag-chunk-modal__body rag-chunk-modal__body--docs-fill">
+                  {largeViewerText}
+                </pre>
               )}
             </div>
             {largeViewerMode === "indexed_edit" ? (
-              <footer className="docs-doc-viewer__footer">
+              <div className="rag-chunk-modal__foot rag-chunk-modal__foot--split">
                 <button
                   type="button"
-                  className="docs-action-btn docs-action-btn--primary"
+                  className="rag-chunk-modal__done"
                   disabled={largeViewerActionBusy || !selected.document_id}
                   onClick={async () => {
                     if (!selected.document_id) return;
@@ -1356,16 +1451,173 @@ export function DocumentsPage() {
                 </button>
                 <button
                   type="button"
-                  className="docs-action-btn docs-action-btn--ghost"
+                  className="inline-action-link"
                   disabled={largeViewerActionBusy}
                   onClick={closeLargeViewer}
                 >
                   Отмена
                 </button>
-              </footer>
-            ) : null}
-          </aside>
-        </>
+              </div>
+            ) : (
+              <div className="rag-chunk-modal__foot">
+                <button
+                  type="button"
+                  className="rag-chunk-modal__done"
+                  onClick={closeLargeViewer}
+                >
+                  Закрыть
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {chunkDetailModal && detail && selected ? (
+        <div
+          className="rag-chunk-modal-backdrop rag-chunk-modal-backdrop--light"
+          role="presentation"
+          onClick={() => setChunkDetailModal(null)}
+        >
+          <div
+            className="rag-chunk-modal rag-chunk-modal--chunk-detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="docs-chunk-detail-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="rag-chunk-modal__head">
+              <h2 id="docs-chunk-detail-title" className="rag-chunk-modal__title">
+                Чанк #{chunkDetailModal.chunk_index ?? "—"}
+              </h2>
+              <div className="docs-modal-head-actions">
+                <button
+                  type="button"
+                  className="rag-chunk-modal__close"
+                  onClick={() => setChunkDetailModal(null)}
+                  aria-label="Закрыть"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="rag-chunk-modal__main rag-chunk-modal__main--docs">
+              <div className="docs-chunk-detail-kv">
+                <div className="docs-chunk-detail-kv__col docs-chunk-detail-kv__col--readable">
+                  <ChunkDetailPair
+                    label="Источник"
+                    when={Boolean(selected.filename?.trim())}
+                  >
+                    {selected.filename}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Версия"
+                    when={detail.selected_version?.version_number != null}
+                  >
+                    v{detail.selected_version?.version_number}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair label="№ чанка">
+                    {String(chunkDetailModal.chunk_index ?? "—")}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Backend"
+                    when={Boolean(vectorStoreDisplay?.trim())}
+                  >
+                    {vectorStoreDisplay}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Коллекция"
+                    when={Boolean(String(chunkDetailModal.chroma_collection ?? "").trim())}
+                  >
+                    {String(chunkDetailModal.chroma_collection)}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Модель"
+                    when={Boolean(String(detail.embedding_model ?? "").trim())}
+                  >
+                    {String(detail.embedding_model)}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair label="Размер">
+                    {(chunkDetailModal.chunk_text_preview ?? "").length} симв.
+                    {chunkDetailModal.token_count != null
+                      ? ` · ~${chunkDetailModal.token_count} ток.`
+                      : ""}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Создан"
+                    when={Boolean(chunkDetailModal.created_at)}
+                  >
+                    {formatTimestampMsk(chunkDetailModal.created_at ?? null)}
+                  </ChunkDetailPair>
+                </div>
+                <div className="docs-chunk-detail-kv__col docs-chunk-detail-kv__col--ids">
+                  <ChunkDetailPair
+                    label="Документ (id)"
+                    when={Boolean(chunkModalDocIdStr)}
+                  >
+                    {chunkModalDocIdStr}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Версия (id)"
+                    when={Boolean(detail.selected_version_id?.trim())}
+                  >
+                    {detail.selected_version_id}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Строка чанка (id)"
+                    when={Boolean(chunkDetailModal.chunk_id?.trim())}
+                  >
+                    {chunkDetailModal.chunk_id}
+                  </ChunkDetailPair>
+                  <ChunkDetailPair
+                    label="Вектор (id)"
+                    when={Boolean(String(chunkDetailModal.chroma_id ?? "").trim())}
+                  >
+                    {String(chunkDetailModal.chroma_id)}
+                  </ChunkDetailPair>
+                  {chunkDetailLongMetadataRows.map((row) => (
+                    <ChunkDetailPair key={row.key} label={row.key}>
+                      {row.val}
+                    </ChunkDetailPair>
+                  ))}
+                </div>
+              </div>
+              {(chunkDetailModal.chunk_text_preview ?? "").length >= 4000 ? (
+                <p className="muted docs-chunk-detail-trunc-note">
+                  В PostgreSQL хранится preview до ~4000 символов на чанк; полный текст
+                  chunk хранится в векторном индексе, не в document_chunks.
+                </p>
+              ) : null}
+              <pre className="mono rag-chunk-modal__body rag-chunk-modal__body--docs-fill">
+                {chunkDetailModal.chunk_text_preview || "—"}
+              </pre>
+              {isChunkMetadataEmpty(chunkDetailModal.metadata) ? (
+                <p
+                  className="docs-chunk-meta-empty"
+                  title="Ранее индексатор записывал в document_chunks.metadata пустой объект. После переиндексации сохраняется снимок полей из LangChain Document.metadata (если они есть)."
+                >
+                  Metadata отсутствуют (в БД пустой объект).
+                </p>
+              ) : (
+                <details className="docs-chunk-meta-json">
+                  <summary className="muted">Metadata (JSON)</summary>
+                  <pre className="mono docs-chunk-meta-json__pre">
+                    {formatJson(chunkDetailModal.metadata)}
+                  </pre>
+                </details>
+              )}
+            </div>
+            <div className="rag-chunk-modal__foot">
+              <button
+                type="button"
+                className="rag-chunk-modal__done"
+                onClick={() => setChunkDetailModal(null)}
+              >
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

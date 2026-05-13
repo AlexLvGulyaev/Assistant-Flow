@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from langchain_core.documents import Document
 
@@ -627,6 +628,9 @@ class AdminKnowledgeIndexer:
                 for i, (doc, cid) in enumerate(zip(lc_chunks, vector_ids)):
                     text = doc.page_content or ""
                     preview = text[:4000] if len(text) > 4000 else text
+                    meta_snap = self._chunk_metadata_snapshot_for_pg(
+                        dict(doc.metadata) if doc.metadata else {}
+                    )
                     self._doc_repo.insert_document_chunk(
                         conn,
                         document_id=document_id,
@@ -636,8 +640,30 @@ class AdminKnowledgeIndexer:
                         token_count=len(text) if text else None,
                         chroma_collection=collection,
                         chroma_id=cid,
-                        metadata={},
+                        metadata=meta_snap,
                     )
+
+    @staticmethod
+    def _chunk_metadata_snapshot_for_pg(meta: dict[str, Any]) -> dict[str, Any]:
+        """
+        Подмножество LangChain ``Document.metadata`` для колонки ``document_chunks.metadata``
+        (JSONB): только JSON-совместимые скаляры и короткие строки, без вложенных объектов.
+        """
+        out: dict[str, Any] = {}
+        for raw_k, v in (meta or {}).items():
+            k = str(raw_k)[:128]
+            if not k or k in out:
+                continue
+            if v is None:
+                continue
+            if isinstance(v, (bool, int, float)):
+                out[k] = v
+            elif isinstance(v, str):
+                out[k] = v[:8000] if len(v) > 8000 else v
+            else:
+                s = str(v)
+                out[k] = s[:8000] if len(s) > 8000 else s
+        return out
 
     @staticmethod
     def _attach_chroma_metadata(

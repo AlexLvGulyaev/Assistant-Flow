@@ -1937,9 +1937,9 @@ code {
   word-break: break-word;
 }
 
-/* Link-like control (not a giant button); keyboard-focusable */
-.rag-chunk-card__fulltext-cta {
-  justify-self: center;
+/* Link-like control: RAG chunks + Documents + любые item/panel */
+.rag-chunk-card__fulltext-cta,
+.inline-action-link {
   margin: 0;
   padding: 0.12rem 0.28rem;
   font: inherit;
@@ -1955,12 +1955,18 @@ code {
   text-decoration: none;
 }
 
-.rag-chunk-card__fulltext-cta:hover {
+.rag-chunk-card__fulltext-cta {
+  justify-self: center;
+}
+
+.rag-chunk-card__fulltext-cta:hover,
+.inline-action-link:hover {
   text-decoration: underline;
   color: var(--accent);
 }
 
-.rag-chunk-card__fulltext-cta:focus-visible {
+.rag-chunk-card__fulltext-cta:focus-visible,
+.inline-action-link:focus-visible {
   outline: 2px solid rgba(88, 166, 255, 0.55);
   outline-offset: 2px;
 }
@@ -1971,7 +1977,8 @@ code {
     font-size: 0.72rem;
   }
 
-  .rag-chunk-card__fulltext-cta {
+  .rag-chunk-card__fulltext-cta,
+  .inline-action-link {
     font-size: 0.68rem;
     padding: 0.06rem 0.18rem;
   }
@@ -2012,6 +2019,11 @@ code {
   box-sizing: border-box;
 }
 
+/* Documents / operational: не «blackout» */
+.rag-chunk-modal-backdrop--light {
+  background: rgba(15, 23, 42, 0.22);
+}
+
 .rag-chunk-modal {
   width: min(720px, 100%);
   max-height: min(92vh, 880px);
@@ -2022,6 +2034,122 @@ code {
   border-radius: 10px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
   overflow: hidden;
+}
+
+/* Documents: RAW / canonical / edit / chunk detail — стабильный каркас окна (не RAG modal) */
+.rag-chunk-modal--document,
+.rag-chunk-modal--chunk-detail {
+  width: clamp(300px, 72vw, 920px);
+  max-width: 100%;
+  height: clamp(480px, 72vh, 720px);
+  max-height: clamp(480px, 72vh, 720px);
+  box-sizing: border-box;
+}
+
+.rag-chunk-modal__main--docs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.rag-chunk-modal__main--docs > .rag-chunk-modal__body--docs-fill,
+.rag-chunk-modal__main--docs > .rag-chunk-modal__textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  max-height: none;
+}
+
+.rag-chunk-modal__body--docs-fill {
+  margin: 0;
+}
+
+/* Параметры чанка (Documents): две колонки, слева «читаемое», справа id */
+.docs-chunk-detail-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  column-gap: 1.35rem;
+  row-gap: 0.32rem;
+  padding: 0.42rem 0.6rem 0.45rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  border-bottom: 1px solid rgba(42, 49, 64, 0.45);
+  flex-shrink: 0;
+}
+
+.docs-chunk-detail-kv__col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.docs-chunk-detail-kv__pair {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 38%) 1fr;
+  column-gap: 0.55rem;
+  row-gap: 0.12rem;
+  align-items: baseline;
+}
+
+.docs-chunk-detail-kv__label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+}
+
+.docs-chunk-detail-kv__val {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 0.78rem;
+}
+
+.docs-chunk-detail-kv__col--ids .docs-chunk-detail-kv__val {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  line-height: 1.38;
+}
+
+.docs-chunk-detail-kv__col--readable .docs-chunk-detail-kv__val {
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+.docs-chunk-detail-trunc-note {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.35rem 0.6rem 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.rag-chunk-modal__main--docs .docs-chunk-meta-json {
+  flex-shrink: 0;
+  margin: 0 0.55rem 0.35rem;
+}
+
+.rag-chunk-modal__main--docs .docs-chunk-meta-empty {
+  margin: 0 0.55rem 0.35rem;
+}
+
+.docs-chunk-meta-empty {
+  padding: 0.2rem 0.38rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .docs-chunk-detail-kv {
+    grid-template-columns: 1fr;
+  }
 }
 
 .rag-chunk-modal__head {
@@ -2072,7 +2200,7 @@ code {
 .rag-chunk-modal__body {
   margin: 0;
   flex: 1 1 auto;
-  min-height: 200px;
+  min-height: 120px;
   max-height: min(58vh, 520px);
   padding: 0.55rem 0.65rem;
   overflow: auto;
@@ -2085,12 +2213,42 @@ code {
   border-radius: 0;
 }
 
+.rag-chunk-modal__textarea {
+  margin: 0;
+  flex: 1 1 auto;
+  min-height: 200px;
+  max-height: min(52vh, 480px);
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.76rem;
+  line-height: 1.42;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: inherit;
+  background: var(--bg);
+  border: none;
+  border-radius: 0;
+  resize: none;
+  overflow: auto;
+}
+
+.rag-chunk-modal__textarea:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+}
+
 .rag-chunk-modal__foot {
   flex-shrink: 0;
   padding: 0.45rem 0.65rem 0.55rem;
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
+}
+
+.rag-chunk-modal__foot--split {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .rag-chunk-modal__done {
@@ -2504,122 +2662,6 @@ code {
   margin-left: -0.48rem;
   margin-right: -0.48rem;
   box-sizing: border-box;
-}
-
-/* Large document viewer: правый drawer + лёгкий scrim (не «blackout») */
-.docs-doc-viewer__scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 900;
-  background: rgba(15, 23, 42, 0.12);
-  pointer-events: auto;
-}
-
-.docs-doc-viewer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 901;
-  width: min(96vw, 1320px);
-  min-width: min(100%, 320px);
-  max-width: 100%;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.18);
-}
-
-.docs-doc-viewer__header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.45rem 0.55rem;
-  border-bottom: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.12);
-}
-
-.docs-doc-viewer__title {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.docs-doc-viewer__header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.docs-doc-viewer__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 0.45rem 0.55rem 0.5rem;
-  overflow: hidden;
-}
-
-.docs-doc-viewer__loading {
-  margin: 0;
-  padding: 0.75rem;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
-.docs-doc-viewer__textarea {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0.5rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.06);
-  color: inherit;
-  font-size: 0.82rem;
-  line-height: 1.42;
-  resize: none;
-  overflow-y: auto;
-}
-
-.docs-doc-viewer__textarea:focus {
-  outline: 1px solid rgba(91, 141, 239, 0.45);
-  outline-offset: 1px;
-}
-
-.docs-doc-viewer__pre {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0;
-  padding: 0.5rem 0.55rem;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.06);
-  font-size: 0.82rem;
-  line-height: 1.42;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.docs-doc-viewer__footer {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.42rem 0.55rem;
-  border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.08);
 }
 
 .docs-preview-body.docs-preview-body--short {
@@ -3547,12 +3589,56 @@ code {
   background: var(--bg-hover);
 }
 
+.docs-modal-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 .docs-chunk-card__head {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.35rem 0.5rem;
   font-size: 0.72rem;
   margin-bottom: 0.2rem;
+}
+
+.docs-chunk-card__head-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.docs-chunk-meta-json {
+  flex-shrink: 0;
+  margin: 0 0.65rem 0.35rem;
+  padding: 0.28rem 0.38rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 0.74rem;
+}
+
+.docs-chunk-meta-json summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.docs-chunk-meta-json__pre {
+  margin: 0.35rem 0 0;
+  max-height: 12rem;
+  overflow: auto;
+  font-size: 0.68rem;
+  line-height: 1.32;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .docs-chunk-card__body {
