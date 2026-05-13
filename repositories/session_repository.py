@@ -68,6 +68,19 @@ class SessionRepository:
                 (mode, session_id),
             )
 
+    def deactivate_all_active_for_user(self, conn: Connection, user_id: uuid.UUID) -> int:
+        """Set is_active=FALSE for all active sessions of a user; returns rowcount."""
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE chat_sessions
+                SET is_active = FALSE, updated_at = NOW()
+                WHERE user_id = %s AND is_active = TRUE
+                """,
+                (user_id,),
+            )
+            return int(cur.rowcount or 0)
+
     def append_message(
         self,
         conn: Connection,
@@ -135,3 +148,115 @@ class SessionRepository:
             )
             rows = cur.fetchall()
         return [dict(r) for r in rows]
+
+    def list_sessions_for_admin(
+        self,
+        conn: Connection,
+        *,
+        active_only: bool,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        """Join app_users + message counts for Admin observability (newest activity first)."""
+        lim = max(1, min(int(limit), 200))
+        off = max(0, int(offset))
+        active_clause = "AND s.is_active = TRUE" if active_only else ""
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    s.id,
+                    s.user_id,
+                    s.mode,
+                    s.is_active,
+                    s.created_at,
+                    s.updated_at,
+                    u.telegram_user_id,
+                    u.username,
+                    u.first_name,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM chat_messages m
+                        WHERE m.session_id = s.id
+                    ) AS messages_count
+                FROM chat_sessions s
+                INNER JOIN app_users u ON u.id = s.user_id
+                WHERE 1=1 {active_clause}
+                ORDER BY s.updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (lim, off),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+    def get_session_with_user_for_admin(
+        self, conn: Connection, session_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        """Single session + app_users profile for Admin detail."""
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    s.id,
+                    s.user_id,
+                    s.mode,
+                    s.is_active,
+                    s.created_at,
+                    s.updated_at,
+                    u.telegram_user_id,
+                    u.username,
+                    u.first_name,
+                    u.last_name,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM chat_messages m
+                        WHERE m.session_id = s.id
+                    ) AS messages_count
+                FROM chat_sessions s
+                INNER JOIN app_users u ON u.id = s.user_id
+                WHERE s.id = %s
+                LIMIT 1
+                """,
+                (session_id,),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def count_active_sessions(self, conn: Connection) -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*)::int FROM chat_sessions WHERE is_active = TRUE"
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def avg_turns_for_sessions_touched_within_hours(
+        self, conn: Connection, *, hours: int
+    ) -> float:
+        """Approximate dialog turns = (user+assistant message count) / 2, averaged over sessions."""
+        h = max(1, min(int(hours), 24 * 365))
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(AVG(msg_cnt / 2.0), 0)::double precision
+                FROM (
+                    SELECT
+                        s.id,
+                        (
+                            SELECT COUNT(*)::float
+                            FROM chat_messages m
+                            WHERE m.session_id = s.id
+                              AND LOWER(m.role) IN ('user', 'assistant')
+                        ) AS msg_cnt
+                    FROM chat_sessions s
+                    WHERE s.updated_at >= NOW() - (%s * INTERVAL '1 hour')
+                ) t
+                WHERE t.msg_cnt > 0
+                """,
+                (h,),
+            )
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return 0.0
+        return float(row[0])

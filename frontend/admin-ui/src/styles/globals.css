@@ -4304,3 +4304,101 @@ code {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ---- Memory / sessions operational console ---- */
+.memory-console-page .memory-top-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.25rem;
+}
+
+.memory-console-page .memory-metric {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.65rem;
+  min-width: 7.5rem;
+}
+
+.memory-console-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-left: 0.75rem;
+}
+
+.memory-table-wrap {
+  overflow-x: auto;
+}
+
+.memory-console-page .memory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.memory-console-page .memory-table th,
+.memory-console-page .memory-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.memory-badge-clear {
+  display: inline-block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(210, 153, 34, 0.2);
+  color: var(--warning);
+  border: 1px solid rgba(210, 153, 34, 0.45);
+}
+
+.memory-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.memory-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 720px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1rem 1.1rem;
+}
+
+.memory-turn-list,
+.memory-lifecycle-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.memory-console-page .memory-table td.memory-cell-user {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-lifecycle-inline {
+  display: inline;
+  font-size: 0.78rem;
+  margin-left: 0.25rem;
+}

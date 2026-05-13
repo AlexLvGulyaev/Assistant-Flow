@@ -32,6 +32,8 @@ def build_retrieval_fingerprint(
     security_fingerprint_extra: str | None = None,
 ) -> str:
     gen = (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip() or "unset"
+    # Вторая строка fingerprint — нормализованный RAG backend (должна совпадать с
+    # активным backend при сборке CachingRetrievalBackend через RetrievalBackendManager).
     parts = [
         normalize_query_text(query),
         normalize_rag_backend(config.rag_backend),

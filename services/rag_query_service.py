@@ -14,6 +14,10 @@ from services.retrieval.base import RetrievalBackend
 from services.retrieval.runtime_manager import RetrievalBackendManager
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
 from services.retrieval_security.context import RetrievalSecurityContext
+from services.conversational_context_assembly import (
+    RagConversationalContextAssembly,
+    build_rag_conversational_context,
+)
 from services.rag_types import (
     RagQueryResult,
     RagRequestDiagnostics,
@@ -115,6 +119,52 @@ def _retrieval_diag_snapshot(
     return name, name, n, readiness
 
 
+def _routing_identity_for_logs(
+    svc: "RagQueryService",
+    active: RetrievalBackend,
+    cache_probe: dict[str, object] | None,
+) -> dict[str, object]:
+    """Поля для diagnostics: фактический класс backend, пути, env vs DB, cache (поток worker)."""
+    from services.retrieval.chroma_backend import ChromaBackend
+    from services.retrieval.factory import normalize_rag_backend
+    from services.retrieval.faiss_backend import FaissBackend
+
+    out: dict[str, object] = {}
+    out["backend_requested_env"] = normalize_rag_backend(svc._config.rag_backend)
+    if svc._retrieval_manager is not None:
+        try:
+            out["backend_effective_resolved"] = svc._retrieval_manager.effective_backend_name()
+        except Exception:
+            pass
+    out["backend_wrapper_class"] = type(active).__name__
+    inner = getattr(active, "_inner", None)
+    if inner is not None:
+        out["backend_inner_class"] = type(inner).__name__
+        concrete = inner
+    else:
+        concrete = active
+    if isinstance(concrete, FaissBackend):
+        out["faiss_index_path"] = str(concrete.index_dir)
+        out["backend_storage_label"] = f"faiss:{concrete.index_dir}"
+    elif isinstance(concrete, ChromaBackend):
+        out["chroma_collection_name"] = RAG_CHROMA_COLLECTION_NAME
+        out["backend_storage_label"] = f"chroma:{RAG_CHROMA_COLLECTION_NAME}"
+    else:
+        out["backend_storage_label"] = str(
+            getattr(concrete, "backend_name", None) or "unknown"
+        )
+    if cache_probe:
+        for k in (
+            "retrieval_cache_hit",
+            "retrieval_cache_key_hash_prefix",
+            "retrieval_cache_fingerprint_backend",
+        ):
+            v = cache_probe.get(k)
+            if v is not None:
+                out[k] = v
+    return out
+
+
 def _text_preview_for_logs(text: object, max_len: int = _CHUNK_PREVIEW_MAX) -> str:
     normalized = " ".join(str(text or "").split())
     if not normalized:
@@ -178,6 +228,32 @@ def _filter_chunks_by_max_distance(
     return kept, missing
 
 
+def _assembly_diag_for_logs(
+    assembly: RagConversationalContextAssembly,
+    *,
+    retrieval_chunks_used: int,
+    retrieval_chars: int,
+    system_context_chars: int,
+    query: str,
+) -> dict[str, object]:
+    """Memory v1.1: safe sizes/flags for ``processing_logs.details`` (no prompt bodies)."""
+    trim = assembly.history_trimming_messages or assembly.history_trimming_chars
+    q = (query or "").strip()
+    return {
+        "followup_question_detected": assembly.followup_question_detected,
+        "history_turns_used": assembly.history_turns_used,
+        "history_messages_used": assembly.history_messages_used,
+        "history_messages_loaded": assembly.history_messages_loaded,
+        "history_chars": assembly.history_chars,
+        "history_trimming_applied": trim,
+        "conversational_context_size_chars": assembly.history_chars
+        + len(q)
+        + int(system_context_chars),
+        "retrieval_chunks_used": int(retrieval_chunks_used),
+        "retrieval_chars": int(retrieval_chars),
+    }
+
+
 def _build_diagnostics(
     *,
     query: str,
@@ -202,12 +278,23 @@ def _build_diagnostics(
     retrieval_backend: str | None = None,
     active_collection_count: int | None = None,
     retrieval_readiness: str | None = None,
+    routing_extras: dict[str, object] | None = None,
+    followup_question_detected: bool | None = None,
+    history_turns_used: int | None = None,
+    history_messages_used: int | None = None,
+    history_messages_loaded: int | None = None,
+    history_chars: int | None = None,
+    history_trimming_applied: bool | None = None,
+    conversational_context_size_chars: int | None = None,
+    retrieval_chunks_used: int | None = None,
+    retrieval_chars: int | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
         {str(doc.metadata.get("source", "Unknown")) for doc, _ in filtered}
     )
     chunk_be = (active_backend or retrieval_backend or "unknown").strip().lower()
+    rx = routing_extras or {}
     return RagRequestDiagnostics(
         query_preview=_query_preview_for_logs(query),
         top_k=top_k,
@@ -238,6 +325,25 @@ def _build_diagnostics(
         retrieval_backend=retrieval_backend,
         active_collection_count=active_collection_count,
         retrieval_readiness=retrieval_readiness,
+        backend_requested_env=rx.get("backend_requested_env"),  # type: ignore[arg-type]
+        backend_effective_resolved=rx.get("backend_effective_resolved"),  # type: ignore[arg-type]
+        backend_wrapper_class=rx.get("backend_wrapper_class"),  # type: ignore[arg-type]
+        backend_inner_class=rx.get("backend_inner_class"),  # type: ignore[arg-type]
+        backend_storage_label=rx.get("backend_storage_label"),  # type: ignore[arg-type]
+        faiss_index_path=rx.get("faiss_index_path"),  # type: ignore[arg-type]
+        chroma_collection_name=rx.get("chroma_collection_name"),  # type: ignore[arg-type]
+        retrieval_cache_hit=rx.get("retrieval_cache_hit"),  # type: ignore[arg-type]
+        retrieval_cache_key_hash_prefix=rx.get("retrieval_cache_key_hash_prefix"),  # type: ignore[arg-type]
+        retrieval_cache_fingerprint_backend=rx.get("retrieval_cache_fingerprint_backend"),  # type: ignore[arg-type]
+        followup_question_detected=followup_question_detected,
+        history_turns_used=history_turns_used,
+        history_messages_used=history_messages_used,
+        history_messages_loaded=history_messages_loaded,
+        history_chars=history_chars,
+        history_trimming_applied=history_trimming_applied,
+        conversational_context_size_chars=conversational_context_size_chars,
+        retrieval_chunks_used=retrieval_chunks_used,
+        retrieval_chars=retrieval_chars,
     )
 
 
@@ -345,6 +451,24 @@ class RagQueryService:
             return self._tuning_resolver.effective_config()
         return self._config
 
+    def _assemble_rag_conversation(
+        self,
+        query: str,
+        conversation_history: list[dict[str, str]] | None,
+    ) -> RagConversationalContextAssembly:
+        cfg = self._eff()
+        return build_rag_conversational_context(
+            query=(query or "").strip(),
+            conversation_history=conversation_history,
+            max_history_messages=int(cfg.telegram_memory_max_llm_messages or 0),
+            max_history_chars=int(cfg.rag_conversation_history_max_chars or 0),
+        )
+
+    def _history_tail_for_llm(self, history: list[dict[str, str]] | None) -> list[dict[str, str]]:
+        """Tail for LLM; same caps as RAG answer path (message + char budgets)."""
+        assy = self._assemble_rag_conversation("", history)
+        return list(assy.history_for_llm)
+
     def _active_retrieval(self) -> RetrievalBackend:
         if self._retrieval_manager is not None:
             return self._retrieval_manager.get_retrieval()
@@ -380,18 +504,24 @@ class RagQueryService:
         k: int,
         *,
         security_context: RetrievalSecurityContext | None = None,
-    ) -> list[tuple[Document, float]]:
-        """Run Chroma+embedding search in a worker thread (bounds local stalls)."""
+    ) -> tuple[list[tuple[Document, float]], dict[str, object]]:
+        """Run vector retrieval in a worker thread (bounds local stalls)."""
 
         active = self._active_retrieval()
         backend_label = active.backend_name
 
-        def run() -> list[tuple[Document, float]]:
+        def run() -> tuple[list[tuple[Document, float]], dict[str, object]]:
+            from services.cache.caching_retrieval_backend import (
+                clear_retrieval_cache_thread_diag,
+                take_retrieval_cache_thread_diag,
+            )
+
+            clear_retrieval_cache_thread_diag()
             try:
                 results = active.search(
                     query, top_k=k, security_context=security_context
                 )
-                return [
+                conv = [
                     (
                         Document(
                             page_content=r.chunk.page_content,
@@ -401,20 +531,22 @@ class RagQueryService:
                     )
                     for r in results
                 ]
+                return conv, take_retrieval_cache_thread_diag()
             except Exception as exc:
+                _ = take_retrieval_cache_thread_diag()
                 print(
                     "[assistant-flow] rag retrieve: retrieval backend query failed "
                     f"({type(exc).__name__}: {exc})",
                     flush=True,
                 )
-                return []
+                return [], {}
 
         timeout_sec = max(1, int(self._eff().rag_retrieval_timeout))
         t_vec0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run)
             try:
-                out = future.result(timeout=timeout_sec)
+                out, cache_probe = future.result(timeout=timeout_sec)
             except concurrent.futures.TimeoutError:
                 wall_ms = int((time.monotonic() - t_vec0) * 1000)
                 print(
@@ -428,7 +560,7 @@ class RagQueryService:
                     f"after {timeout_sec}s",
                     flush=True,
                 )
-                return []
+                return [], {}
         wall_ms = int((time.monotonic() - t_vec0) * 1000)
         print(
             "[assistant-flow] rag retrieval: "
@@ -436,7 +568,7 @@ class RagQueryService:
             f"latency_ms={wall_ms}",
             flush=True,
         )
-        return out
+        return out, cache_probe
 
     def _retrieve_raw(
         self,
@@ -444,24 +576,24 @@ class RagQueryService:
         k: int,
         *,
         security_context: RetrievalSecurityContext | None = None,
-    ) -> list[tuple[Document, float]]:
+    ) -> tuple[list[tuple[Document, float]], dict[str, object]]:
         """Similarity search with diagnostics; empty list on timeout or empty query."""
         print("[assistant-flow] rag retrieve: start", flush=True)
         if not (query or "").strip():
-            return []
+            return [], {}
         q = query.strip()
         print(
             "[assistant-flow] rag retrieve: before vectorstore similarity_search",
             flush=True,
         )
-        raw = self._similarity_search_with_timeout(
+        raw, cache_probe = self._similarity_search_with_timeout(
             q, k, security_context=security_context
         )
         print(
             "[assistant-flow] rag retrieve: after vectorstore similarity_search",
             flush=True,
         )
-        return raw
+        return raw, cache_probe
 
     def retrieve(
         self,
@@ -473,7 +605,7 @@ class RagQueryService:
         """Similarity search only (read-only)."""
         k = top_k if top_k is not None else self._eff().rag_top_k
         t0 = time.monotonic()
-        raw = self._retrieve_raw(query, k, security_context=security_context)
+        raw, cache_probe = self._retrieve_raw(query, k, security_context=security_context)
         retrieval_ms = int((time.monotonic() - t0) * 1000)
         thr = float(self._eff().rag_max_distance)
         filtered, miss = _filter_chunks_by_max_distance(raw, thr)
@@ -488,6 +620,7 @@ class RagQueryService:
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
         active = self._active_retrieval()
         ab, rb, acnt, rdy = _retrieval_diag_snapshot(active)
+        routing = _routing_identity_for_logs(self, active, cache_probe)
         _build_diagnostics(
             query=query,
             top_k=k,
@@ -506,6 +639,7 @@ class RagQueryService:
             retrieval_backend=rb,
             active_collection_count=acnt,
             retrieval_readiness=rdy,
+            routing_extras=routing,
         ).emit_stdout()
         return _sources_from_results(filtered)
 
@@ -536,7 +670,7 @@ class RagQueryService:
         k = top_k if top_k is not None else self._eff().rag_top_k
         print("[assistant-flow] rag answer: before retrieval", flush=True)
         t_ret0 = time.monotonic()
-        raw = self._retrieve_raw(
+        raw, cache_probe = self._retrieve_raw(
             normalized, k, security_context=security_context
         )
         retrieval_latency_ms = int((time.monotonic() - t_ret0) * 1000)
@@ -551,6 +685,15 @@ class RagQueryService:
         llm_mod = str(getattr(self._chat, "model_name", "") or "").strip() or None
         active = self._active_retrieval()
         ab, rb, acnt, rdy = _retrieval_diag_snapshot(active)
+        routing = _routing_identity_for_logs(self, active, cache_probe)
+        assembly = self._assemble_rag_conversation(normalized, conversation_history)
+        v11_diag_idle = _assembly_diag_for_logs(
+            assembly,
+            retrieval_chunks_used=0,
+            retrieval_chars=0,
+            system_context_chars=0,
+            query=normalized,
+        )
 
         if not raw:
             diagnostics = _build_diagnostics(
@@ -572,6 +715,8 @@ class RagQueryService:
                 retrieval_backend=rb,
                 active_collection_count=acnt,
                 retrieval_readiness=rdy,
+                routing_extras=routing,
+                **v11_diag_idle,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -601,6 +746,8 @@ class RagQueryService:
                 retrieval_backend=rb,
                 active_collection_count=acnt,
                 retrieval_readiness=rdy,
+                routing_extras=routing,
+                **v11_diag_idle,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -613,7 +760,9 @@ class RagQueryService:
                 diagnostics=diagnostics,
             )
 
-        context = _format_context(filtered)
+        kb_formatted = _format_context(filtered)
+        retrieval_chars_kb = len(kb_formatted)
+        context = kb_formatted
         memory_section_present = False
         if self._config.enable_hybrid_retrieval and hybrid_session_id:
             from services.hybrid_retrieval.hybrid_context_service import HybridContextService
@@ -642,7 +791,8 @@ class RagQueryService:
             answer = self._rag_llm(
                 normalized,
                 context,
-                history=conversation_history,
+                history_for_llm=list(assembly.history_for_llm),
+                followup_hint=assembly.followup_question_detected,
                 memory_section_present=memory_section_present,
             )
         except Exception as exc:
@@ -680,6 +830,14 @@ class RagQueryService:
             retrieval_backend=rb,
             active_collection_count=acnt,
             retrieval_readiness=rdy,
+            routing_extras=routing,
+            **_assembly_diag_for_logs(
+                assembly,
+                retrieval_chunks_used=len(filtered),
+                retrieval_chars=retrieval_chars_kb,
+                system_context_chars=ctx_len,
+                query=normalized,
+            ),
         )
         diagnostics.emit_stdout()
 
@@ -695,9 +853,17 @@ class RagQueryService:
         query: str,
         context: str,
         *,
-        history: list[dict[str, str]] | None,
+        history_for_llm: list[dict[str, str]],
+        followup_hint: bool = False,
         memory_section_present: bool = False,
     ) -> str:
+        followup_tail = ""
+        if followup_hint and history_for_llm:
+            followup_tail = (
+                "\n\nУточнение: последний вопрос пользователя может быть кратким продолжением "
+                "темы предыдущих реплик; используй историю только чтобы понять ссылку "
+                "(например, «удалённо», «стажёр»), факты — только из базы знаний."
+            )
         if memory_section_present:
             system_prompt = (
                 "Ты отвечаешь на вопрос пользователя. Ниже КОНТЕКСТ: сначала блок из базы знаний "
@@ -713,7 +879,8 @@ class RagQueryService:
                 "пуст или явно не относится к вопросу.\n"
                 "4. Не выдумывай факты, которых нет в блоке базы знаний.\n"
                 "5. Не добавляй раздел «Источники» — список источников добавляется отдельно.\n"
-                "6. Пиши нейтрально, ясно, по делу.\n\n"
+                "6. Пиши нейтрально, ясно, по делу."
+                f"{followup_tail}\n\n"
                 f"КОНТЕКСТ:\n{context}"
             )
         else:
@@ -729,12 +896,12 @@ class RagQueryService:
                 "3. Не выдумывай факты, которых нет в контексте.\n"
                 "4. Не добавляй раздел «Источники» и нумерацию файлов — список источников "
                 "добавляется отдельно.\n"
-                "5. Пиши нейтрально, ясно, по делу.\n\n"
+                "5. Пиши нейтрально, ясно, по делу."
+                f"{followup_tail}\n\n"
                 f"КОНТЕКСТ:\n{context}"
             )
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-        if history:
-            messages.extend(history[-6:])
+        messages.extend(history_for_llm)
         messages.append({"role": "user", "content": query})
         return self._complete_chat_with_timeout(messages)
 
@@ -750,7 +917,6 @@ class RagQueryService:
             "загруженные документы."
         )
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-        if history:
-            messages.extend(history[-6:])
+        messages.extend(self._history_tail_for_llm(history))
         messages.append({"role": "user", "content": query})
         return self._complete_chat_with_timeout(messages)

@@ -66,6 +66,27 @@ class RagRequestDiagnostics:
     retrieval_backend: str | None = None
     active_collection_count: int | None = None
     retrieval_readiness: str | None = None
+    # Routing / identity (P6 retrieval audit; JSON in processing_logs.details, no DB migration).
+    backend_requested_env: str | None = None
+    backend_effective_resolved: str | None = None
+    backend_wrapper_class: str | None = None
+    backend_inner_class: str | None = None
+    backend_storage_label: str | None = None
+    faiss_index_path: str | None = None
+    chroma_collection_name: str | None = None
+    retrieval_cache_hit: bool | None = None
+    retrieval_cache_key_hash_prefix: str | None = None
+    retrieval_cache_fingerprint_backend: str | None = None
+    # Memory v1.1: conversational assembly (counts/flags only; no full prompts).
+    followup_question_detected: bool | None = None
+    history_turns_used: int | None = None
+    history_messages_used: int | None = None
+    history_messages_loaded: int | None = None
+    history_chars: int | None = None
+    history_trimming_applied: bool | None = None
+    conversational_context_size_chars: int | None = None
+    retrieval_chunks_used: int | None = None
+    retrieval_chars: int | None = None
 
     def to_log_details(self) -> dict[str, object]:
         """Compact JSON-safe payload for ``processing_logs.details``."""
@@ -113,6 +134,46 @@ class RagRequestDiagnostics:
             out["active_collection_count"] = int(self.active_collection_count)
         if self.retrieval_readiness:
             out["retrieval_readiness"] = self.retrieval_readiness
+        if self.backend_requested_env:
+            out["backend_requested_env"] = self.backend_requested_env
+        if self.backend_effective_resolved:
+            out["backend_effective_resolved"] = self.backend_effective_resolved
+        if self.backend_wrapper_class:
+            out["backend_wrapper_class"] = self.backend_wrapper_class
+        if self.backend_inner_class:
+            out["backend_inner_class"] = self.backend_inner_class
+        if self.backend_storage_label:
+            out["backend_storage_label"] = self.backend_storage_label
+        if self.faiss_index_path:
+            out["faiss_index_path"] = self.faiss_index_path
+        if self.chroma_collection_name:
+            out["chroma_collection_name"] = self.chroma_collection_name
+        if self.retrieval_cache_hit is not None:
+            out["retrieval_cache_hit"] = bool(self.retrieval_cache_hit)
+        if self.retrieval_cache_key_hash_prefix:
+            out["retrieval_cache_key_hash_prefix"] = self.retrieval_cache_key_hash_prefix
+        if self.retrieval_cache_fingerprint_backend:
+            out["retrieval_cache_fingerprint_backend"] = self.retrieval_cache_fingerprint_backend
+        if self.followup_question_detected is not None:
+            out["followup_question_detected"] = bool(self.followup_question_detected)
+        if self.history_turns_used is not None:
+            out["history_turns_used"] = int(self.history_turns_used)
+        if self.history_messages_used is not None:
+            out["history_messages_used"] = int(self.history_messages_used)
+        if self.history_messages_loaded is not None:
+            out["history_messages_loaded"] = int(self.history_messages_loaded)
+        if self.history_chars is not None:
+            out["history_chars"] = int(self.history_chars)
+        if self.history_trimming_applied is not None:
+            out["history_trimming_applied"] = bool(self.history_trimming_applied)
+        if self.conversational_context_size_chars is not None:
+            out["conversational_context_size_chars"] = int(
+                self.conversational_context_size_chars
+            )
+        if self.retrieval_chunks_used is not None:
+            out["retrieval_chunks_used"] = int(self.retrieval_chunks_used)
+        if self.retrieval_chars is not None:
+            out["retrieval_chars"] = int(self.retrieval_chars)
         return out
 
     def emit_stdout(self) -> None:
@@ -174,6 +235,59 @@ class RagRequestDiagnostics:
             print(
                 f"[assistant-flow] rag diagnostics: rag_pipeline_wall_ms="
                 f"{self.rag_pipeline_wall_ms}",
+                flush=True,
+            )
+        if self.backend_wrapper_class:
+            print(
+                f"[assistant-flow] rag diagnostics: backend_wrapper_class="
+                f"{self.backend_wrapper_class}",
+                flush=True,
+            )
+        if self.backend_inner_class:
+            print(
+                f"[assistant-flow] rag diagnostics: backend_inner_class="
+                f"{self.backend_inner_class}",
+                flush=True,
+            )
+        if self.backend_storage_label:
+            print(
+                f"[assistant-flow] rag diagnostics: backend_storage_label="
+                f"{self.backend_storage_label!r}",
+                flush=True,
+            )
+        if self.retrieval_cache_hit is not None:
+            print(
+                f"[assistant-flow] rag diagnostics: retrieval_cache_hit="
+                f"{self.retrieval_cache_hit}",
+                flush=True,
+            )
+        if self.retrieval_cache_fingerprint_backend:
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_cache_fingerprint_backend="
+                f"{self.retrieval_cache_fingerprint_backend!r}",
+                flush=True,
+            )
+        if self.followup_question_detected is not None:
+            print(
+                "[assistant-flow] rag diagnostics: followup_question_detected="
+                f"{self.followup_question_detected}",
+                flush=True,
+            )
+        if self.history_turns_used is not None:
+            print(
+                f"[assistant-flow] rag diagnostics: history_turns_used={self.history_turns_used}",
+                flush=True,
+            )
+        if self.history_trimming_applied is not None:
+            print(
+                "[assistant-flow] rag diagnostics: history_trimming_applied="
+                f"{self.history_trimming_applied}",
+                flush=True,
+            )
+        if self.conversational_context_size_chars is not None:
+            print(
+                "[assistant-flow] rag diagnostics: conversational_context_size_chars="
+                f"{self.conversational_context_size_chars}",
                 flush=True,
             )
 

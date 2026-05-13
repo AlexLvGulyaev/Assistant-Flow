@@ -19,4 +19,5 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/documents", label: "Документы" },
   { path: "/retrieval", label: "Retrieval Settings" },
   { path: "/logs", label: "Логи" },
+  { path: "/memory", label: "Memory" },
 ];

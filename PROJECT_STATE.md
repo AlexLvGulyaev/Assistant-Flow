@@ -664,6 +664,12 @@ COMPOSE_BAKE=false docker compose -f docker-compose.assistant.yml up -d --build
 Important:
 Do NOT use `docker compose down -v` unless full Chroma reset intended.
 
+### Portfolio stack + Cursor documentation (append-only)
+
+- **Канонический operational contour** для `docker-compose.portfolio.yml`: только project name **`portfolio-test`** (префикс контейнеров `portfolio-test-*`). Полная политика команд, риск параллельного контура `assistant-flow-*`, остановка ошибочных контейнеров и проверка активного стека — **§54**.
+- **Запрещено** в инструкциях и в конце Cursor-prompt’ов подразумевать portfolio stack командой вида `docker compose up -d --build` **без** `-p portfolio-test` и **без** явного `-f docker-compose.portfolio.yml` (см. **§54**).
+- **Обязательный хвост каждого нового Cursor engineering log** (после выполнения задачи): раздел **`## Operator commands / next verification commands`** с **конкретными** командами: rebuild/recreate при необходимости, `docker exec … python <script>` для smoke в контейнере, `curl`/API checks при затронутом Admin API, `npm run build` при frontend, `git status`; если host-level проверки недостаточны — **явное предупреждение**, что нужен прогон внутри **`portfolio-test-assistant-flow-1`**. Детализация — **§20** (дополнение к Team Workflow).
+
 ---
 
 ## 14. Testing Checklist
@@ -961,7 +967,37 @@ Git rules:
 Important lesson learned:
 After Cursor provider instability incident, Git became mandatory safety mechanism.
 
+### Cursor engineering logs — operator commands section (append-only)
 
+В конце **каждого** нового файла `docs/cursor_sessions/*.md`, создаваемого по завершении Cursor-prompt’а с инженерным логом, обязан быть раздел (заголовок дословно):
+
+```text
+## Operator commands / next verification commands
+```
+
+В этом разделе Cursor **обязан** указать (по релевантности задачи, без шаблонных «при необходимости» без конкретики):
+
+- **Точную** команду rebuild/recreate контейнеров, если изменения требуют пересборки образа / пересоздания стека.
+- **Точные** `docker exec` smoke-команды для DB/RAG/runtime — только внутри канонического контейнера приложения portfolio stack (**не** обобщённый хост без контекста).
+- **`curl` / API checks**, если затронут Admin API или HTTP-контракты.
+- **`npm run build`** (или эквивалент из `frontend/admin-ui`), если затронут frontend.
+- **`git status`** (или согласованная с командой команда сверки дерева).
+- **Предупреждение**, если проверка на хосте **недостаточна** и безусловно нужен контейнерный прогон с согласованным `DATABASE_URL` / Chroma / env.
+
+**Политика для portfolio stack:** использовать только каноническую форму подъёма:
+
+```bash
+COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build
+docker exec portfolio-test-assistant-flow-1 python <script>
+```
+
+**Запрещено** в этом разделе (и в операционных рекомендациях к portfolio) писать обобщённо:
+
+```bash
+docker compose up -d --build
+```
+
+**без** `-p portfolio-test`, если речь о **portfolio** stack — иначе Docker Compose возьмёт имя проекта из имени директории и поднимет **параллельный** контур (см. **§54**).
 
 ---
 
@@ -1962,6 +1998,10 @@ Retrieval layer должен проектироваться как **provider-ag
 
 Это решение — **смена первичного рабочего и проверочного контура** (engineering / operational direction), **а не** задача «перенести данные с сервера в portfolio» в рамках данной фиксации. Миграции БД, переписывание compose, массовая смена env и перенос данных **здесь не подразумеваются** и остаются отдельными задачами, если будут запрошены явно.
 
+### 28.5 Docker Compose project name для portfolio (append-only)
+
+Имя Docker Compose project **обязано** быть зафиксировано как **`portfolio-test`** для файла `docker-compose.portfolio.yml`. Запуск без `-p portfolio-test` создаёт параллельный стек с префиксом имени директории (`assistant-flow-*`), опасный для портов, volumes и воспроизводимости тестов. Полное правило — **§54**; команды проверки и остановки ошибочного контура — там же.
+
 ---
 
 ## 29. P6.2b — Стабилизация retrieval перед hybrid (append-only)
@@ -2096,6 +2136,8 @@ docker exec portfolio-test-assistant-flow-1 python <script>
 ```
 
 **Причина:** код на хосте и образ `/app` в контейнере расходятся без rebuild; primary contour — `portfolio-test-*` с согласованным `DATABASE_URL`, Chroma и env.
+
+**Уточнение (после инцидента параллельных compose-контуров, append-only):** каноническая команда подъёма portfolio stack должна **всегда** включать **`-p portfolio-test`**, **`COMPOSE_BAKE=false`** и **`-f docker-compose.portfolio.yml`** — см. точную однострочную формулировку в **§54**. Команда `docker compose … up` без `-p` для этого файла считается **операционной ошибкой** (риск дубликата стека на тех же портах и с другой БД).
 
 ---
 
@@ -2731,3 +2773,255 @@ Unknown stage fallback допустим, но все OCR known stages должн
 
 **Текущий статус реализации:** **`partially implemented`**. Обоснование: **Retrieval Settings**, **multi-backend** (Chroma / FAISS / Weaviate), **RetrievalBackendManager**, обогащённые **RAG diagnostics** (`active_backend`, chunk-level backend, readiness в UI), **P6.x** слои (evaluation, security, cache groundwork) и операционные страницы **Overview / Documents / RAG** закрывают часть запросов; **reranking**, формальные **quality metrics** в виде дашбордов/алертов, системные **semantic tests** на leakage и детальные учебные «chunk impact» сценарии — в основном **`planned`** / **`postponed`** до выделения объёма работ.
 
+### 47.3
+
+**Источник:** Assistant Flow — **PEr02** (модуль 5, retrieval experiments / multi-backend audit).
+
+**Предложения по развитию:**
+
+**1) Retrieval consistency metrics (формализация)** — зафиксировать необходимость метрик и регистров: **generation consistency**; **false negative rate**; **retrieval/generation mismatch**; **semantic robustness**; **synonym handling quality**; **retrieval confidence consistency**. Особенно выделить operational case: **retrieval нашёл релевантные chunks, но generation вернул отрицательный ответ** — как **отдельную** метрику/класс инцидентов (не сводить автоматически к «плохому retrieval»).
+
+**2) Semantic robustness testing** — systematic suites: сложные семантические запросы; **synonym** / **paraphrase** / **indirect intent**; **semantic fuzzing**; **retrieval stress testing** (нагрузка и деградация качества).
+
+**3) Orchestration / fallback audit** — направления: **orchestration audit**; **fallback policy analysis**; **generation confidence policy**; **retrieval-to-generation transition diagnostics**; **prompt grounding audit**; **context assembly diagnostics**. Зафиксировать принцип: **retrieval quality ≠ generation quality** (разные слои ответственности и разные сигналы для оператора).
+
+**4) Hybrid search roadmap** — как roadmap: **hybrid retrieval**; **vector + keyword**; **reranking**; **cross-encoder reranking**; **adaptive retrieval strategies**; **retrieval benchmarking framework** (регрессия и сравнение стратегий).
+
+**Architectural implications:**
+
+- Надстройка **измеримого слоя** между retrieval и generation (метрики mismatch, явные классы отказов, не только distance/threshold);
+- Согласование с **multi-backend** (§51): сравнение score между backends без нормализации остаётся некорректным — метрики должны быть **backend-aware** или **нормализованы**;
+- **Grounding и context assembly** — отдельный объект аудита и телеметрии (что попало в LLM и почему), без смешения с пользовательской **persistent memory** (см. Memory v1 контуры).
+
+**Operational implications:**
+
+- Расширение **Admin / RAG / logs** под новые счётчики, фильтры и runbook-шаги для класса «chunks есть — ответ отрицательный»;
+- Offline/CI **benchmarking** и при необходимости отдельный контур алертов;
+- Обучение операторов различать **retrieval**, **generation** и **prompt assembly** при разборе инцидентов.
+
+**Текущий статус реализации** (срез по фактическому AF):
+
+| Блок | Статус | Краткое обоснование |
+|------|--------|---------------------|
+| Retrieval consistency metrics (формальные KPI выше) | **`planned`** | RAG diagnostics и логи богаче, отдельного продукта метрик mismatch / FN / generation consistency нет |
+| Semantic robustness testing (систематические suite) | **`planned`** / **`postponed`** | Есть направления evaluation/dataset (§52, RAGAS optional); нет закреплённого постоянного gate synonym/paraphrase/fuzz |
+| Orchestration / fallback / grounding audit | **`partially implemented`** | Orchestrator, lifecycle, RAG diagnostics, Retrieval Settings, slim `processing_logs`; нет выделенного «grounding audit» и generation confidence policy как продукта |
+| Hybrid roadmap (keyword, rerankers, adaptive, framework) | **`partially implemented`** | Hybrid path и флаги есть; BM25+vector product, cross-encoder rerank, adaptive strategies, единый benchmarking framework — в основном **`planned`** |
+| Retrieval Settings; multi-backend; diagnostics; chunk inspection; observability | **`implemented`** / **`partially implemented`** | См. §45–§46, §50–§51; chunk UI и backend identity в telemetry — да; полнота алертов и формальных QA gates — частично |
+
+---
+
+## 48. Document preprocessing pipeline — завершённые Phase 1 и Phase 2 (append-only)
+
+Операционно-архитектурный срез: **пайплайн предобработки документов** для Admin / Documents доведён до состояния **Phase 1 + Phase 2**; дальнейшая эволюция (OCR, семантическая сегментация и т.д.) вынесена в **направления ниже**, не в объём текущего этапа.
+
+### 48.1 Покрытие форматов и стадии
+
+- **Поддерживаемые типы входа:** **TXT**, **HTML**, **PDF** (извлечение текста и нормализация в рамках preprocessing-сервиса).
+- **Phase 1 / Phase 2** считаются **завершёнными** в смысле контракта: загрузка → предобработка → публикация **очищенного / canonical** текста для downstream.
+
+### 48.2 Хранение и разделение сырья vs canonical
+
+- **Raw assets** (исходные/промежуточные представления, необходимые для трассировки и отладки) **сохраняются отдельно** от текста, идущего в индексацию.
+- **Cleaned / canonical TXT** — **единственный договорной вход** для **chunking** и **indexing** (векторный слой и связанные job’ы).
+
+### 48.3 Совместимость с indexer
+
+- Сохранён **compatibility path** для **текущего indexer** (`AdminKnowledgeIndexer` и связанный контур): новый preprocessing **не ломает** существующий контракт «файл на диске / версия в PG → чанки → vector backend» без отдельной миграции схемы под этот срез состояния.
+
+### 48.4 Редактирование и версии
+
+- **Ручное редактирование canonical text** в операционной консоли создаёт **новую версию документа** и инициирует **reindex** по установленному lifecycle (без смены семантики «редактирование = новая версия + переиндексация»).
+
+### 48.5 Documents console как retrieval / operations surface
+
+- Страница **Documents** в React Admin UI выступает **операционной поверхностью** вокруг документов и retrieval: **статус preprocessing**, **preview** (raw / canonical), **открытие полного текста**, **редактирование** canonical, **детали чанков**, **snapshot metadata** в PG (в т.ч. после доработок индексатора), синхронизация с **multi-backend** operational summary.
+
+### 48.6 OCR и граница scope
+
+- **OCR** (сканы PDF, изображения как источник текста) на момент этого среза **вне scope завершённого preprocessing Phase 1–2**; не считается обязательной частью описанного выше контура.
+
+### 48.7 Направления развития (не реализовано в этом этапе)
+
+- **OCR** и извлечение текста из сканов / вложений.
+- **Semantic segmentation** (умное разбиение под retrieval, не только механический chunker).
+- **Full chunk storage / chunk lineage** (полный текст каждого чанка и трассировка происхождения в операционном хранилище поверх текущего split vector vs PG preview).
+
+---
+
+## 49. Document preprocessing pipeline — operational contract (append-only)
+
+Дополнение к **§48**: фиксируются инженерные границы контура, а не повтор полного перечня подпунктов §48.
+
+### 49.1 Разделение стадий
+
+- **Извлечение текста (extraction)** из входных форматов выполняется в контуре preprocessing и **не смешивается** с вызовом retrieval API.
+- **Preprocessing** (включая нормализацию и очистку) завершается **до** создания чанков и **до** записи в векторный индекс / `document_chunks`.
+- **Cleaned / canonical text** подаётся в **chunking** и далее в **indexing** как договорный источник текста для retrieval.
+
+### 49.2 Цель по отношению к retrieval
+
+- Preprocessing нацелен на **снижение шума** в тексте, попадающем в chunking (навигация, повторы, артефакты вёрстки и т.п. — в объёме реализованных правил).
+- **Нормализация и cleanup** выполняются **до** фиксации чанков; параметры **SmartChunker** в этом срезе не расширялись под данную итерацию.
+
+### 49.3 Observability и lifecycle
+
+- Статусы и артефакты preprocessing **подключены** к операционному контуру: API деталей документа, `processing_logs` / стадии пайплайна, UI **Documents** (см. **§50**).
+
+### 49.4 OCR
+
+- **OCR** остаётся **отдельным** направлением работ; в описанный preprocessing pipeline **не входит**.
+
+---
+
+## 50. Document lifecycle observability (append-only)
+
+### 50.1 UI и таймлайн
+
+- **Timeline / события** по документу отображаются в операционном UI (React Admin UI **Documents** и связанные представления деталей).
+- Цепочка стадий в терминах оператора фиксируется как: **upload** → **extraction** → **preprocessing** → **normalization** → **chunking** → **indexing** → состояние **retrieval-ready** (готовность к запросам RAG при наличии векторного индекса и согласованных метаданных).
+
+### 50.2 Телеметрия
+
+- Переходы отражаются через **operational stages** и записи в **telemetry** / `processing_logs` (детали зависят от стадии и маршрута; схема полей расширялась по мере P6 / preprocessing).
+
+### 50.3 Инспекция чанков
+
+- Для выбранной версии документа доступен **отдельный** операционный просмотр **document_chunks** (список, детальная карточка чанка, snapshot **metadata** в PG по контракту индексатора).
+
+---
+
+## 51. Retrieval backend comparison observations (append-only)
+
+### 51.1 Сравнение Chroma / FAISS / Weaviate
+
+- Проводилось **сравнение поведения retrieval** при переключении активного backend между **Chroma**, **FAISS** и **Weaviate** на одном и том же операционном контуре конфигурации (см. multi-backend platform, **§45–§46**).
+
+### 51.2 Chroma и FAISS
+
+- При **одинаковой** модели эмбеддингов и **согласованном** корпусе чанков **Chroma** и **FAISS** давали **практически совпадающие** значения distance / порядок top-k в наблюдаемых тестах.
+- Инженерная проверка маршрутизации (factory, `RetrievalBackendManager`, `RagQueryService`, fingerprint retrieval cache, smoke `scripts/test_retrieval_backend_identity_smoke.py`) **не выявила** подмены одного backend другим; расхождения порядка машинного эпсилон объясняются **разными реализациями** поиска (ANN vs flat L2) и float32.
+
+### 51.3 Weaviate
+
+- **Weaviate** в тех же сценариях возвращал **иные** числовые значения score / distance относительно пары Chroma/FAISS при сопоставлении «как есть» — ожидаемо из-за другой семантики метрики и слоя клиента.
+
+### 51.4 Интерпретация метрик
+
+- Значения **distance / similarity** трактуются как **backend-local**; **прямое** сравнение чисел между разными vector backends **без** слоя нормализации / калибровки **не является** корректной операцией для QA.
+
+### 51.5 Диагностика
+
+- В **RagRequestDiagnostics** / payload `processing_logs.details` добавлены поля идентичности backend и cache (wrapper/inner class, путь FAISS, маркеры cache hit и т.д.) для последующего разбора инцидентов без догадок по конфигу UI.
+
+---
+
+## 52. Retrieval QA dataset (append-only)
+
+### 52.1 Назначение
+
+- Для проверок retrieval использовался **синтетический** набор документов с **намеренным шумом** (не production-корпус).
+
+### 52.2 Состав
+
+- Форматы: **TXT**, **HTML**, **PDF**.
+- Включены конструкции: **navigation / footer noise**, **повторяющиеся блоки**, **артефакты вёрстки** (в пределах сценария набора).
+
+### 52.3 Запросы и цель тестов
+
+- Использовались запросы в стиле **synonym / перефраз** относительно якорных формулировок в тексте.
+- Тесты выполнялись для наблюдения **semantic similarity** (порог отсечения, стабильность top-k, регрессии при смене backend), без вывода о «лучшем» backend.
+
+---
+
+## 53. Retrieval engineering direction (append-only)
+
+Краткие **направления работ** (без изменения существующих roadmap-разделов выше).
+
+### 53.1 Chunking
+
+- **Semantic segmentation** рассматривается как возможное развитие поверх текущего **SmartChunker** (отдельная задача по согласованию с indexing и PG).
+- **Token-aware chunking** остаётся направлением доработки политики разбиения.
+
+### 53.2 Observability
+
+- **Retrieval observability** (диагностика запросов, согласованность backend / cache / счётчиков) и **chunk inspection** в UI продолжают развиваться как **отдельные** операционные направления.
+
+---
+
+## 54. CRITICAL OPERATIONAL RULE — DOCKER COMPOSE PROJECT NAME (append-only)
+
+> **Внимание:** этот раздел фиксирует обязательную операционную дисциплину после инцидента с **параллельными** Docker Compose контурами (один стек с `-p portfolio-test`, второй — с project name по умолчанию от директории). Нарушение ведёт к риску тестирования **не той** БД, коллизии портов и невоспроизводимым выводам по Memory / RAG / Admin UI.
+
+### 54.1 Единственный canonical contour
+
+**Единственный canonical contour** для разработки, runtime, smoke и GitHub portfolio:
+
+```text
+portfolio-test-*
+```
+
+(имя Docker Compose project: **`portfolio-test`**; контейнеры вида `portfolio-test-postgres-1`, `portfolio-test-assistant-flow-1`, … — фактические суффиксы зависят от compose, префикс проекта **обязан** быть `portfolio-test`.)
+
+### 54.2 Обязательная команда подъёма portfolio stack
+
+Все команды **`docker compose`** для **portfolio** stack выполнять **только** с явным project name (и рекомендуется фиксировать bake):
+
+```bash
+COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build
+```
+
+### 54.3 Запрет: portfolio compose без `-p portfolio-test`
+
+**Запрещено** запускать `docker-compose.portfolio.yml` **без** `-p portfolio-test`, потому что Docker Compose возьмёт project name из директории (например `/opt/assistant-flow` → имя проекта **`assistant-flow`**) и создаст **параллельный** контур с контейнерами вида:
+
+```text
+assistant-flow-postgres-1
+assistant-flow-weaviate-1
+assistant-flow-assistant-flow-1
+assistant-flow-admin-api-1
+```
+
+(имена примерные; фактический шаблон — префикс **`assistant-flow-`**, отличный от **`portfolio-test-`**.)
+
+### 54.4 Почему параллельный контур опасен
+
+- Занимает **те же** host ports (например **5433**, **8089**, **8600** и др. — в зависимости от compose).
+- Может использовать **другие** named volumes / состояние данных.
+- Может поднять **другую** PostgreSQL с иным volume → расхождение с ожидаемым эталоном.
+- Может привести к тестированию **не той** БД и ложным выводам по **Memory / RAG / Admin UI**.
+- Ломает **reproducibility** и согласованность с документацией (**§32**, **§28**).
+
+### 54.5 Остановка ошибочного контура `assistant-flow-*`
+
+Если обнаружены контейнеры с префиксом **`assistant-flow-`**, а работа должна вестись **только** в portfolio contour — их нужно остановить:
+
+```bash
+docker ps --format "{{.Names}}" | grep '^assistant-flow-' | xargs -r docker stop
+```
+
+(Проверить список имён перед массовой остановкой в production; на dev-стенде команда выше — типовой remediation.)
+
+### 54.6 Пересборка portfolio: не плодить новый project name
+
+Если обнаружены старые / дублирующие контейнеры **`portfolio-test-*`** и нужен clean rebuild — **не** создавать новый произвольный `-p`; пересобрать **тот же** project:
+
+```bash
+COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build
+```
+
+(При необходимости согласовать с оператором полный `down` / prune volumes — отдельное решение, не смешивать с «случайным» вторым project name.)
+
+### 54.7 Проверка активного контура
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+**Ожидаемый** canonical prefix для portfolio работы:
+
+```text
+portfolio-test-
+```
+
+При отладке Memory/RAG/Admin API убедиться, что приложение и БД смотрят на контейнеры **этого** префикса, а не на параллельный `assistant-flow-*` стек.

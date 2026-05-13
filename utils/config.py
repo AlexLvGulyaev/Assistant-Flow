@@ -91,6 +91,14 @@ class AppConfig:
     tts_voice: str = "alloy"
     tts_output_format: str = "mp3"
     tts_max_chars: int = 3000
+    # Memory v1: Telegram RAG short-term dialog в PostgreSQL (chat_sessions / chat_messages).
+    telegram_pg_conversation_memory: bool = True
+    telegram_memory_max_turn_pairs: int = 6
+    telegram_memory_max_llm_messages: int = 24
+    # Memory v1.1: отдельный лимит символов на хвост диалога в RAG LLM (не retrieval).
+    rag_conversation_history_max_chars: int = 12000
+    # Зарезервировано: idle timeout сессии (секунды); 0 = не используется в рантайме.
+    chat_session_idle_timeout_seconds: int = 0
 
     @property
     def token_url(self) -> str:
@@ -228,4 +236,11 @@ def load_config() -> AppConfig:
         tts_voice=(os.getenv("TTS_VOICE", "alloy").strip() or "alloy"),
         tts_output_format=(os.getenv("TTS_OUTPUT_FORMAT", "mp3").strip().lower() or "mp3"),
         tts_max_chars=_int_env("TTS_MAX_CHARS", 3000),
+        telegram_pg_conversation_memory=_bool_env("TELEGRAM_PG_CONVERSATION_MEMORY", True),
+        telegram_memory_max_turn_pairs=_int_env("TELEGRAM_MEMORY_MAX_TURN_PAIRS", 6),
+        telegram_memory_max_llm_messages=_int_env("TELEGRAM_MEMORY_MAX_LLM_MESSAGES", 24),
+        rag_conversation_history_max_chars=_int_env(
+            "RAG_CONVERSATION_HISTORY_MAX_CHARS", 12_000
+        ),
+        chat_session_idle_timeout_seconds=_int_env("CHAT_SESSION_IDLE_TIMEOUT_SECONDS", 0),
     )

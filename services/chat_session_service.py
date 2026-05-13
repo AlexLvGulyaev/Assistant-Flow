@@ -60,3 +60,12 @@ class ChatSessionService:
         """Сырые строки chat_messages (новые первые)."""
         with get_connection() as conn:
             return self._repository.list_messages_for_session(conn, session_id, limit=limit)
+
+    def rotate_active_session(self, user_id: uuid.UUID, *, mode: str = "text") -> uuid.UUID:
+        """
+        Деактивировать все активные сессии пользователя и создать новую активную.
+        Старые сообщения не удаляются (audit trail).
+        """
+        with get_connection() as conn:
+            self._repository.deactivate_all_active_for_user(conn, user_id)
+            return self._repository.create_session(conn, user_id, mode=mode, is_active=True)

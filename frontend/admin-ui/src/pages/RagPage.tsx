@@ -120,6 +120,10 @@ interface RagSession {
   activeBackend: string | null;
   retrievalReadiness: string | null;
   activeCollectionCount: number | null;
+  /** Memory v1.1 conversational assembly (from rag_answer_done details). */
+  historyTurnsUsed: number | null;
+  followupDetected: boolean | null;
+  historyTrimmingApplied: boolean | null;
 }
 
 export function RagPage() {
@@ -797,6 +801,40 @@ export function RagPage() {
                           }
                         />
                         <OpsRow
+                          label="Реплик истории (user turns)"
+                          value={
+                            hasNum(selected.historyTurnsUsed) ? (
+                              String(selected.historyTurnsUsed)
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Follow-up (эвристика)"
+                          value={
+                            selected.followupDetected === true ? (
+                              "да"
+                            ) : selected.followupDetected === false ? (
+                              "нет"
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Тримминг истории"
+                          value={
+                            selected.historyTrimmingApplied === true ? (
+                              "да"
+                            ) : selected.historyTrimmingApplied === false ? (
+                              "нет"
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
                           label="Модель embeddings"
                           value={
                             selected.embeddingModel?.trim() ? (
@@ -1311,6 +1349,9 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       activeBackend: sessionBackend,
       retrievalReadiness: pickText(detailsPool, ["retrieval_readiness"]),
       activeCollectionCount: pickNumber(detailsPool, ["active_collection_count"]),
+      historyTurnsUsed: pickNumber(detailsPool, ["history_turns_used"]),
+      followupDetected: pickBool(detailsPool, ["followup_question_detected"]),
+      historyTrimmingApplied: pickBool(detailsPool, ["history_trimming_applied"]),
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
@@ -1458,6 +1499,19 @@ function pickNumber(detailsPool: Record<string, unknown>[], keys: string[]): num
     for (const key of keys) {
       const n = Number(d[key]);
       if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
+function pickBool(detailsPool: Record<string, unknown>[], keys: string[]): boolean | null {
+  for (let i = detailsPool.length - 1; i >= 0; i--) {
+    const d = detailsPool[i];
+    for (const key of keys) {
+      const v = d[key];
+      if (v === true || v === false) return v;
+      if (v === 1) return true;
+      if (v === 0) return false;
     }
   }
   return null;

@@ -490,6 +490,76 @@ class ProcessingLogsRepository:
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
+    def list_memory_events_for_session(
+        self,
+        conn: Connection,
+        *,
+        session_id_str: str,
+        limit: int = 40,
+    ) -> list[dict[str, Any]]:
+        """Recent memory_* stages where details.session_id matches (metadata only in API layer)."""
+        lim = max(1, min(int(limit), 200))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT execution_id, stage, status, details, created_at
+                FROM processing_logs
+                WHERE stage ~ '^memory_'
+                  AND details->>'session_id' = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (session_id_str, lim),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+    def list_memory_session_cleared_for_user(
+        self,
+        conn: Connection,
+        *,
+        app_user_id_str: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        lim = max(1, min(int(limit), 50))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT execution_id, stage, status, details, created_at
+                FROM processing_logs
+                WHERE stage = 'memory_session_cleared'
+                  AND details->>'user_id' = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (app_user_id_str, lim),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+    def telegram_user_ids_with_recent_memory_clear(
+        self,
+        conn: Connection,
+        *,
+        within_hours: float = 2.0,
+    ) -> set[str]:
+        """Telegram user ids (as strings) that had memory_session_cleared recently."""
+        wh = max(0.25, min(float(within_hours), 168.0))
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT details->>'telegram_user_id' AS tid
+                FROM processing_logs
+                WHERE stage = 'memory_session_cleared'
+                  AND created_at >= NOW() - (%s * INTERVAL '1 hour')
+                  AND details ? 'telegram_user_id'
+                  AND COALESCE(details->>'telegram_user_id', '') <> ''
+                """,
+                (wh,),
+            )
+            rows = cur.fetchall()
+        return {str(r[0]) for r in rows if r and r[0]}
+
     def get_latest(self, conn: Connection) -> dict[str, Any] | None:
         """Single newest row (overview «последнее событие»)."""
         with conn.cursor(row_factory=dict_row) as cur:

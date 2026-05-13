@@ -570,3 +570,116 @@ export interface SetActiveRetrievalBackendResponse {
   warnings?: string[];
   target_health?: RetrievalBackendHealthRow;
 }
+
+/** GET /api/memory/observability/summary */
+export interface MemoryObservabilitySummary {
+  database_available?: boolean;
+  memory_runtime_source?: string;
+  telegram_pg_conversation_memory?: boolean;
+  database_url_configured?: boolean;
+  active_sessions_count?: number;
+  avg_turns_sessions_touched?: number;
+  clear_reset_events_count?: number;
+  hours?: number;
+  budget_limits?: {
+    max_turn_pairs?: number;
+    max_llm_messages?: number;
+  };
+  llm_conversation_tail_cap?: number;
+  chat_session_idle_timeout_seconds?: number;
+}
+
+export interface MemorySessionListItem {
+  session_id?: string;
+  user_id?: string;
+  telegram_user_id?: string;
+  user_label?: string;
+  mode?: string;
+  is_active?: boolean;
+  updated_at?: string | null;
+  messages_count?: number;
+  turns_approx?: number;
+  memory_source?: string;
+  recent_clear_badge?: boolean;
+}
+
+export interface MemorySessionsListResponse {
+  memory_runtime_source?: string;
+  count?: number;
+  limit?: number;
+  offset?: number;
+  items?: MemorySessionListItem[];
+}
+
+export interface MemorySessionDetailResponse {
+  session_id?: string;
+  user_id?: string;
+  telegram_user_id?: string;
+  mode?: string;
+  is_active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  memory_source?: string;
+  messages_count?: number;
+  recent_turns?: { role: string; preview: string }[];
+  last_memory_load?: Record<string, unknown> | null;
+  last_memory_append?: Record<string, unknown> | null;
+  last_clear_event?: Record<string, unknown> | null;
+  memory_lifecycle_recent?: Record<string, unknown>[];
+  budget?: {
+    max_turn_pairs?: number;
+    max_llm_messages?: number;
+    dialog_messages_in_session?: number;
+    last_load_messages_loaded?: number | null;
+    last_load_limit_pairs?: number | null;
+    trimmed?: boolean;
+    llm_conversation_tail_cap?: number;
+  };
+}
+
+export async function fetchMemoryObservabilitySummary(
+  hours = 24
+): Promise<MemoryObservabilitySummary> {
+  const q = new URLSearchParams({ hours: String(hours) });
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/memory/observability/summary?${q.toString()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Memory summary: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<MemoryObservabilitySummary>(res);
+}
+
+export async function fetchMemorySessionsList(opts?: {
+  activeOnly?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<MemorySessionsListResponse> {
+  const q = new URLSearchParams();
+  if (opts?.activeOnly) q.set("active_only", "true");
+  if (opts?.limit != null) q.set("limit", String(opts.limit));
+  if (opts?.offset != null) q.set("offset", String(opts.offset));
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/memory/sessions${suffix}`
+  );
+  if (!res.ok) {
+    throw new Error(`Memory sessions: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<MemorySessionsListResponse>(res);
+}
+
+export async function fetchMemorySessionDetail(
+  sessionId: string
+): Promise<MemorySessionDetailResponse> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/memory/sessions/${encodeURIComponent(sessionId)}`
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(
+      `Memory session detail: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`
+    );
+  }
+  return parseJson<MemorySessionDetailResponse>(res);
+}

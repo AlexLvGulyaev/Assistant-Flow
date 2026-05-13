@@ -1,7 +1,8 @@
-"""In-memory Telegram user mode and RAG conversation buffer.
+"""In-memory Telegram user mode and optional RAG conversation buffer (fallback).
 
-TODO: Persist mode and history in PostgreSQL (`chat_sessions`, `chat_messages`)
-per database/db_contract.md; replace this module with repository-backed services.
+Основной short-term контекст для RAG в Telegram при ``DATABASE_URL`` и включённой
+PG-памяти — ``chat_messages`` (см. ``ConversationMemoryService`` / ``load_telegram_rag_history_for_llm``).
+Этот буфер используется как fallback, если PG-память выключена или БД недоступна.
 """
 
 from __future__ import annotations
@@ -39,6 +40,10 @@ class InMemoryTelegramUserStore:
         st = self.state_for(user_id)
         st.mode = "text"
         st.rag_conversation_history.clear()
+
+    def clear_rag_history_only(self, user_id: int) -> None:
+        """Очистить только in-memory RAG buffer (режим не меняется)."""
+        self.state_for(user_id).rag_conversation_history.clear()
 
     def rag_history_snapshot(self, user_id: int) -> list[dict[str, str]]:
         return list(self.state_for(user_id).rag_conversation_history)

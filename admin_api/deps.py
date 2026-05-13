@@ -7,12 +7,18 @@ from typing import Any
 
 from services.admin_service import AdminService
 from services.healthcheck_service import HealthSnapshot, run_system_healthchecks
+from services.memory_observability_service import MemoryObservabilityService
 from utils.config import AppConfig, load_config
 
 
 @lru_cache(maxsize=1)
 def get_admin_service() -> AdminService:
     return AdminService()
+
+
+@lru_cache(maxsize=1)
+def get_memory_observability_service() -> MemoryObservabilityService:
+    return MemoryObservabilityService()
 
 
 def snapshot_to_public_dict(snap: HealthSnapshot) -> dict[str, Any]:
@@ -122,9 +128,34 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
         "retrieval_backend",
         "retrieval_readiness",
         "active_collection_count",
+        "backend_requested_env",
+        "backend_effective_resolved",
+        "backend_wrapper_class",
+        "backend_inner_class",
+        "backend_storage_label",
+        "faiss_index_path",
+        "chroma_collection_name",
+        "retrieval_cache_hit",
+        "retrieval_cache_key_hash_prefix",
+        "retrieval_cache_fingerprint_backend",
+        "followup_question_detected",
+        "history_turns_used",
+        "history_messages_used",
+        "history_messages_loaded",
+        "history_chars",
+        "history_trimming_applied",
+        "conversational_context_size_chars",
+        "retrieval_chunks_used",
+        "retrieval_chars",
         "latency_ms",
         "duration_ms",
         "elapsed_ms",
+        "session_id",
+        "messages_loaded",
+        "messages_saved",
+        "command",
+        "deactivated_sessions",
+        "telegram_user_id",
         "user_input",
         "query",
         "prompt",

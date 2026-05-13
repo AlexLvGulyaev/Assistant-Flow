@@ -7,6 +7,7 @@ Hybrid memory context сюда не попадает (только vector retrie
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,39 @@ from services.retrieval_security.context import RetrievalSecurityContext
 
 if TYPE_CHECKING:
     from utils.config import AppConfig
+
+
+# Диагностика последнего search в потоке (RAG вызывает search из worker ThreadPoolExecutor).
+_tls = threading.local()
+
+
+def clear_retrieval_cache_thread_diag() -> None:
+    """Сбросить маркеры retrieval cache в текущем потоке (перед vector search)."""
+    _tls.rag_cache_hit = None
+    _tls.rag_cache_key_prefix = None
+    _tls.rag_cache_fp_backend = None
+
+
+def _record_retrieval_cache_thread_diag(
+    *,
+    hit: bool | None,
+    key_hash: str,
+    fingerprint_backend_line: str,
+) -> None:
+    _tls.rag_cache_hit = hit
+    _tls.rag_cache_key_prefix = (key_hash or "")[:16] or None
+    _tls.rag_cache_fp_backend = (fingerprint_backend_line or "").strip() or None
+
+
+def take_retrieval_cache_thread_diag() -> dict[str, Any]:
+    """Забрать и очистить маркеры retrieval cache в текущем потоке."""
+    d: dict[str, Any] = {
+        "retrieval_cache_hit": getattr(_tls, "rag_cache_hit", None),
+        "retrieval_cache_key_hash_prefix": getattr(_tls, "rag_cache_key_prefix", None),
+        "retrieval_cache_fingerprint_backend": getattr(_tls, "rag_cache_fp_backend", None),
+    }
+    clear_retrieval_cache_thread_diag()
+    return d
 
 
 class CachingRetrievalBackend:
@@ -95,11 +129,18 @@ class CachingRetrievalBackend:
             top_k=top_k,
             security_fingerprint_extra=sec_extra,
         )
+        fp_lines = fp.split("\n")
+        fp_backend_line = fp_lines[1].strip() if len(fp_lines) > 1 else ""
         kh = fingerprint_to_key_hash(fp)
         t0 = time.monotonic()
         ent = self._store.get(CacheNamespaces.RETRIEVAL, kh)
         if ent is not None:
             results = deserialize_search_results(ent.value)
+            _record_retrieval_cache_thread_diag(
+                hit=True,
+                key_hash=kh,
+                fingerprint_backend_line=fp_backend_line,
+            )
             self._log(
                 outcome="hit",
                 key_hash=kh,
@@ -113,6 +154,11 @@ class CachingRetrievalBackend:
                 query, top_k=top_k, security_context=security_context
             )
         except Exception:
+            _record_retrieval_cache_thread_diag(
+                hit=False,
+                key_hash=kh,
+                fingerprint_backend_line=fp_backend_line,
+            )
             self._log(
                 outcome="miss",
                 key_hash=kh,
@@ -123,6 +169,11 @@ class CachingRetrievalBackend:
 
         lat = int((time.monotonic() - t0) * 1000)
         if not results:
+            _record_retrieval_cache_thread_diag(
+                hit=False,
+                key_hash=kh,
+                fingerprint_backend_line=fp_backend_line,
+            )
             self._log(
                 outcome="miss",
                 key_hash=kh,
@@ -141,6 +192,11 @@ class CachingRetrievalBackend:
                 "top_k": int(top_k),
             },
             ttl_seconds=ttl if ttl and ttl > 0 else None,
+        )
+        _record_retrieval_cache_thread_diag(
+            hit=False,
+            key_hash=kh,
+            fingerprint_backend_line=fp_backend_line,
         )
         self._log(outcome="miss_set", key_hash=kh, latency_ms=lat, reason="")
         return results

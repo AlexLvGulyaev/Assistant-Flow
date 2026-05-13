@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Any
@@ -16,6 +17,7 @@ from services.memory.base import (
     ConversationMemoryRecord,
     MemoryBudgetPolicy,
 )
+from services.runtime_lifecycle_service import RuntimeLifecycleService
 
 
 def _trim(s: str, max_chars: int) -> str:
@@ -181,6 +183,235 @@ class ConversationMemoryService:
             )
         return str(mid)
 
+    def get_llm_turns_for_session(
+        self,
+        session_id: str,
+        *,
+        max_pairs: int,
+        max_messages_cap: int = 24,
+    ) -> list[dict[str, str]]:
+        """
+        Последние реплики для LLM: только role user|assistant, хронологический порядок.
+        Без char-budget trim из `_load_budgeted` (отдельный read path для RAG context).
+        """
+        pairs = max(1, int(max_pairs))
+        cap = max(2, min(int(max_messages_cap), 500))
+        fetch_lim = min(cap, pairs * 2)
+        sid = uuid.UUID(str(session_id))
+        raw = self._sessions.list_recent_messages_raw(sid, limit=fetch_lim)
+        raw = list(reversed(raw))
+        out: list[dict[str, str]] = []
+        for row in raw:
+            role = str(row.get("role") or "").strip().lower()
+            if role not in ("user", "assistant"):
+                continue
+            c = _trim(str(row.get("content") or ""), self._policy.max_message_chars)
+            out.append({"role": role, "content": c})
+        return out
+
+    def rotate_active_session_for_app_user(
+        self, user_id: uuid.UUID, *, new_mode: str = "text"
+    ) -> uuid.UUID:
+        """Новая активная сессия; предыдущие деактивированы (сообщения сохранены)."""
+        return self._sessions.rotate_active_session(user_id, mode=new_mode)
+
+
+def _memory_details(
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    telegram_user_id: int | None = None,
+    messages_loaded: int | None = None,
+    messages_saved: int | None = None,
+    limit: int | None = None,
+    latency_ms: int | None = None,
+    command: str | None = None,
+    status: str | None = None,
+    deactivated_sessions: int | None = None,
+) -> dict[str, Any]:
+    d: dict[str, Any] = {}
+    if session_id is not None:
+        d["session_id"] = session_id
+    if user_id is not None:
+        d["user_id"] = user_id
+    if telegram_user_id is not None:
+        d["telegram_user_id"] = telegram_user_id
+    if messages_loaded is not None:
+        d["messages_loaded"] = messages_loaded
+    if messages_saved is not None:
+        d["messages_saved"] = messages_saved
+    if limit is not None:
+        d["limit"] = limit
+    if latency_ms is not None:
+        d["latency_ms"] = latency_ms
+    if command is not None:
+        d["command"] = command
+    if status is not None:
+        d["status"] = status
+    if deactivated_sessions is not None:
+        d["deactivated_sessions"] = deactivated_sessions
+    return d
+
+
+def load_telegram_rag_history_for_llm(
+    *,
+    telegram_user_id: int,
+    max_pairs: int,
+    max_messages_cap: int,
+    lifecycle: RuntimeLifecycleService | None = None,
+    execution_id: str,
+    intake_event_id: uuid.UUID | None = None,
+) -> tuple[list[dict[str, str]], str | None, str | None]:
+    """
+    Активная сессия пользователя + последние чистые user/assistant turns из PG.
+
+    Возвращает (history, session_id_str, app_user_id_str).
+    Без DATABASE_URL или при ошибке — ([], None, None); in-memory fallback снаружи.
+    """
+    if not (os.getenv("DATABASE_URL") or "").strip():
+        return [], None, None
+    t0 = time.monotonic()
+    if lifecycle:
+        lifecycle.log_processing_event(
+            execution_id=execution_id,
+            intake_event_id=intake_event_id,
+            stage="memory_load_started",
+            status="success",
+            details=_memory_details(
+                telegram_user_id=telegram_user_id,
+                limit=max_pairs,
+            ),
+        )
+    try:
+        from services.app_user_service import AppUserService
+
+        users = AppUserService()
+        uid = users.ensure_user_for_telegram(telegram_user_id)
+        sessions = ChatSessionService()
+        sid = sessions.get_or_create_active_session(uid, mode="rag")
+        mem = ConversationMemoryService(chat_sessions=sessions)
+        hist = mem.get_llm_turns_for_session(
+            str(sid), max_pairs=max_pairs, max_messages_cap=max_messages_cap
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if lifecycle:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_load_done",
+                status="success",
+                details=_memory_details(
+                    session_id=str(sid),
+                    user_id=str(uid),
+                    telegram_user_id=telegram_user_id,
+                    messages_loaded=len(hist),
+                    limit=max_pairs,
+                    latency_ms=latency_ms,
+                ),
+            )
+        print(
+            "[assistant-flow] memory: "
+            f"session_id={sid} user_id={uid} telegram_user_id={telegram_user_id} "
+            f"messages_loaded={len(hist)} limit_pairs={max_pairs} latency_ms={latency_ms}",
+            flush=True,
+        )
+        return hist, str(sid), str(uid)
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if lifecycle:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_error",
+                status="error",
+                details=_memory_details(
+                    telegram_user_id=telegram_user_id,
+                    limit=max_pairs,
+                    latency_ms=latency_ms,
+                    status="memory_load_failed",
+                ),
+                error_text=f"{type(exc).__name__}: {exc}"[:4000],
+            )
+        print(
+            "[assistant-flow] memory_error: "
+            f"telegram_user_id={telegram_user_id} latency_ms={latency_ms} "
+            f"exc={type(exc).__name__}",
+            flush=True,
+        )
+        return [], None, None
+
+
+def rotate_telegram_conversation_session_best_effort(
+    *,
+    telegram_user_id: int,
+    new_session_mode: str,
+    lifecycle: RuntimeLifecycleService | None = None,
+    execution_id: str,
+    intake_event_id: uuid.UUID | None = None,
+    command: str,
+) -> str | None:
+    """
+    PG: деактивировать активную сессию(и), создать новую с указанным mode.
+    Возвращает новый session_id или None если пропуск/ошибка.
+    """
+    if not (os.getenv("DATABASE_URL") or "").strip():
+        return None
+    t0 = time.monotonic()
+    valid_modes = ("text", "rag", "voice", "image", "career", "hr_screening")
+    mode = new_session_mode if new_session_mode in valid_modes else "text"
+    try:
+        from services.app_user_service import AppUserService
+
+        users = AppUserService()
+        uid = users.ensure_user_for_telegram(telegram_user_id)
+        sessions = ChatSessionService()
+        new_sid = sessions.rotate_active_session(uid, mode=mode)
+        sessions.set_mode(new_sid, mode)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if lifecycle:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_session_cleared",
+                status="success",
+                details=_memory_details(
+                    session_id=str(new_sid),
+                    user_id=str(uid),
+                    telegram_user_id=telegram_user_id,
+                    latency_ms=latency_ms,
+                    command=command,
+                    status="rotated",
+                ),
+            )
+        print(
+            "[assistant-flow] memory: "
+            f"session_rotated new_session_id={new_sid} user_id={uid} "
+            f"telegram_user_id={telegram_user_id} command={command} latency_ms={latency_ms}",
+            flush=True,
+        )
+        return str(new_sid)
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if lifecycle:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_error",
+                status="error",
+                details=_memory_details(
+                    telegram_user_id=telegram_user_id,
+                    latency_ms=latency_ms,
+                    command=command,
+                    status="session_rotate_failed",
+                ),
+                error_text=f"{type(exc).__name__}: {exc}"[:4000],
+            )
+        print(
+            f"[assistant-flow] memory_session_rotate skipped: {type(exc).__name__}",
+            flush=True,
+        )
+        return None
+
 
 def persist_telegram_dialog_turn_best_effort(
     *,
@@ -193,6 +424,8 @@ def persist_telegram_dialog_turn_best_effort(
     assistant_text: str,
     execution_id: str | None,
     session_mode: str,
+    lifecycle: RuntimeLifecycleService | None = None,
+    intake_event_id: uuid.UUID | None = None,
 ) -> None:
     """
     Best-effort: user + assistant в PostgreSQL. Не бросает наружу (ошибки → короткий лог).
@@ -237,7 +470,34 @@ def persist_telegram_dialog_turn_best_effort(
             f"session_id={sid} messages_saved=2 latency_ms={latency_ms}",
             flush=True,
         )
+        if lifecycle and execution_id:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_append_done",
+                status="success",
+                details=_memory_details(
+                    session_id=str(sid),
+                    user_id=str(uid),
+                    telegram_user_id=telegram_user_id,
+                    messages_saved=2,
+                    latency_ms=latency_ms,
+                    status="persisted",
+                ),
+            )
     except Exception as exc:
+        if lifecycle and execution_id:
+            lifecycle.log_processing_event(
+                execution_id=execution_id,
+                intake_event_id=intake_event_id,
+                stage="memory_error",
+                status="error",
+                details=_memory_details(
+                    telegram_user_id=telegram_user_id,
+                    status="persist_failed",
+                ),
+                error_text=f"{type(exc).__name__}: {exc}"[:4000],
+            )
         print(
             f"[assistant-flow] memory persist skipped: {type(exc).__name__}",
             flush=True,

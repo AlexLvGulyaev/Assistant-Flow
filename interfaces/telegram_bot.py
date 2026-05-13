@@ -51,7 +51,7 @@ from utils.telegram_user_state import InMemoryTelegramUserStore, Mode
 _MAX_TELEGRAM_IMAGE_BYTES = 12 * 1024 * 1024
 
 _KNOWN_COMMAND_PREFIXES = frozenset(
-    {"/start", "/help", "/mode", "/stats", "/reset"}
+    {"/start", "/help", "/mode", "/stats", "/reset", "/clear"}
 )
 
 
@@ -603,7 +603,7 @@ def run_telegram_ocr_flow(
             first_name=getattr(message.from_user, "first_name", None),
             last_name=getattr(message.from_user, "last_name", None),
             user_text=user_text,
-            assistant_text=truncate_for_lifecycle_log(formatted, 2000),
+            assistant_text=(recognized or "").strip(),
             execution_id=execution_id,
             session_mode="ocr",
         )
@@ -761,7 +761,7 @@ def create_bot() -> telebot.TeleBot:
                 "- отвечать по базе знаний (режим RAG, нужен проиндексированный Chroma)\n"
                 "- распознавать текст на фото (режим OCR или подпись «распознай текст»)\n"
                 "- генерировать изображения по запросу (в текстовом режиме)\n\n"
-                "Команды: /help, /mode, /stats, /reset",
+                "Команды: /help, /mode, /stats, /reset, /clear",
             )
         except Exception:
             traceback.print_exc()
@@ -777,7 +777,8 @@ def create_bot() -> telebot.TeleBot:
                 "/mode rag — вопросы по документам в Chroma (индекс через CLI)\n"
                 "/mode ocr — распознавание текста на изображениях (OpenAI vision)\n\n"
                 "/stats — статистика индекса RAG\n"
-                "/reset — сброс в текстовый режим и очистка истории RAG\n\n"
+                "/reset — сброс в текстовый режим, очистка in-memory RAG и ротация диалоговой сессии в БД\n"
+                "/clear — очистить контекст RAG (режим сохраняется), ротация сессии в БД\n\n"
                 "Примеры (текст):\n"
                 "• Объясни простыми словами, как работает фотосинтез\n"
                 "• Нарисуй футуристический город на закате\n\n"
@@ -863,11 +864,56 @@ def create_bot() -> telebot.TeleBot:
     @bot.message_handler(commands=["reset"])
     def handle_reset(message: telebot.types.Message) -> None:
         try:
-            user_store.reset(message.from_user.id)
+            exec_id = str(uuid.uuid4())
+            tid = message.from_user.id
+            user_store.reset(tid)
+            if config.database_url and config.telegram_pg_conversation_memory:
+                from services.memory.conversation_memory_service import (
+                    rotate_telegram_conversation_session_best_effort,
+                )
+
+                rotate_telegram_conversation_session_best_effort(
+                    telegram_user_id=tid,
+                    new_session_mode="text",
+                    lifecycle=lifecycle,
+                    execution_id=exec_id,
+                    intake_event_id=None,
+                    command="reset",
+                )
             bot.send_message(
                 message.chat.id,
-                "Сброшено: режим text, история RAG очищена (включая режим OCR).\n"
-                "(TODO: синхронизация с PostgreSQL chat_sessions.)",
+                "Сброшено: режим text, in-memory RAG очищена; при наличии БД активная "
+                "chat_session ротирована (старые сообщения сохранены для аудита).",
+            )
+        except Exception:
+            traceback.print_exc()
+            bot.send_message(message.chat.id, "Произошла ошибка. Попробуйте позже.")
+
+    @bot.message_handler(commands=["clear"])
+    def handle_clear(message: telebot.types.Message) -> None:
+        try:
+            exec_id = str(uuid.uuid4())
+            tid = message.from_user.id
+            mode: Mode = user_store.get_mode(tid)
+            user_store.clear_rag_history_only(tid)
+            new_session_mode = "rag" if mode == "rag" else "text"
+            if config.database_url and config.telegram_pg_conversation_memory:
+                from services.memory.conversation_memory_service import (
+                    rotate_telegram_conversation_session_best_effort,
+                )
+
+                rotate_telegram_conversation_session_best_effort(
+                    telegram_user_id=tid,
+                    new_session_mode=new_session_mode,
+                    lifecycle=lifecycle,
+                    execution_id=exec_id,
+                    intake_event_id=None,
+                    command="clear",
+                )
+            bot.send_message(
+                message.chat.id,
+                "Контекст диалога очищен (in-memory RAG и новая сессия в БД при включённой "
+                "памяти). Текущий режим (/mode) не менялся.",
             )
         except Exception:
             traceback.print_exc()
@@ -1281,7 +1327,7 @@ def create_bot() -> telebot.TeleBot:
                     first_name=getattr(message.from_user, "first_name", None),
                     last_name=getattr(message.from_user, "last_name", None),
                     user_text=transcript,
-                    assistant_text=formatted_result,
+                    assistant_text=(result_text or "").strip(),
                     execution_id=execution_id,
                     session_mode=str(user_store.get_mode(message.from_user.id)),
                 )
@@ -1647,13 +1693,38 @@ def create_bot() -> telebot.TeleBot:
                         status="success",
                         details={"route": "rag"},
                     )
-                    history = user_store.rag_history_snapshot(uid)
+                    use_pg_memory = bool(config.database_url) and bool(
+                        config.telegram_pg_conversation_memory
+                    )
+                    hybrid_session_id: str | None = None
+                    hybrid_user_id: str | None = None
+                    if use_pg_memory:
+                        from services.memory.conversation_memory_service import (
+                            load_telegram_rag_history_for_llm,
+                        )
+
+                        history, sid_str, uid_str = load_telegram_rag_history_for_llm(
+                            telegram_user_id=uid,
+                            max_pairs=config.telegram_memory_max_turn_pairs,
+                            max_messages_cap=config.telegram_memory_max_llm_messages,
+                            lifecycle=lifecycle,
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                        )
+                        if config.enable_hybrid_retrieval and sid_str and uid_str:
+                            hybrid_session_id = sid_str
+                            hybrid_user_id = uid_str
+                    else:
+                        history = user_store.rag_history_snapshot(uid)
                     print(
                         "[assistant-flow] rag before rag_service.answer",
                         flush=True,
                     )
                     result = rag_service.answer(
-                        text, conversation_history=history
+                        text,
+                        conversation_history=history,
+                        hybrid_session_id=hybrid_session_id,
+                        hybrid_user_id=hybrid_user_id,
                     )
                     print(
                         "[assistant-flow] rag after rag_service.answer",
@@ -1685,7 +1756,8 @@ def create_bot() -> telebot.TeleBot:
                         status="success",
                         details={"route": "rag"},
                     )
-                    user_store.append_rag_turn(uid, text, result.answer)
+                    if not use_pg_memory:
+                        user_store.append_rag_turn(uid, text, result.answer)
                     print("[assistant-flow] rag before send_message", flush=True)
                     send_long_message(
                         bot, message.chat.id, telegram_reply
@@ -1702,9 +1774,11 @@ def create_bot() -> telebot.TeleBot:
                         first_name=getattr(message.from_user, "first_name", None),
                         last_name=getattr(message.from_user, "last_name", None),
                         user_text=text,
-                        assistant_text=telegram_reply,
+                        assistant_text=(result.answer or "").strip(),
                         execution_id=execution_id,
                         session_mode="rag",
+                        lifecycle=lifecycle,
+                        intake_event_id=intake_id,
                     )
                 except BaseException as exc:
                     lifecycle.log_processing_event(
@@ -1905,7 +1979,7 @@ def create_bot() -> telebot.TeleBot:
                     first_name=getattr(message.from_user, "first_name", None),
                     last_name=getattr(message.from_user, "last_name", None),
                     user_text=text,
-                    assistant_text=formatted_result,
+                    assistant_text=(result_text or "").strip(),
                     execution_id=execution_id,
                     session_mode=str(user_store.get_mode(uid)),
                 )
