@@ -1668,7 +1668,6 @@ def create_bot() -> telebot.TeleBot:
                         )
                         return
 
-                    bot.send_message(message.chat.id, "Ищу в базе знаний… ⏳")
                     intake_id = lifecycle.create_intake_event(
                         execution_id=execution_id,
                         telegram_chat_id=message.chat.id,
@@ -1698,6 +1697,8 @@ def create_bot() -> telebot.TeleBot:
                     )
                     hybrid_session_id: str | None = None
                     hybrid_user_id: str | None = None
+                    sid_str: str | None = None
+                    uid_str: str | None = None
                     if use_pg_memory:
                         from services.memory.conversation_memory_service import (
                             load_telegram_rag_history_for_llm,
@@ -1716,70 +1717,201 @@ def create_bot() -> telebot.TeleBot:
                             hybrid_user_id = uid_str
                     else:
                         history = user_store.rag_history_snapshot(uid)
-                    print(
-                        "[assistant-flow] rag before rag_service.answer",
-                        flush=True,
-                    )
-                    result = rag_service.answer(
-                        text,
-                        conversation_history=history,
-                        hybrid_session_id=hybrid_session_id,
-                        hybrid_user_id=hybrid_user_id,
-                    )
-                    print(
-                        "[assistant-flow] rag after rag_service.answer",
-                        flush=True,
-                    )
-                    rag_diag = result.diagnostics
-                    rag_details: dict[str, object] = {"route": "rag"}
-                    if rag_diag is not None:
-                        rag_details.update(rag_diag.to_log_details())
-                    rag_status = (
-                        "error"
-                        if rag_details.get("fallback_reason") == "llm_error"
-                        else "success"
-                    )
-                    reply = _format_rag_telegram_reply(result)
-                    telegram_reply = format_for_telegram(reply)
-                    rag_details["answer_text"] = _safe_answer_text_for_log(telegram_reply)
-                    lifecycle.log_processing_event(
-                        execution_id=execution_id,
-                        intake_event_id=intake_id,
-                        stage="rag_answer_done",
-                        status=rag_status,
-                        details=rag_details,
-                    )
-                    lifecycle.log_processing_event(
-                        execution_id=execution_id,
-                        intake_event_id=intake_id,
-                        stage="processing_done",
-                        status="success",
-                        details={"route": "rag"},
-                    )
-                    if not use_pg_memory:
-                        user_store.append_rag_turn(uid, text, result.answer)
-                    print("[assistant-flow] rag before send_message", flush=True)
-                    send_long_message(
-                        bot, message.chat.id, telegram_reply
-                    )
-                    print("[assistant-flow] rag after send_message", flush=True)
-                    from services.memory.conversation_memory_service import (
-                        persist_telegram_dialog_turn_best_effort,
+
+                    from services.memory_meta_intent import detect_memory_meta_intent
+                    from services.memory_meta_answer_service import build_memory_meta_reply
+
+                    meta_intent = (
+                        detect_memory_meta_intent(text)
+                        if use_pg_memory and sid_str and uid_str
+                        else None
                     )
 
-                    persist_telegram_dialog_turn_best_effort(
-                        telegram_user_id=uid,
-                        telegram_chat_id=message.chat.id,
-                        username=getattr(message.from_user, "username", None),
-                        first_name=getattr(message.from_user, "first_name", None),
-                        last_name=getattr(message.from_user, "last_name", None),
-                        user_text=text,
-                        assistant_text=(result.answer or "").strip(),
-                        execution_id=execution_id,
-                        session_mode="rag",
-                        lifecycle=lifecycle,
-                        intake_event_id=intake_id,
-                    )
+                    if meta_intent is not None and sid_str and uid_str:
+                        t_meta0 = time.monotonic()
+                        base_meta: dict[str, object] = {
+                            "route": "memory_meta",
+                            "mode": "rag",
+                            "intent": meta_intent.kind.value,
+                            "session_id": sid_str,
+                            "user_id": uid_str,
+                            "telegram_user_id": uid,
+                        }
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="memory_meta_intent_detected",
+                            status="success",
+                            details=dict(base_meta),
+                        )
+                        try:
+                            meta_res = build_memory_meta_reply(
+                                intent=meta_intent, turns=history or []
+                            )
+                            latency_ms = int((time.monotonic() - t_meta0) * 1000)
+                            meta_details: dict[str, object] = {
+                                **base_meta,
+                                "scanned_turns": meta_res.scanned_turns,
+                                "matched_turns": meta_res.matched_turns,
+                                "latency_ms": latency_ms,
+                                "answer_chars": len(meta_res.text),
+                            }
+                            if meta_intent.topic_substring:
+                                meta_details["topic_hint"] = str(meta_intent.topic_substring)[
+                                    :120
+                                ]
+                            done_stage = (
+                                "memory_meta_answer_empty"
+                                if meta_res.empty
+                                else "memory_meta_answer_done"
+                            )
+                            telegram_reply = format_for_telegram(meta_res.text)
+                            meta_details["answer_text"] = _safe_answer_text_for_log(
+                                telegram_reply
+                            )
+                            lifecycle.log_processing_event(
+                                execution_id=execution_id,
+                                intake_event_id=intake_id,
+                                stage=done_stage,
+                                status="success",
+                                details=meta_details,
+                            )
+                            lifecycle.log_processing_event(
+                                execution_id=execution_id,
+                                intake_event_id=intake_id,
+                                stage="processing_done",
+                                status="success",
+                                details={"route": "memory_meta", "mode": "rag"},
+                            )
+                            print(
+                                "[assistant-flow] rag memory_meta before send_message",
+                                flush=True,
+                            )
+                            send_long_message(bot, message.chat.id, telegram_reply)
+                            print(
+                                "[assistant-flow] rag memory_meta after send_message",
+                                flush=True,
+                            )
+                            from services.memory.conversation_memory_service import (
+                                persist_telegram_dialog_turn_best_effort,
+                            )
+
+                            persist_telegram_dialog_turn_best_effort(
+                                telegram_user_id=uid,
+                                telegram_chat_id=message.chat.id,
+                                username=getattr(message.from_user, "username", None),
+                                first_name=getattr(message.from_user, "first_name", None),
+                                last_name=getattr(message.from_user, "last_name", None),
+                                user_text=text,
+                                assistant_text=(meta_res.text or "").strip(),
+                                execution_id=execution_id,
+                                session_mode="rag",
+                                lifecycle=lifecycle,
+                                intake_event_id=intake_id,
+                            )
+                        except Exception as meta_exc:
+                            latency_ms = int((time.monotonic() - t_meta0) * 1000)
+                            lifecycle.log_processing_event(
+                                execution_id=execution_id,
+                                intake_event_id=intake_id,
+                                stage="memory_meta_error",
+                                status="error",
+                                details={
+                                    **base_meta,
+                                    "latency_ms": latency_ms,
+                                },
+                                error_text=str(meta_exc)[:4000],
+                            )
+                            apologetic = (
+                                "Не удалось ответить по истории диалога. "
+                                "Попробуйте позже или переформулируйте вопрос."
+                            )
+                            send_long_message(bot, message.chat.id, apologetic)
+                            from services.memory.conversation_memory_service import (
+                                persist_telegram_dialog_turn_best_effort,
+                            )
+
+                            persist_telegram_dialog_turn_best_effort(
+                                telegram_user_id=uid,
+                                telegram_chat_id=message.chat.id,
+                                username=getattr(message.from_user, "username", None),
+                                first_name=getattr(message.from_user, "first_name", None),
+                                last_name=getattr(message.from_user, "last_name", None),
+                                user_text=text,
+                                assistant_text=apologetic,
+                                execution_id=execution_id,
+                                session_mode="rag",
+                                lifecycle=lifecycle,
+                                intake_event_id=intake_id,
+                            )
+                    else:
+                        bot.send_message(message.chat.id, "Ищу в базе знаний… ⏳")
+                        print(
+                            "[assistant-flow] rag before rag_service.answer",
+                            flush=True,
+                        )
+                        result = rag_service.answer(
+                            text,
+                            conversation_history=history,
+                            hybrid_session_id=hybrid_session_id,
+                            hybrid_user_id=hybrid_user_id,
+                        )
+                        print(
+                            "[assistant-flow] rag after rag_service.answer",
+                            flush=True,
+                        )
+                        rag_diag = result.diagnostics
+                        rag_details: dict[str, object] = {"route": "rag"}
+                        if rag_diag is not None:
+                            rag_details.update(rag_diag.to_log_details())
+                        rag_status = (
+                            "error"
+                            if rag_details.get("fallback_reason") == "llm_error"
+                            else "success"
+                        )
+                        reply = _format_rag_telegram_reply(result)
+                        telegram_reply = format_for_telegram(reply)
+                        rag_details["answer_text"] = _safe_answer_text_for_log(
+                            telegram_reply
+                        )
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="rag_answer_done",
+                            status=rag_status,
+                            details=rag_details,
+                        )
+                        lifecycle.log_processing_event(
+                            execution_id=execution_id,
+                            intake_event_id=intake_id,
+                            stage="processing_done",
+                            status="success",
+                            details={"route": "rag"},
+                        )
+                        if not use_pg_memory:
+                            user_store.append_rag_turn(uid, text, result.answer)
+                        print("[assistant-flow] rag before send_message", flush=True)
+                        send_long_message(
+                            bot, message.chat.id, telegram_reply
+                        )
+                        print("[assistant-flow] rag after send_message", flush=True)
+                        from services.memory.conversation_memory_service import (
+                            persist_telegram_dialog_turn_best_effort,
+                        )
+
+                        persist_telegram_dialog_turn_best_effort(
+                            telegram_user_id=uid,
+                            telegram_chat_id=message.chat.id,
+                            username=getattr(message.from_user, "username", None),
+                            first_name=getattr(message.from_user, "first_name", None),
+                            last_name=getattr(message.from_user, "last_name", None),
+                            user_text=text,
+                            assistant_text=(result.answer or "").strip(),
+                            execution_id=execution_id,
+                            session_mode="rag",
+                            lifecycle=lifecycle,
+                            intake_event_id=intake_id,
+                        )
                 except BaseException as exc:
                     lifecycle.log_processing_event(
                         execution_id=execution_id,

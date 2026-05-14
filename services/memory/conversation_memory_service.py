@@ -228,6 +228,8 @@ def _memory_details(
     command: str | None = None,
     status: str | None = None,
     deactivated_sessions: int | None = None,
+    route: str | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     d: dict[str, Any] = {}
     if session_id is not None:
@@ -250,6 +252,10 @@ def _memory_details(
         d["status"] = status
     if deactivated_sessions is not None:
         d["deactivated_sessions"] = deactivated_sessions
+    if route is not None:
+        d["route"] = route
+    if mode is not None:
+        d["mode"] = mode
     return d
 
 
@@ -280,6 +286,8 @@ def load_telegram_rag_history_for_llm(
             details=_memory_details(
                 telegram_user_id=telegram_user_id,
                 limit=max_pairs,
+                route="rag",
+                mode="rag",
             ),
         )
     try:
@@ -307,6 +315,8 @@ def load_telegram_rag_history_for_llm(
                     messages_loaded=len(hist),
                     limit=max_pairs,
                     latency_ms=latency_ms,
+                    route="rag",
+                    mode="rag",
                 ),
             )
         print(
@@ -329,6 +339,8 @@ def load_telegram_rag_history_for_llm(
                     limit=max_pairs,
                     latency_ms=latency_ms,
                     status="memory_load_failed",
+                    route="rag",
+                    mode="rag",
                 ),
                 error_text=f"{type(exc).__name__}: {exc}"[:4000],
             )
@@ -381,6 +393,8 @@ def rotate_telegram_conversation_session_best_effort(
                     latency_ms=latency_ms,
                     command=command,
                     status="rotated",
+                    route=mode,
+                    mode=mode,
                 ),
             )
         print(
@@ -403,6 +417,8 @@ def rotate_telegram_conversation_session_best_effort(
                     latency_ms=latency_ms,
                     command=command,
                     status="session_rotate_failed",
+                    route=mode,
+                    mode=mode,
                 ),
                 error_text=f"{type(exc).__name__}: {exc}"[:4000],
             )
@@ -438,6 +454,9 @@ def persist_telegram_dialog_turn_best_effort(
         return
 
     t0 = time.monotonic()
+    valid_modes = ("text", "rag", "ocr", "voice", "image", "career", "hr_screening")
+    initial_mode = session_mode if session_mode in valid_modes else "text"
+    route_mode = initial_mode if initial_mode in ("rag", "text") else "text"
     try:
         from services.app_user_service import AppUserService
 
@@ -450,8 +469,6 @@ def persist_telegram_dialog_turn_best_effort(
             last_name=last_name,
         )
         sessions = ChatSessionService()
-        valid_modes = ("text", "rag", "ocr", "voice", "image", "career", "hr_screening")
-        initial_mode = session_mode if session_mode in valid_modes else "text"
         sid = sessions.get_or_create_active_session(uid, mode=initial_mode)
         if session_mode in valid_modes:
             sessions.set_mode(sid, session_mode)
@@ -483,6 +500,8 @@ def persist_telegram_dialog_turn_best_effort(
                     messages_saved=2,
                     latency_ms=latency_ms,
                     status="persisted",
+                    route=route_mode,
+                    mode=route_mode,
                 ),
             )
     except Exception as exc:
@@ -495,6 +514,8 @@ def persist_telegram_dialog_turn_best_effort(
                 details=_memory_details(
                     telegram_user_id=telegram_user_id,
                     status="persist_failed",
+                    route=route_mode,
+                    mode=route_mode,
                 ),
                 error_text=f"{type(exc).__name__}: {exc}"[:4000],
             )

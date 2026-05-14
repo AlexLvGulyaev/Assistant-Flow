@@ -23,6 +23,8 @@ _ALLOWED_MEMORY_DETAIL_KEYS = frozenset(
         "command",
         "status",
         "deactivated_sessions",
+        "route",
+        "mode",
     }
 )
 

@@ -147,6 +147,14 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
         "conversational_context_size_chars",
         "retrieval_chunks_used",
         "retrieval_chars",
+        "retrieved_duplicate_count",
+        "retrieval_dedupe_applied",
+        "retrieval_vector_hits_raw",
+        "intent",
+        "scanned_turns",
+        "matched_turns",
+        "answer_chars",
+        "topic_hint",
         "latency_ms",
         "duration_ms",
         "elapsed_ms",
@@ -213,6 +221,14 @@ def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
                 "passed_filter": raw_c.get("passed_filter"),
                 "text_preview": ps if len(ps) <= 96 else ps[:93] + "…",
             }
+            full_src = raw_c.get("chunk_text_full") or raw_c.get("text_full")
+            if full_src is not None:
+                fs = str(full_src)
+                cap = 10_000
+                row["chunk_text_full"] = fs if len(fs) <= cap else fs[: cap - 1] + "…"
+            tfp = raw_c.get("text_fp")
+            if tfp is not None and str(tfp).strip():
+                row["text_fp"] = str(tfp).strip()[:24]
             if rb_chunk:
                 row["retrieval_backend"] = str(rb_chunk).strip().lower()
                 row["source_backend"] = str(sb_chunk or rb_chunk).strip().lower()
@@ -339,6 +355,8 @@ def infer_modality_route(details: Any, *, stage: str | None = None) -> str:
 
     if route in ("rag", "rag_response") or mode == "rag" or st == "rag_answer_done":
         return "rag"
+    if route == "memory_meta" or st.startswith("memory_meta_"):
+        return "rag"
     if mode in ("voice", "audio") or route in ("audio", "voice", "voice_response"):
         return "audio"
     if st.startswith("stt_") or st.startswith("tts_") or st.startswith("voice_") or st.startswith(
@@ -382,6 +400,9 @@ def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
         created_out = created
     err_raw = row.get("error_text")
     err_out = str(err_raw).strip() if err_raw else None
+    trunc_cap = 4000
+    if st == "rag_answer_done":
+        trunc_cap = 65536
     return {
         "execution_id": str(row.get("execution_id") or "") or None,
         "stage": str(row.get("stage") or "") or None,
@@ -391,6 +412,6 @@ def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "mode": mode,
         "modality": modality,
         "modality_route": modality_route,
-        "details": truncate_details(details),
+        "details": truncate_details(details, max_len=trunc_cap),
         "error_text": err_out,
     }

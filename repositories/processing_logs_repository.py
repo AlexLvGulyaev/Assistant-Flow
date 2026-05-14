@@ -102,7 +102,7 @@ class ProcessingLogsRepository:
                         execution_id,
                         created_at,
                         CASE
-                            WHEN (details->>'route') IN ('rag', 'rag_response')
+                            WHEN (details->>'route') IN ('rag', 'rag_response', 'memory_meta')
                                  OR stage = 'rag_answer_done'
                                  OR (details->>'mode') = 'rag'
                             THEN 'rag'

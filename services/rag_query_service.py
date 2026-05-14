@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import time
 from typing import Sequence
 
@@ -29,6 +30,77 @@ from utils.config import AppConfig
 _LLM_TIMEOUT_SEC = 30
 _QUERY_PREVIEW_MAX = 200
 _CHUNK_PREVIEW_MAX = 500
+_CHUNK_CARD_PREVIEW_MAX = 220
+_CHUNK_FULL_TEXT_LOG_MAX = 12_000
+
+
+def _chunk_text_fingerprint(text: object) -> str:
+    """Short stable fingerprint for dedupe / logs (not cryptographic)."""
+    s = " ".join(str(text or "").split())
+    if not s:
+        return ""
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _real_retrieval_vector_key(meta: dict[str, object], backend_label: str) -> str | None:
+    """
+    Stable backend object id when present and not synthetic (see ``chunk_metadata`` contract).
+    Returns None if only synthetic / rank-based ids exist.
+    """
+    be = (backend_label or "unknown").strip().lower() or "unknown"
+    cid = str(meta.get("chunk_id") or "").strip()
+    synth_pfx = f"{be}-synthetic-rank-"
+    if cid and not cid.startswith(synth_pfx):
+        return f"id:{cid}"
+    for k in ("chroma_id", "vector_id", "uuid"):
+        v = meta.get(k)
+        if v is not None and str(v).strip():
+            return f"{k}:{str(v).strip()}"
+    alt = meta.get("id")
+    if alt is not None and str(alt).strip():
+        return f"id:{str(alt).strip()}"
+    return None
+
+
+def _dedupe_retrieval_raw_results(
+    items: list[tuple[Document, float]],
+    *,
+    backend_label: str,
+) -> tuple[list[tuple[Document, float]], int, int]:
+    """
+    Drop duplicate hits before relevance filter / diagnostics / LLM context.
+
+    Primary: identical normalized body under the same ``source`` — ``(source, text_fp)``.
+    Secondary: same real vector / chunk id (defensive if the backend returns one object twice).
+
+    Synthetic ``chunk_id`` values (``{backend}-synthetic-rank-N``) do **not** bypass text dedupe.
+    """
+    if not items:
+        return [], 0, 0
+    raw_len = len(items)
+    seen_src_fp: set[str] = set()
+    seen_real_id: set[str] = set()
+    out: list[tuple[Document, float]] = []
+    for pair in items:
+        doc, score = pair
+        meta = dict(getattr(doc, "metadata", None) or {})
+        page = str(getattr(doc, "page_content", None) or "")
+        h16 = _chunk_text_fingerprint(page) or "empty"
+        src = str(meta.get("source") or "").strip() or "unknown"
+        src_fp_key = f"srcfp:{src}:{h16}"
+
+        if src_fp_key in seen_src_fp:
+            continue
+
+        rid = _real_retrieval_vector_key(meta, backend_label)
+        if rid is not None and rid in seen_real_id:
+            continue
+
+        seen_src_fp.add(src_fp_key)
+        if rid is not None:
+            seen_real_id.add(rid)
+        out.append(pair)
+    return out, raw_len, raw_len - len(out)
 
 
 def _chat_llm_usage_triplet(chat: OpenAIChatProvider) -> tuple[int | None, int | None, int | None]:
@@ -158,6 +230,9 @@ def _routing_identity_for_logs(
             "retrieval_cache_hit",
             "retrieval_cache_key_hash_prefix",
             "retrieval_cache_fingerprint_backend",
+            "retrieved_duplicate_count",
+            "retrieval_vector_hits_raw",
+            "retrieval_dedupe_applied",
         ):
             v = cache_probe.get(k)
             if v is not None:
@@ -192,12 +267,20 @@ def _build_retrieved_chunks_diagnostics(
             source = "unknown"
         score_num = _score_or_none(score)
         passed_filter = score_num is None or score_num <= max_distance
+        page = doc.page_content
+        tfp = _chunk_text_fingerprint(page)
         out.append(
             RagRetrievedChunkDiagnostics(
                 source=source,
                 score=score_num,
                 passed_filter=passed_filter,
-                text_preview=_text_preview_for_logs(doc.page_content),
+                text_preview=_text_preview_for_logs(
+                    page, max_len=_CHUNK_CARD_PREVIEW_MAX
+                ),
+                chunk_text_full=_text_preview_for_logs(
+                    page, max_len=_CHUNK_FULL_TEXT_LOG_MAX
+                ),
+                text_fp=tfp,
                 retrieval_backend=be_label,
                 source_backend=be_label,
             )
@@ -288,6 +371,9 @@ def _build_diagnostics(
     conversational_context_size_chars: int | None = None,
     retrieval_chunks_used: int | None = None,
     retrieval_chars: int | None = None,
+    retrieved_duplicate_count: int | None = None,
+    retrieval_dedupe_applied: bool | None = None,
+    retrieval_vector_hits_raw: int | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
@@ -344,6 +430,9 @@ def _build_diagnostics(
         conversational_context_size_chars=conversational_context_size_chars,
         retrieval_chunks_used=retrieval_chunks_used,
         retrieval_chars=retrieval_chars,
+        retrieved_duplicate_count=rx.get("retrieved_duplicate_count"),  # type: ignore[arg-type]
+        retrieval_dedupe_applied=rx.get("retrieval_dedupe_applied"),  # type: ignore[arg-type]
+        retrieval_vector_hits_raw=rx.get("retrieval_vector_hits_raw"),  # type: ignore[arg-type]
     )
 
 
@@ -593,7 +682,20 @@ class RagQueryService:
             "[assistant-flow] rag retrieve: after vectorstore similarity_search",
             flush=True,
         )
-        return raw, cache_probe
+        active = self._active_retrieval()
+        be_label = str(getattr(active, "backend_name", "") or "unknown").strip().lower()
+        raw_list = list(raw)
+        raw_deduped, raw_n, removed = _dedupe_retrieval_raw_results(
+            raw_list, backend_label=be_label
+        )
+        cp: dict[str, object] = dict(cache_probe) if cache_probe else {}
+        if removed > 0:
+            cp["retrieved_duplicate_count"] = int(removed)
+            cp["retrieval_vector_hits_raw"] = int(raw_n)
+            cp["retrieval_dedupe_applied"] = True
+        else:
+            cp.setdefault("retrieval_dedupe_applied", False)
+        return raw_deduped, cp
 
     def retrieve(
         self,

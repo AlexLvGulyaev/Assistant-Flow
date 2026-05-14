@@ -124,6 +124,10 @@ interface RagSession {
   historyTurnsUsed: number | null;
   followupDetected: boolean | null;
   historyTrimmingApplied: boolean | null;
+  /** RAG retrieval dedupe (duplicate vector hits collapsed before context). */
+  retrievalDedupeApplied: boolean | null;
+  retrievedDuplicateCount: number | null;
+  retrievalVectorHitsRaw: number | null;
 }
 
 export function RagPage() {
@@ -878,6 +882,19 @@ export function RagPage() {
 
                 <section className="rag-chunks-primary" aria-label="Найденные чанки">
                   <h3 className="logs-timeline-heading rag-chunks-primary__title">Найденные чанки</h3>
+                  {selected.retrievalDedupeApplied === true ? (
+                    <p className="muted rag-chunks-primary__dedupe-note" style={{ fontSize: "0.78rem", margin: "0 0 0.45rem" }}>
+                      Дедупликация retrieval: удалено повторов —{" "}
+                      <span className="mono">{selected.retrievedDuplicateCount ?? "—"}</span>
+                      {selected.retrievalVectorHitsRaw != null ? (
+                        <>
+                          {" "}
+                          (всего попаданий до дедупа:{" "}
+                          <span className="mono">{selected.retrievalVectorHitsRaw}</span>)
+                        </>
+                      ) : null}
+                    </p>
+                  ) : null}
                   {selected.chunks.length === 0 ? (
                     <div className="panel panel--muted rag-chunks-empty">
                       Чанки не переданы в логах или retrieval пустой.
@@ -1352,6 +1369,9 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       historyTurnsUsed: pickNumber(detailsPool, ["history_turns_used"]),
       followupDetected: pickBool(detailsPool, ["followup_question_detected"]),
       historyTrimmingApplied: pickBool(detailsPool, ["history_trimming_applied"]),
+      retrievalDedupeApplied: pickBool(detailsPool, ["retrieval_dedupe_applied"]),
+      retrievedDuplicateCount: pickNumber(detailsPool, ["retrieved_duplicate_count"]),
+      retrievalVectorHitsRaw: pickNumber(detailsPool, ["retrieval_vector_hits_raw"]),
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
@@ -1466,13 +1486,17 @@ function isRagEvent(row: LogItem): boolean {
   const d = asRecord(row.details);
   const dRoute = String(d?.route || "").trim().toLowerCase();
   const dMode = String(d?.mode || "").trim().toLowerCase();
-  return (
+  const ragCore =
     route === "rag" ||
     mode === "rag" ||
     dRoute === "rag" ||
     dMode === "rag" ||
-    stage.startsWith("rag_")
-  );
+    stage.startsWith("rag_");
+  const memoryMeta = dRoute === "memory_meta" || stage.startsWith("memory_meta_");
+  const memoryRagCoupled =
+    stage.startsWith("memory_") && (dMode === "rag" || mode === "rag");
+  const memoryLoadStages = stage === "memory_load_started" || stage === "memory_load_done";
+  return ragCore || memoryMeta || memoryRagCoupled || memoryLoadStages;
 }
 
 function normalizeStatus(status: string): "success" | "error" | "other" {
@@ -1570,7 +1594,12 @@ function extractChunks(
       if (!row || typeof row !== "object" || Array.isArray(row)) continue;
       const item = row as Record<string, unknown>;
       const source = String(item.source || item.filename || item.path || "unknown");
-      const textRaw = String(item.text_preview || item.preview || item.text || item.content || "");
+      const shortPreview = String(item.text_preview || item.preview || "").trim();
+      const fullRaw = String(
+        item.chunk_text_full || item.text_full || item.page_content || ""
+      ).trim();
+      const textForPreview = shortPreview || fullRaw;
+      const textForFull = fullRaw || shortPreview;
       const dist = Number(item.score ?? item.distance);
       const passed =
         typeof item.passed_filter === "boolean"
@@ -1598,8 +1627,10 @@ function extractChunks(
         source,
         distance: Number.isFinite(dist) ? dist : null,
         passedFilter: passed,
-        preview: clipText(textRaw, CHUNK_PREVIEW_CHARS) ?? textRaw.slice(0, CHUNK_PREVIEW_CHARS),
-        fullText: textRaw || "нет текста в логах",
+        preview:
+          clipText(textForPreview, CHUNK_PREVIEW_CHARS) ??
+          textForPreview.slice(0, CHUNK_PREVIEW_CHARS),
+        fullText: textForFull || "нет текста в логах",
         chromaId: chromaRaw != null ? String(chromaRaw) : null,
         version: ver != null ? String(ver) : null,
         chunkIndex: typeof item.chunk_index === "number" ? item.chunk_index : idx,

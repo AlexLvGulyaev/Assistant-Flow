@@ -104,8 +104,9 @@ class RagEvaluationService:
             return ()
         chunks: list[str] = []
         for c in diag.retrieved_chunks:
-            if c.passed_filter and (c.text_preview or "").strip():
-                chunks.append(c.text_preview.strip())
+            body = (c.chunk_text_full or c.text_preview or "").strip()
+            if c.passed_filter and body:
+                chunks.append(body)
         return tuple(chunks)
 
     @staticmethod

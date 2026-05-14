@@ -67,6 +67,15 @@ const EVENT_TYPE_RU: Record<string, string> = {
   audio_generation_done: "Генерация аудио завершена",
   audio_generation_error: "Ошибка генерации аудио",
   rag_unavailable: "RAG недоступен",
+  memory_load_started: "Загрузка памяти (диалог) начата",
+  memory_load_done: "Память диалога загружена",
+  memory_append_done: "Реплики диалога сохранены в память",
+  memory_session_cleared: "Сессия диалога сброшена (память очищена / ротация)",
+  memory_error: "Ошибка памяти диалога",
+  memory_meta_intent_detected: "Обнаружен meta-запрос к памяти",
+  memory_meta_answer_done: "Ответ по памяти диалога сформирован",
+  memory_meta_answer_empty: "Ответ по памяти: пусто / нет данных",
+  memory_meta_error: "Ошибка meta-ответа по памяти",
   system_degraded: "Деградация системы",
 };
 
@@ -88,6 +97,7 @@ const ROUTE_ALIASES: Record<string, string> = {
   text_query: "text",
   rag_response: "rag",
   rag_answer_done: "rag",
+  memory_meta: "rag",
   vision_ocr: "text",
   image: "image_generation",
   image_response: "image_generation",

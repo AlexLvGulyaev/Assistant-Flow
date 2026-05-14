@@ -13,6 +13,8 @@ class RagRetrievedChunkDiagnostics:
     score: float | None
     passed_filter: bool
     text_preview: str
+    chunk_text_full: str = ""
+    text_fp: str = ""
     retrieval_backend: str | None = None
     source_backend: str | None = None
 
@@ -23,6 +25,12 @@ class RagRetrievedChunkDiagnostics:
             "passed_filter": bool(self.passed_filter),
             "text_preview": self.text_preview,
         }
+        fp = (self.text_fp or "").strip()
+        if fp:
+            out["text_fp"] = fp
+        full = (self.chunk_text_full or "").strip()
+        if full:
+            out["chunk_text_full"] = full
         rb0 = self.retrieval_backend
         sb0 = self.source_backend
         if rb0 or sb0:
@@ -87,6 +95,10 @@ class RagRequestDiagnostics:
     conversational_context_size_chars: int | None = None
     retrieval_chunks_used: int | None = None
     retrieval_chars: int | None = None
+    # Dedup: duplicate vector hits removed before distance filter / LLM (counts only).
+    retrieved_duplicate_count: int | None = None
+    retrieval_dedupe_applied: bool | None = None
+    retrieval_vector_hits_raw: int | None = None
 
     def to_log_details(self) -> dict[str, object]:
         """Compact JSON-safe payload for ``processing_logs.details``."""
@@ -174,6 +186,12 @@ class RagRequestDiagnostics:
             out["retrieval_chunks_used"] = int(self.retrieval_chunks_used)
         if self.retrieval_chars is not None:
             out["retrieval_chars"] = int(self.retrieval_chars)
+        if self.retrieved_duplicate_count is not None:
+            out["retrieved_duplicate_count"] = int(self.retrieved_duplicate_count)
+        if self.retrieval_dedupe_applied is not None:
+            out["retrieval_dedupe_applied"] = bool(self.retrieval_dedupe_applied)
+        if self.retrieval_vector_hits_raw is not None:
+            out["retrieval_vector_hits_raw"] = int(self.retrieval_vector_hits_raw)
         return out
 
     def emit_stdout(self) -> None:
@@ -288,6 +306,24 @@ class RagRequestDiagnostics:
             print(
                 "[assistant-flow] rag diagnostics: conversational_context_size_chars="
                 f"{self.conversational_context_size_chars}",
+                flush=True,
+            )
+        if self.retrieval_dedupe_applied is not None:
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_dedupe_applied="
+                f"{self.retrieval_dedupe_applied}",
+                flush=True,
+            )
+        if self.retrieved_duplicate_count is not None:
+            print(
+                "[assistant-flow] rag diagnostics: retrieved_duplicate_count="
+                f"{self.retrieved_duplicate_count}",
+                flush=True,
+            )
+        if self.retrieval_vector_hits_raw is not None:
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_vector_hits_raw="
+                f"{self.retrieval_vector_hits_raw}",
                 flush=True,
             )
 
