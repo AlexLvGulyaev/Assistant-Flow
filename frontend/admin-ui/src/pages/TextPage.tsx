@@ -5,8 +5,14 @@ import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
+import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
+import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  detailsJsonPreview,
+  pipelineStageVariant,
+} from "../utils/operationalConsoleUi";
 import {
   formatDurationMs,
   formatTimestampMsk,
@@ -252,7 +258,7 @@ export function TextPage() {
         s.llmModel,
         ...s.rows.map(
           (r) =>
-            `${r.stage ?? ""} ${stageToActionRu(r.stage, r.details)} ${previewSummary(r.details)}`
+            `${r.stage ?? ""} ${stageToActionRu(r.stage, r.details)} ${detailsJsonPreview(r.details)}`
         ),
       ]
         .join(" ")
@@ -511,8 +517,9 @@ export function TextPage() {
                   >
                     <div className="logs-item__row logs-item__row--tight">
                       <span className="mono logs-item__ts">{formatTimestampMsk(s.lastAt)}</span>
+                      <OperationalModalityBadge modality="text" />
                       <span className="logs-item__route-status">
-                        TEXT · {statusLabelRu(s.status).toUpperCase()}
+                        {statusLabelRu(s.status).toUpperCase()}
                       </span>
                     </div>
                     <div className="logs-item__preview">{s.preview}</div>
@@ -824,7 +831,12 @@ export function TextPage() {
                               <span className="mono logs-stage__time">
                                 {formatTimestampMsk(row.created_at)}
                               </span>
-                              <span className="logs-stage__label">{label}</span>
+                              <span className="logs-stage__label af-logs-stage-label-with-icon">
+                                <OperationalPipelineStageIcon
+                                  variant={pipelineStageVariant(stageRaw, row.status)}
+                                />
+                                {label}
+                              </span>
                               <StatusBadge status={row.status ?? "—"} />
                               {delta != null ? (
                                 <span className="muted mono logs-stage__delta">+{delta} мс</span>
@@ -835,7 +847,7 @@ export function TextPage() {
                             ) : null}
                             <details className="logs-stage__details">
                               <summary className="log-details__summary">
-                                {previewSummary(row.details)}
+                                {detailsJsonPreview(row.details)}
                               </summary>
                               <pre className="log-details__json mono">{formatDetailsJson(row.details)}</pre>
                             </details>
@@ -969,17 +981,6 @@ function clipText(value: string | null | undefined, max: number): string | null 
   if (!value?.trim()) return null;
   const t = value.trim();
   return t.length > max ? `${t.slice(0, max)}…` : t;
-}
-
-function previewSummary(d: LogItem["details"]): string {
-  if (d == null) return "пусто";
-  if (typeof d === "string") return d.length > 56 ? `${d.slice(0, 56)}…` : d;
-  try {
-    const s = JSON.stringify(d);
-    return s.length > 56 ? `${s.slice(0, 56)}…` : s || "{}";
-  } catch {
-    return "?";
-  }
 }
 
 function formatDetailsJson(d: LogItem["details"]): string {
@@ -1391,7 +1392,7 @@ function buildTextSessions(rows: LogItem[]): TextSession[] {
       clipText(listUserPreview, 200) ||
       clipText(userInput, 200) ||
       clipText(assistantOutput, 200) ||
-      clipText(previewSummary(latest.details), 120) ||
+      clipText(detailsJsonPreview(latest.details), 120) ||
       "—";
 
     out.push({

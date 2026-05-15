@@ -1861,7 +1861,7 @@ def create_bot() -> telebot.TeleBot:
                             flush=True,
                         )
                         rag_diag = result.diagnostics
-                        rag_details: dict[str, object] = {"route": "rag"}
+                        rag_details: dict[str, object] = {"route": "rag", "user_input": text}
                         if rag_diag is not None:
                             rag_details.update(rag_diag.to_log_details())
                         rag_status = (

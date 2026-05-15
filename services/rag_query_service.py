@@ -29,6 +29,23 @@ from utils.config import AppConfig
 
 _LLM_TIMEOUT_SEC = 30
 _QUERY_PREVIEW_MAX = 200
+_RETRIEVAL_READY_QUERY_LOG_CAP = 16_000
+
+
+def _retrieval_ready_query_for_logs(q: str | None) -> str | None:
+    """Full retrieval query for telemetry; capped; redacts obvious secret patterns."""
+    t = " ".join((q or "").strip().split())
+    if not t:
+        return None
+    lower = t.lower()
+    if "sk-" in lower or "api_key" in lower or "openai_api_key" in lower:
+        return "[redacted: possible secret pattern]"
+    if len(t) <= _RETRIEVAL_READY_QUERY_LOG_CAP:
+        return t
+    return (
+        t[: _RETRIEVAL_READY_QUERY_LOG_CAP - 48].rstrip()
+        + "\n…[truncated for log size cap]"
+    )
 _CHUNK_PREVIEW_MAX = 500
 _CHUNK_CARD_PREVIEW_MAX = 220
 _CHUNK_FULL_TEXT_LOG_MAX = 12_000
@@ -374,6 +391,7 @@ def _build_diagnostics(
     retrieved_duplicate_count: int | None = None,
     retrieval_dedupe_applied: bool | None = None,
     retrieval_vector_hits_raw: int | None = None,
+    retrieval_ready_query: str | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
@@ -433,6 +451,7 @@ def _build_diagnostics(
         retrieved_duplicate_count=rx.get("retrieved_duplicate_count"),  # type: ignore[arg-type]
         retrieval_dedupe_applied=rx.get("retrieval_dedupe_applied"),  # type: ignore[arg-type]
         retrieval_vector_hits_raw=rx.get("retrieval_vector_hits_raw"),  # type: ignore[arg-type]
+        retrieval_ready_query=_retrieval_ready_query_for_logs(retrieval_ready_query),
     )
 
 
@@ -742,6 +761,7 @@ class RagQueryService:
             active_collection_count=acnt,
             retrieval_readiness=rdy,
             routing_extras=routing,
+            retrieval_ready_query=query,
         ).emit_stdout()
         return _sources_from_results(filtered)
 
@@ -763,6 +783,10 @@ class RagQueryService:
         normalized = (query or "").strip()
         if not normalized:
             raise ValueError("query must not be empty")
+        # Literal string passed to retrieval backends → embed_query(q) / vector query. There is
+        # no conversational rewrite, pronoun expansion, or history injection into this string in
+        # this codebase (see services/rag_query_service._retrieve_raw → RetrievalBackend.search).
+        retrieval_query = normalized
 
         t_answer0 = time.monotonic()
 
@@ -773,7 +797,7 @@ class RagQueryService:
         print("[assistant-flow] rag answer: before retrieval", flush=True)
         t_ret0 = time.monotonic()
         raw, cache_probe = self._retrieve_raw(
-            normalized, k, security_context=security_context
+            retrieval_query, k, security_context=security_context
         )
         retrieval_latency_ms = int((time.monotonic() - t_ret0) * 1000)
         print("[assistant-flow] rag answer: after retrieval", flush=True)
@@ -819,6 +843,7 @@ class RagQueryService:
                 retrieval_readiness=rdy,
                 routing_extras=routing,
                 **v11_diag_idle,
+                retrieval_ready_query=retrieval_query,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -850,6 +875,7 @@ class RagQueryService:
                 retrieval_readiness=rdy,
                 routing_extras=routing,
                 **v11_diag_idle,
+                retrieval_ready_query=retrieval_query,
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -940,6 +966,7 @@ class RagQueryService:
                 system_context_chars=ctx_len,
                 query=normalized,
             ),
+            retrieval_ready_query=retrieval_query,
         )
         diagnostics.emit_stdout()
 

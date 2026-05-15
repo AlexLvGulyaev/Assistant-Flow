@@ -99,6 +99,9 @@ class RagRequestDiagnostics:
     retrieved_duplicate_count: int | None = None
     retrieval_dedupe_applied: bool | None = None
     retrieval_vector_hits_raw: int | None = None
+    #: Exact query string passed to retrieval (embed + vector search), after any future
+    #: rewrite/expansion; today typically equals the normalized user message. Not a preview.
+    retrieval_ready_query: str | None = None
 
     def to_log_details(self) -> dict[str, object]:
         """Compact JSON-safe payload for ``processing_logs.details``."""
@@ -192,6 +195,9 @@ class RagRequestDiagnostics:
             out["retrieval_dedupe_applied"] = bool(self.retrieval_dedupe_applied)
         if self.retrieval_vector_hits_raw is not None:
             out["retrieval_vector_hits_raw"] = int(self.retrieval_vector_hits_raw)
+        rq = (self.retrieval_ready_query or "").strip()
+        if rq:
+            out["retrieval_ready_query"] = rq
         return out
 
     def emit_stdout(self) -> None:
@@ -324,6 +330,14 @@ class RagRequestDiagnostics:
             print(
                 "[assistant-flow] rag diagnostics: retrieval_vector_hits_raw="
                 f"{self.retrieval_vector_hits_raw}",
+                flush=True,
+            )
+        rq = (self.retrieval_ready_query or "").strip()
+        if rq:
+            preview = rq if len(rq) <= 240 else rq[:237] + "…"
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_ready_query_len="
+                f"{len(rq)} preview={preview!r}",
                 flush=True,
             )
 

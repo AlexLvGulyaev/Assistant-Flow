@@ -412,6 +412,43 @@ Current UI design principles:
 - no hidden observability gaps
 - no duplicating Logs page inside modality pages
 
+### UI / Operational Console Standards (React `frontend/admin-ui`)
+
+**Contract:** all modality operational consoles (RAG, Text, Images, Audio, Logs, Memory, and future pages) share one layout and interaction model. **Memory** is the reference implementation for density and patterns; it is **not** a special case in code—shared helpers and CSS tokens apply everywhere.
+
+**Left column (fixed vertical order):**
+
+1. Filter row(s) — time window / status / mode / route-specific selects first.  
+2. Search — always directly under filters.  
+3. Optional checkboxes / toggles (e.g. synthetic hide) — below search, not inside the primary filter row unless space requires it.  
+4. Pagination meta + refresh — compact one line where possible.  
+5. Page controls (Prev / Next / Reset).  
+6. Scrollable session/item list.
+
+**Right column:** persistent **detail card** for the selected item (not modal). Split: list left, detail right (`logs-console` grid).
+
+**Selection:** if the filtered list is non-empty on load or after filter change, **auto-select the first item** — do not show an empty “nothing selected” state when rows exist.
+
+**Top telemetry panels (card header):**
+
+- Row height equality follows layout math: **Memory** = three equal panels (`P1=P2=P3`); **RAG** = `(session+quality) | retrieval` (`P1+P2=P3` via `modality-ops-panels--rag-balanced`); **Text / Images / Audio / Logs-style** = two columns (`modality-ops-panels--rag-split`, `P1=P2` in the sense of two top regions).  
+- **Inside** each `modality-ops-panel`: KV is a **dense block from the top** — no `justify-content: space-between` on panel bodies, no `flex: 1` on `dl` to stretch rows. Empty space may remain at the **bottom** of the shorter panel.
+
+**Main body:** below top panels, the **primary artifact** of the modality (RAG query/answer/chunks, Memory dialog table, Text I/O, Logs trace, etc.) must dominate vertical space—not squeezed by oversized headers.
+
+**Pipeline timeline (`logs-timeline` / `logs-stage`):**
+
+- **Line 1:** timestamp · colored stage marker (`OperationalPipelineStageIcon` + `pipelineStageVariant`) · localized stage label · `StatusBadge` · optional delta/latency on the right.  
+- **Line 2:** single `<details>` with accent **`log-details__summary`** = `detailsJsonPreview(details)`; expanded body = full JSON (`log-details__json`). **No** extra grey “metrics” line duplicating JSON fields. Summary / JSON **left-aligned** like Logs.
+
+**Modality list badges:** use **`OperationalModalityBadge`** + `mini-badge--af-*` (labels: `rag`, `mem`, `text`, `ocr`, `vision`, `audio`, `image`, `test`, `log`). Route → badge: `operationalModalityFromRouteKey`.
+
+**Shared implementation:** `src/utils/operationalConsoleUi.ts` (`detailsJsonPreview`, `pipelineStageVariant`, modality helpers), `src/components/OperationalModalityBadge.tsx`, `src/components/OperationalPipelineStageIcon.tsx`, global CSS for `mini-badge--af-*` and `af-pipeline-stage-icon--*`.
+
+**Page chrome:** `logs-console` height matches Logs (`min(82vh, 980px)`); avoid double nested scroll wrappers on the right; **minimal bottom padding** on `logs-page` / leads consistent with RAG.
+
+**Still to align (when touching those files):** Documents lifecycle UI, Summary page badges, any remaining ad-hoc `previewSummary` copies, Overview tiles (different pattern).
+
 Important modality-card architecture:
 
 ```text
@@ -2808,6 +2845,34 @@ Unknown stage fallback допустим, но все OCR known stages должн
 | Orchestration / fallback / grounding audit | **`partially implemented`** | Orchestrator, lifecycle, RAG diagnostics, Retrieval Settings, slim `processing_logs`; нет выделенного «grounding audit» и generation confidence policy как продукта |
 | Hybrid roadmap (keyword, rerankers, adaptive, framework) | **`partially implemented`** | Hybrid path и флаги есть; BM25+vector product, cross-encoder rerank, adaptive strategies, единый benchmarking framework — в основном **`planned`** |
 | Retrieval Settings; multi-backend; diagnostics; chunk inspection; observability | **`implemented`** / **`partially implemented`** | См. §45–§46, §50–§51; chunk UI и backend identity в telemetry — да; полнота алертов и формальных QA gates — частично |
+
+### 47.4
+
+**Источник:** Assistant Flow — внутренний engineering backlog (Retrieval Quality Engineering).
+
+**Objective:** вывести **измеримый слой качества retrieval** поверх существующей индексации и observability: управление перекрытием чанков, эксперименты с **chunk_size**, связь размера чанка с **distance / качеством retrieval / качеством ответа LLM**, а также операционные **quality metrics** и сигналы **semantic duplication** в Admin UI — без смешения с образовательными или внешними контурными проектами.
+
+**Planned work:**
+
+- **Overlap между chunk-фрагментами** — формализовать метрики перекрытия (Jaccard / n-gram / token overlap по нормализованному тексту), пороги для индексации и для runtime-диагностики; связать с политикой dedupe при retrieval (где применимо).
+- **Эксперименты с chunk_size** — воспроизводимые прогоны индексации с разными `chunk_size` / overlap на фиксированном корпусе; версионирование артефактов и manifest (backend-aware).
+- **Сравнение влияния chunk_size** — зафиксировать измерения: распределение **retrieval distance** (per-backend семантика score), proxy **retrieval quality** (human labels или offline eval), **качество ответа модели** на фиксированном наборах запросов; единый отчётный формат (CSV/JSON + ссылка в `processing_logs` или отдельный eval namespace).
+- **Retrieval quality metrics в Admin UI** — отображение агрегатов и drill-down: **precision@k** (при наличии разметки или golden set), **irrelevant chunk rate**, **duplicate chunk rate**, **retrieval noise indicators** (например: высокая дисперсия score, threshold violations, пустой vs переполненный контекст).
+- **Semantic duplication** — диагностика дубликатов и near-duplicates в корпусе и в top-k; контроль повторяющихся чанков при retrieval (согласование с уже существующим dedupe слоем в RAG path, расширение телеметрии).
+
+**Architectural implications:**
+
+- Отдельный слой **quality / eval** не должен подменять **RetrievalBackend** контракт; метрики — **backend-aware** или нормализованы до сравнимой шкалы (см. §47.2–47.3, multi-backend);
+- Индексация с вариантами **chunk_size** требует явной **версии индекса** / generation fingerprint (см. retrieval cache / reindex policy), чтобы не смешивать несопоставимые векторные пространства;
+- Связь **chunk metrics → Admin UI** — через существующие API patterns (`/api/overview`, documents detail, RAG logs) без дублирования источников истины.
+
+**Operational implications:**
+
+- Операторский контур: страницы **Documents / RAG / Retrieval Settings** получают дополнительные сигналы качества; runbook-шаги на случай регрессии после смены `chunk_size`;
+- CI / offline jobs: опциональные regression gates на фиксированных query sets;
+- Нагрузка на embedding/index при массовых reindex-экспериментах — планирование окон и алертов.
+
+**Текущий статус реализации:** **`planned`**. Частично перекрывается существующими элементами (**`partially implemented`**): RAG diagnostics (distances, dedupe counts, chunk cards), multi-backend observability, evaluation/dataset направления (§52) — без готового продукта **precision@k / irrelevant rate** в UI и без систематического **chunk_size benchmark matrix**.
 
 ---
 

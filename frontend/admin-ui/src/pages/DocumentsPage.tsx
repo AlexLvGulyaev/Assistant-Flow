@@ -557,6 +557,8 @@ export function DocumentsPage() {
         )
       : "";
 
+  const docPreprocessing = detail?.preprocessing ?? selected?.preprocessing ?? null;
+
   const chunkDetailLongMetadataRows = useMemo(() => {
     if (!chunkDetailModal || !detail) return [];
     const dedupeMetaVals = new Set<string>();
@@ -577,7 +579,7 @@ export function DocumentsPage() {
   }
 
   async function openRawLargeViewer() {
-    if (!selectedId || !selected?.preprocessing?.preview_raw) return;
+    if (!selectedId) return;
     setActionHint(null);
     setLargeViewerMode("raw");
     setLargeViewerLoading(true);
@@ -1059,52 +1061,52 @@ export function DocumentsPage() {
                           {String(selected.filename)}
                         </span>
                       </DocFieldRow>
-                      {selected.preprocessing?.original_upload_filename ? (
+                      {docPreprocessing?.original_upload_filename ? (
                         <DocFieldRow label="Исходный файл">
                           <span
                             className="mono"
-                            title={String(selected.preprocessing.original_upload_filename)}
+                            title={String(docPreprocessing.original_upload_filename)}
                           >
-                            {String(selected.preprocessing.original_upload_filename)}
+                            {String(docPreprocessing.original_upload_filename)}
                           </span>
                         </DocFieldRow>
                       ) : null}
-                      {selected.preprocessing ? (
+                      {docPreprocessing ? (
                         <>
                           <DocFieldRow label="Preprocessing">
                             <span className="mono">
-                              {selected.preprocessing.status === "ok" ? "OK" : "ошибка"}
-                              {selected.preprocessing.original_format
-                                ? ` · ${selected.preprocessing.original_format}`
+                              {docPreprocessing.status === "ok" ? "OK" : "ошибка"}
+                              {docPreprocessing.original_format
+                                ? ` · ${docPreprocessing.original_format}`
                                 : ""}
                             </span>
                           </DocFieldRow>
-                          {selected.preprocessing.error ? (
+                          {docPreprocessing.error ? (
                             <DocFieldRow label="Preprocessing error">
                               <span className="mono docs-card-err">
-                                {String(selected.preprocessing.error)}
+                                {String(docPreprocessing.error)}
                               </span>
                             </DocFieldRow>
                           ) : null}
                           <DocFieldRow label="Размер raw → cleaned">
                             <span className="mono">
-                              {formatBytes(selected.preprocessing.original_bytes)} →{" "}
-                              {formatBytes(selected.preprocessing.cleaned_bytes)}
+                              {formatBytes(docPreprocessing.original_bytes)} →{" "}
+                              {formatBytes(docPreprocessing.cleaned_bytes)}
                             </span>
                           </DocFieldRow>
                           <DocFieldRow label="Удалено строк (эврист.)">
                             <span className="mono">
-                              {selected.preprocessing.removed_line_count ?? "—"}
+                              {docPreprocessing.removed_line_count ?? "—"}
                             </span>
                           </DocFieldRow>
-                          {selected.preprocessing.page_count != null ? (
+                          {docPreprocessing.page_count != null ? (
                             <DocFieldRow label="Страниц (PDF)">
-                              <span className="mono">{selected.preprocessing.page_count}</span>
+                              <span className="mono">{docPreprocessing.page_count}</span>
                             </DocFieldRow>
                           ) : null}
-                          {selected.preprocessing.extractor ? (
+                          {docPreprocessing.extractor ? (
                             <DocFieldRow label="Экстрактор">
-                              <span className="mono">{selected.preprocessing.extractor}</span>
+                              <span className="mono">{docPreprocessing.extractor}</span>
                             </DocFieldRow>
                           ) : null}
                         </>
@@ -1151,7 +1153,7 @@ export function DocumentsPage() {
                         </span>
                       </DocFieldRow>
                     </div>
-                    {selected.preprocessing?.preview_raw ? (
+                    {docPreprocessing ? (
                       <div className="docs-preprocessing-previews docs-preprocessing-previews--bleed">
                         <div className="docs-preview-head docs-preprocessing-previews__head">
                           <div className="docs-zone-title docs-zone-title--sub docs-preprocessing-previews__head-title">
@@ -1169,7 +1171,9 @@ export function DocumentsPage() {
                         <div className="docs-preprocessing-previews__grid docs-preprocessing-previews__grid--single">
                           <div className="docs-panel-block docs-panel-block--preview docs-preprocessing-previews__cell docs-preprocessing-previews__cell--full">
                             <pre className="docs-preview-body mono docs-preview-body--preproc-raw">
-                              {selected.preprocessing.preview_raw}
+                              {docPreprocessing.preview_raw?.trim()
+                                ? docPreprocessing.preview_raw
+                                : "Краткий preview (preview_raw) в логе отсутствует — нажмите «открыть RAW» для полного текста из исходного файла."}
                             </pre>
                           </div>
                         </div>

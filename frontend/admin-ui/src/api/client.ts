@@ -494,6 +494,8 @@ export interface DocumentDetailResponse {
   canonical_text_full?: string | null;
   preprocessing_raw_full?: string | null;
   preprocessing_raw_full_error?: string | null;
+  /** Snapshot from upload pipeline logs (same shape as list row ``preprocessing``). */
+  preprocessing?: DocumentPreprocessingPublic | null;
   preview_available?: boolean;
   embedding_model?: string | null;
   file_size_bytes?: number | null;

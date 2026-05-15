@@ -9,8 +9,14 @@ import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
+import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
+import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  detailsJsonPreview,
+  pipelineStageVariant,
+} from "../utils/operationalConsoleUi";
 import {
   formatDurationMs,
   formatTimestampMsk,
@@ -196,7 +202,7 @@ export function ImagesPage() {
         assetHay.includes(q) ||
         s.rows.some((r) => {
           const st = `${r.stage ?? ""}`.toLowerCase();
-          const det = previewSummary(r.details).toLowerCase();
+          const det = detailsJsonPreview(r.details).toLowerCase();
           return st.includes(q) || det.includes(q);
         })
       );
@@ -462,8 +468,9 @@ export function ImagesPage() {
                   >
                     <div className="logs-item__row logs-item__row--tight">
                       <span className="mono logs-item__ts">{formatTimestampMsk(s.lastAt)}</span>
+                      <OperationalModalityBadge modality="image" />
                       <span className="logs-item__route-status">
-                        IMAGE · {statusLabelRu(s.status).toUpperCase()}
+                        {statusLabelRu(s.status).toUpperCase()}
                       </span>
                     </div>
                     <div className="logs-item__preview">{listPreviewLine(s)}</div>
@@ -849,7 +856,12 @@ export function ImagesPage() {
                               <span className="mono logs-stage__time">
                                 {formatTimestampMsk(row.created_at)}
                               </span>
-                              <span className="logs-stage__label">{label}</span>
+                              <span className="logs-stage__label af-logs-stage-label-with-icon">
+                                <OperationalPipelineStageIcon
+                                  variant={pipelineStageVariant(stageRaw, row.status)}
+                                />
+                                {label}
+                              </span>
                               <StatusBadge status={row.status ?? "—"} />
                               {delta != null ? (
                                 <span className="muted mono logs-stage__delta">+{delta} мс</span>
@@ -859,7 +871,7 @@ export function ImagesPage() {
                               <div className="logs-stage__details mono">{row.error_text}</div>
                             ) : null}
                             <details className="logs-stage__details">
-                              <summary className="log-details__summary">{previewSummary(row.details)}</summary>
+                              <summary className="log-details__summary">{detailsJsonPreview(row.details)}</summary>
                               <pre className="log-details__json mono">{formatDetailsJson(row.details)}</pre>
                             </details>
                           </div>
@@ -1105,18 +1117,7 @@ function listPreviewLine(s: ImageSession): string {
   const fb = s.listPreviewFallback?.trim();
   if (fb) return clipText(fb, 200) ?? fb;
   const tail = s.rows[s.rows.length - 1];
-  return clipText(tail ? previewSummary(tail.details) : "—", 120) ?? "—";
-}
-
-function previewSummary(d: LogItem["details"]): string {
-  if (d == null) return "пусто";
-  if (typeof d === "string") return d.length > 56 ? `${d.slice(0, 56)}…` : d;
-  try {
-    const s = JSON.stringify(d);
-    return s.length > 56 ? `${s.slice(0, 56)}…` : s || "{}";
-  } catch {
-    return "?";
-  }
+  return clipText(tail ? detailsJsonPreview(tail.details) : "—", 120) ?? "—";
 }
 
 function formatDetailsJson(d: LogItem["details"]): string {
@@ -1387,7 +1388,7 @@ function buildListPreviewFallback(
   const t = finalP?.text?.trim() || enh?.text?.trim();
   if (t) return t;
   const tail = ordered[ordered.length - 1];
-  return tail ? previewSummary(tail.details) : null;
+  return tail ? detailsJsonPreview(tail.details) : null;
 }
 
 function pickPipelineError(ordered: LogItem[]): string | null {

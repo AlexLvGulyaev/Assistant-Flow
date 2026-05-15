@@ -92,6 +92,74 @@ def _read_kb_text_preview(path: Path, max_chars: int = 12000) -> str | None:
     return raw[:max_chars] + "\n…"
 
 
+def _preprocessing_public_from_upload_details(details: dict[str, Any]) -> dict[str, Any] | None:
+    """Subset of upload log for Documents UI (same contract as ``admin_api.routes.documents``)."""
+    pre = details.get("preprocessing")
+    if not isinstance(pre, dict) or not pre:
+        return None
+    status = str(pre.get("status") or ("ok" if pre.get("extraction_success") else "error"))
+    ob = details.get("original_size_bytes")
+    if ob is None:
+        ob = details.get("size_bytes")
+    out: dict[str, Any] = {
+        "status": status,
+        "original_format": pre.get("original_format"),
+        "original_bytes": ob,
+        "cleaned_bytes": details.get("cleaned_size_bytes", details.get("cleaned_bytes")),
+        "removed_line_count": pre.get("removed_line_count"),
+        "original_upload_filename": details.get("original_upload_filename"),
+        "indexed_target_filename": details.get("indexed_target_filename"),
+    }
+    if pre.get("preview_raw"):
+        out["preview_raw"] = pre.get("preview_raw")
+    if pre.get("preview_cleaned"):
+        out["preview_cleaned"] = pre.get("preview_cleaned")
+    if pre.get("error"):
+        out["error"] = pre.get("error")
+    if pre.get("extractor") is not None:
+        out["extractor"] = pre.get("extractor")
+    if pre.get("page_count") is not None:
+        out["page_count"] = pre.get("page_count")
+    if pre.get("extracted_characters") is not None:
+        out["extracted_characters"] = pre.get("extracted_characters")
+    return out
+
+
+def _preprocessing_from_detail_timeline(
+    timeline_rows: list[dict[str, Any]], *, source_filename_lower: str
+) -> dict[str, Any] | None:
+    """Preprocessing snapshot from upload pipeline logs for the indexed filename."""
+    if not source_filename_lower:
+        return None
+    matches: list[dict[str, Any]] = []
+    for row in timeline_rows:
+        st = str(row.get("stage") or "")
+        if st not in ("document_upload_pipeline_done", "admin_document_uploaded"):
+            continue
+        raw_d = row.get("details")
+        if isinstance(raw_d, str):
+            try:
+                raw_d = json.loads(raw_d)
+            except Exception:
+                continue
+        if not isinstance(raw_d, dict):
+            continue
+        itn = str(raw_d.get("indexed_target_filename") or "").strip().lower()
+        fn = str(raw_d.get("filename") or "").strip().lower()
+        ouf = str(raw_d.get("original_upload_filename") or "").strip().lower()
+        if source_filename_lower in (itn, fn, ouf):
+            pub = _preprocessing_public_from_upload_details(raw_d)
+            if pub:
+                matches.append(pub)
+    if not matches:
+        return None
+    for pub in reversed(matches):
+        pr = pub.get("preview_raw")
+        if isinstance(pr, str) and pr.strip():
+            return pub
+    return matches[-1]
+
+
 SUMMARY_LOG_SAMPLE_CAP = 500
 
 SUMMARY_LIFECYCLE_STAGE_ORDER: tuple[str, ...] = (
@@ -2121,6 +2189,11 @@ class AdminService:
         cfg = self._config
         embed_model = getattr(cfg, "openai_embedding_model", None) or "—"
 
+        preprocessing_ui = _preprocessing_from_detail_timeline(
+            timeline_rows,
+            source_filename_lower=str(doc.get("source_filename") or "").strip().lower(),
+        )
+
         cc_norm = [
             {
                 "version_id": str(r.get("version_id") or ""),
@@ -2146,6 +2219,7 @@ class AdminService:
             "canonical_text_full": canonical_text_full,
             "preprocessing_raw_full": preprocessing_raw_full,
             "preprocessing_raw_full_error": preprocessing_raw_full_error,
+            "preprocessing": preprocessing_ui,
             "embedding_model": embed_model,
             "file_size_bytes": file_size_bytes,
             "timeline_rows": timeline_rows,

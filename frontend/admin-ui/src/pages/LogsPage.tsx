@@ -5,11 +5,19 @@ import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
+import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
+import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  detailsJsonPreview,
+  operationalModalityFromRouteKey,
+  pipelineStageVariant,
+} from "../utils/operationalConsoleUi";
 import {
   formatDurationMs,
   formatTimestampMsk,
   routeLabelRu,
+  showLogsRouteLabelBesideModalityBadge,
   sessionAvgStepLatencyMs,
   sessionMaxStepLatencyMs,
   sessionWallDurationMs,
@@ -362,8 +370,13 @@ export function LogsPage() {
                       <span className="mono logs-item__ts">
                         {formatTimestampMsk(s.lastAt)}
                       </span>
+                      <OperationalModalityBadge modality={operationalModalityFromRouteKey(s.routeKey)} />
                       <span className="logs-item__route-status">
-                        {routeLabelRu(s.routeKey).toUpperCase()} ·{" "}
+                        {showLogsRouteLabelBesideModalityBadge(s.routeKey) ? (
+                          <>
+                            {routeLabelRu(s.routeKey).toUpperCase()} ·{" "}
+                          </>
+                        ) : null}
                         {statusLabelRu(s.status).toUpperCase()}
                       </span>
                     </div>
@@ -406,7 +419,11 @@ export function LogsPage() {
                 </div>
 
                 <div className="logs-detail__route-line">
-                  {routeLabelRu(selected.routeKey).toUpperCase()} ·{" "}
+                  {showLogsRouteLabelBesideModalityBadge(selected.routeKey) ? (
+                    <>
+                      {routeLabelRu(selected.routeKey).toUpperCase()} ·{" "}
+                    </>
+                  ) : null}
                   {statusLabelRu(selected.status).toUpperCase()}
                 </div>
 
@@ -502,7 +519,12 @@ export function LogsPage() {
                           <span className="mono logs-stage__time">
                             {formatTimestampMsk(row.created_at)}
                           </span>
-                          <span className="logs-stage__label">{label}</span>
+                          <span className="logs-stage__label af-logs-stage-label-with-icon">
+                            <OperationalPipelineStageIcon
+                              variant={pipelineStageVariant(stageRaw, row.status)}
+                            />
+                            {label}
+                          </span>
                           <StatusBadge status={row.status ?? "—"} />
                           {delta != null ? (
                             <span className="muted mono logs-stage__delta">
@@ -512,7 +534,7 @@ export function LogsPage() {
                         </div>
                         <details className="logs-stage__details">
                           <summary className="log-details__summary">
-                            {previewSummary(row.details)}
+                            {detailsJsonPreview(row.details)}
                           </summary>
                           <pre className="log-details__json mono">
                             {formatDetailsJson(row.details)}
@@ -654,7 +676,7 @@ function buildSessions(rows: LogItem[]): SessionView[] {
       route,
       routeKey,
       status,
-      preview: userInput || assistantOutputBase || imageAnswer || ragAnswer || previewSummary(latest.details),
+      preview: userInput || assistantOutputBase || imageAnswer || ragAnswer || detailsJsonPreview(latest.details),
       providerModel,
       wallDurationMs,
       maxStageLatencyMs,
@@ -704,7 +726,7 @@ function filterSessions(
       s.pipelineSummary,
       ...s.rows.map(
         (r) =>
-          `${r.stage ?? ""} ${stageToActionRu(r.stage, r.details)} ${previewSummary(r.details)}`
+          `${r.stage ?? ""} ${stageToActionRu(r.stage, r.details)} ${detailsJsonPreview(r.details)}`
       ),
     ]
       .join(" ")
@@ -874,17 +896,6 @@ function windowLabelToHours(label: string): number {
   if (label === "48h") return 48;
   if (label === "7d") return 24 * 7;
   return 24;
-}
-
-function previewSummary(d: LogItem["details"]): string {
-  if (d == null) return "пусто";
-  if (typeof d === "string") return d.length > 56 ? d.slice(0, 56) + "…" : d;
-  try {
-    const s = JSON.stringify(d);
-    return s.length > 56 ? s.slice(0, 56) + "…" : s || "{}";
-  } catch {
-    return "?";
-  }
 }
 
 function formatDetailsJson(d: LogItem["details"]): string {

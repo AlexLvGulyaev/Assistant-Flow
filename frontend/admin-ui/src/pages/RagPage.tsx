@@ -7,6 +7,12 @@ import { OperationalRefreshButton } from "../components/OperationalRefreshButton
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
+import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
+import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
+import {
+  detailsJsonPreview,
+  pipelineStageVariant,
+} from "../utils/operationalConsoleUi";
 import {
   formatDurationMs,
   formatTimestampMsk,
@@ -128,6 +134,8 @@ interface RagSession {
   retrievalDedupeApplied: boolean | null;
   retrievedDuplicateCount: number | null;
   retrievalVectorHitsRaw: number | null;
+  /** Exact string passed to vector retrieval (from diagnostics); absent in older logs. */
+  retrievalReadyQuery: string | null;
 }
 
 export function RagPage() {
@@ -510,7 +518,7 @@ export function RagPage() {
                       <span className="mono logs-item__ts">
                         {formatTimestampMsk(s.lastAt)}
                       </span>
-                      <span className="mini-badge mini-badge--rag">rag</span>
+                      <OperationalModalityBadge modality="rag" />
                       <StatusBadge status={s.status} />
                     </div>
                     <div className="logs-item__preview">{clipText(s.query, 96) || "запрос не найден в логах"}</div>
@@ -552,8 +560,8 @@ export function RagPage() {
                   </span>
                 </div>
 
-                <div className="modality-ops-panels modality-ops-panels--rag-split">
-                  <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--session">
+                <div className="modality-ops-panels modality-ops-panels--rag-balanced">
+                  <div className="modality-ops-panels__rag-balanced-left">
                     <div className="modality-ops-panel">
                       <div className="modality-ops-panel__name">Параметры сессии</div>
                       <dl className="kv modality-ops-panel__kv">
@@ -671,8 +679,6 @@ export function RagPage() {
                       />
                     </dl>
                     </div>
-                  </div>
-                  <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--stack">
                     <div className="modality-ops-panel">
                       <div className="modality-ops-panel__name">Качество</div>
                       <dl className="kv modality-ops-panel__kv">
@@ -711,7 +717,9 @@ export function RagPage() {
                         />
                       </dl>
                     </div>
-                    <div className="modality-ops-panel">
+                  </div>
+                  <div className="modality-ops-panels__rag-balanced-right">
+                    <div className="modality-ops-panel modality-ops-panel--rag-retrieval-tall">
                       <div className="modality-ops-panel__name">Retrieval</div>
                       <dl className="kv modality-ops-panel__kv">
                         <OpsRow
@@ -871,7 +879,16 @@ export function RagPage() {
                   <div className="logs-detail-block">
                     <h3 className="logs-detail-block__title">ЧТО СПРОСИЛ ПОЛЬЗОВАТЕЛЬ</h3>
                     <pre className="logs-pre logs-pre--compact mono">{selected.query ?? "Запрос не найден в логах."}</pre>
-                    <p className="rag-io-foot muted">RAG-запрос</p>
+                    {retrievalReadyQueryDisclosure(selected) ? (
+                      <details className="logs-stage__details rag-io-retrieval-ready">
+                        <summary className="log-details__summary">RAG-запрос ▼</summary>
+                        <pre className="log-details__json mono">
+                          {selected.retrievalReadyQuery ?? ""}
+                        </pre>
+                      </details>
+                    ) : (
+                      <p className="rag-io-foot muted">RAG-запрос</p>
+                    )}
                   </div>
                   <div className="logs-detail-block">
                     <h3 className="logs-detail-block__title">ЧТО ОТВЕТИЛА СИСТЕМА</h3>
@@ -990,7 +1007,12 @@ export function RagPage() {
                             <span className="mono logs-stage__time">
                               {formatTimestampMsk(row.created_at)}
                             </span>
-                            <span className="logs-stage__label">{label}</span>
+                            <span className="logs-stage__label af-logs-stage-label-with-icon">
+                              <OperationalPipelineStageIcon
+                                variant={pipelineStageVariant(stageRaw, row.status)}
+                              />
+                              {label}
+                            </span>
                             <StatusBadge status={row.status ?? "—"} />
                             {delta != null ? (
                               <span className="muted mono logs-stage__delta">+{delta} мс</span>
@@ -1000,7 +1022,7 @@ export function RagPage() {
                             <div className="logs-stage__details mono">{row.error_text}</div>
                           ) : null}
                           <details className="logs-stage__details">
-                            <summary className="log-details__summary">{previewSummary(row.details)}</summary>
+                            <summary className="log-details__summary">{detailsJsonPreview(row.details)}</summary>
                             <pre className="log-details__json mono">{formatDetailsJson(row.details)}</pre>
                           </details>
                         </div>
@@ -1096,17 +1118,6 @@ function relevanceLabel(chunk: RagChunk, threshold: number | null): string {
     return "низкая релевантность";
   }
   return chunk.passedFilter ? "включён в контекст" : "отфильтрован";
-}
-
-function previewSummary(d: LogItem["details"]): string {
-  if (d == null) return "пусто";
-  if (typeof d === "string") return d.length > 56 ? `${d.slice(0, 56)}…` : d;
-  try {
-    const s = JSON.stringify(d);
-    return s.length > 56 ? `${s.slice(0, 56)}…` : s || "{}";
-  } catch {
-    return "?";
-  }
 }
 
 function formatDetailsJson(d: unknown): string {
@@ -1256,6 +1267,19 @@ function pickSessionLatencyMs(detailsPool: Record<string, unknown>[]): number | 
   return best != null ? Math.round(best) : null;
 }
 
+function collapseComparableQueryText(s: string | null | undefined): string {
+  return (s ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** True when logs contain a retrieval-ready string that differs from the displayed user query. */
+function retrievalReadyQueryDisclosure(session: RagSession): boolean {
+  const rq = session.retrievalReadyQuery?.trim();
+  if (!rq) return false;
+  const shown = collapseComparableQueryText(session.query);
+  if (!shown) return true;
+  return collapseComparableQueryText(rq) !== shown;
+}
+
 function chunkPreviewText(chunk: RagChunk): string {
   const fromPreview = chunk.preview?.trim();
   if (fromPreview) {
@@ -1321,7 +1345,13 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       startedAt: toTs(first.created_at) ?? 0,
       lastAt: toTs(latest.created_at) ?? 0,
       status: String(latest.status || "нет данных"),
-      query: pickText(detailsPool, ["user_input", "query_preview", "query", "prompt", "query_text"]),
+      query: pickText(detailsPool, [
+        "user_input",
+        "query",
+        "prompt",
+        "query_text",
+        "query_preview",
+      ]),
       answer: extractRagAnswer(ordered, detailsPool),
       retrievedCount: pickNumber(detailsPool, ["retrieved_count"]),
       filteredCount,
@@ -1372,6 +1402,7 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       retrievalDedupeApplied: pickBool(detailsPool, ["retrieval_dedupe_applied"]),
       retrievedDuplicateCount: pickNumber(detailsPool, ["retrieved_duplicate_count"]),
       retrievalVectorHitsRaw: pickNumber(detailsPool, ["retrieval_vector_hits_raw"]),
+      retrievalReadyQuery: pickText(detailsPool, ["retrieval_ready_query"]),
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);

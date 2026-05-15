@@ -188,7 +188,7 @@ class MemoryObservabilityService:
                 if not row:
                     return None
                 msgs_raw = self._sessions.list_messages_for_session(
-                    conn, sid, limit=80
+                    conn, sid, limit=500
                 )
                 log_rows = self._logs.list_memory_events_for_session(
                     conn, session_id_str=str(sid), limit=40
@@ -208,7 +208,7 @@ class MemoryObservabilityService:
             recent_turns.append(
                 {
                     "role": role,
-                    "preview": _preview_text(str(m.get("content") or ""), 120),
+                    "preview": _preview_text(str(m.get("content") or ""), 4000),
                 }
             )
 
@@ -277,7 +277,7 @@ class MemoryObservabilityService:
             "updated_at": _iso_utc(row.get("updated_at")),
             "memory_source": self._memory_runtime_source(cfg),
             "messages_count": int(row.get("messages_count") or 0),
-            "recent_turns": recent_turns[-24:],
+            "recent_turns": recent_turns,
             "last_memory_load": last_load,
             "last_memory_append": last_append,
             "last_clear_event": last_clear,

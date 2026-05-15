@@ -171,6 +171,16 @@ export function routeLabelRu(route: string | null | undefined): string {
   return ROUTE_LABEL_RU[norm] ?? norm;
 }
 
+/**
+ * Logs list row shows `OperationalModalityBadge` (e.g. `doc` for document). When false, omit the
+ * duplicate uppercase route label beside the badge — keep status only (`doc УСПЕШНО`).
+ */
+export function showLogsRouteLabelBesideModalityBadge(
+  routeKey: string | null | undefined
+): boolean {
+  return normalizeRouteKey(routeKey) !== "document";
+}
+
 export function statusLabelRu(raw: string | null | undefined): string {
   if (!raw) return "—";
   return STATUS_RU[raw.trim().toLowerCase()] ?? raw;
