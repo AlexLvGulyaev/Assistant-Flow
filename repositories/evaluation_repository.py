@@ -277,4 +277,63 @@ class EvaluationRepository:
                 (Json(summary), run_id),
             )
 
+    def list_runs(
+        self,
+        conn: Connection,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        lim = max(1, min(int(limit), 200))
+        off = max(0, int(offset))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    r.*,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM evaluation_item ei
+                        WHERE ei.run_id = r.id
+                    ) AS item_count
+                FROM evaluation_run r
+                ORDER BY r.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (lim, off),
+            )
+            return list(cur.fetchall())
+
+    def get_item(self, conn: Connection, *, item_id: uuid.UUID) -> dict[str, Any] | None:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM evaluation_item WHERE id = %s", (item_id,))
+            return cur.fetchone()
+
+    def get_dataset_item(
+        self, conn: Connection, *, dataset_item_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM evaluation_dataset_item WHERE id = %s",
+                (dataset_item_id,),
+            )
+            return cur.fetchone()
+
+    def patch_dataset_item_metadata(
+        self,
+        conn: Connection,
+        *,
+        dataset_item_id: uuid.UUID,
+        metadata_patch: dict[str, Any],
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE evaluation_dataset_item
+                SET metadata = metadata || %s::jsonb
+                WHERE id = %s
+                """,
+                (Json(metadata_patch), dataset_item_id),
+            )
+
 

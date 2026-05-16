@@ -56,3 +56,4 @@ legacy/PEr*_source/.git/
 storage/assets/
 legacy/
 .cursor/
+cursor_tasks_local/

@@ -685,3 +685,198 @@ export async function fetchMemorySessionDetail(
   }
   return parseJson<MemorySessionDetailResponse>(res);
 }
+
+/* --- Evaluation / RAGAS console --- */
+
+export interface RagTurnListItem {
+  execution_id: string;
+  created_at?: string | null;
+  query?: string | null;
+  answer_preview?: string | null;
+  backend?: string | null;
+  top_k?: number | null;
+  retrieved_count?: number | null;
+  fallback_reason?: string | null;
+  token_usage?: Record<string, unknown> | null;
+  latency_ms?: number | null;
+  has_ragas_metrics?: boolean;
+  status?: string;
+}
+
+export interface RagTurnsListResponse {
+  limit?: number;
+  since_hours?: number;
+  count?: number;
+  items?: RagTurnListItem[];
+}
+
+export interface RagTurnDetailResponse {
+  execution_id: string;
+  query?: string;
+  answer?: string | null;
+  retrieval_diag?: Record<string, unknown>;
+  generation_diag?: Record<string, unknown>;
+  retrieved_chunks?: unknown[];
+  metadata?: Record<string, unknown>;
+  has_ragas_metrics?: boolean;
+  latency_ms_total?: number | null;
+  error?: string;
+}
+
+export interface EvaluationRunListItem {
+  id: string;
+  name?: string | null;
+  status?: string;
+  created_at?: string | null;
+  item_count?: number;
+  import_mode?: string | null;
+  source_execution_ids?: string[] | null;
+  ragas?: Record<string, unknown> | null;
+}
+
+export interface EvaluationRunsListResponse {
+  limit?: number;
+  offset?: number;
+  count?: number;
+  items?: EvaluationRunListItem[];
+}
+
+export interface EvaluationItemMetric {
+  numeric?: number | null;
+  json?: Record<string, unknown>;
+}
+
+export interface EvaluationRunItem {
+  id: string;
+  ordinal?: number;
+  query?: string;
+  answer?: string | null;
+  status?: string;
+  retrieval_diag?: Record<string, unknown>;
+  generation_diag?: Record<string, unknown>;
+  retrieved_chunks?: unknown[];
+  latency_ms_total?: number | null;
+  execution_id?: string | null;
+  ground_truth?: string | null;
+  question_type?: string | null;
+  metrics?: Record<string, EvaluationItemMetric>;
+}
+
+export interface EvaluationRunDetailResponse extends EvaluationRunListItem {
+  items?: EvaluationRunItem[];
+  run_summary?: Record<string, unknown>;
+  config_snapshot?: Record<string, unknown>;
+}
+
+export async function fetchEvaluationRagTurns(opts?: {
+  limit?: number;
+  sinceHours?: number;
+  fallback?: string;
+  hasRagasMetrics?: boolean;
+  search?: string;
+}): Promise<RagTurnsListResponse> {
+  const q = new URLSearchParams({ limit: String(opts?.limit ?? 50) });
+  if (opts?.sinceHours != null) q.set("since_hours", String(opts.sinceHours));
+  if (opts?.fallback) q.set("fallback", opts.fallback);
+  if (opts?.hasRagasMetrics != null) {
+    q.set("has_ragas_metrics", String(opts.hasRagasMetrics));
+  }
+  if (opts?.search?.trim()) q.set("search", opts.search.trim());
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/evaluation/rag-turns?${q.toString()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Evaluation RAG turns: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<RagTurnsListResponse>(res);
+}
+
+export async function fetchEvaluationRagTurnDetail(
+  executionId: string
+): Promise<RagTurnDetailResponse> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/evaluation/rag-turns/${encodeURIComponent(executionId)}`
+  );
+  if (!res.ok) {
+    throw new Error(`RAG turn detail: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<RagTurnDetailResponse>(res);
+}
+
+export async function postEvaluationImport(body: {
+  execution_ids: string[];
+  dataset?: string;
+  run_name?: string;
+}): Promise<{ run_id: string; imported_count: number }> {
+  const res = await fetch(`${getApiBaseUrl()}/api/evaluation/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Evaluation import: ${res.status} ${t.slice(0, 200)}`);
+  }
+  return parseJson<{ run_id: string; imported_count: number }>(res);
+}
+
+export async function postEvaluationRagasRun(
+  runId: string
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${getApiBaseUrl()}/api/evaluation/ragas/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`RAGAS run: ${res.status} ${t.slice(0, 300)}`);
+  }
+  return parseJson<Record<string, unknown>>(res);
+}
+
+export async function fetchEvaluationRuns(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<EvaluationRunsListResponse> {
+  const q = new URLSearchParams({ limit: String(opts?.limit ?? 50) });
+  if (opts?.offset != null) q.set("offset", String(opts.offset));
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/evaluation/runs?${q.toString()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Evaluation runs: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<EvaluationRunsListResponse>(res);
+}
+
+export async function fetchEvaluationRunDetail(
+  runId: string
+): Promise<EvaluationRunDetailResponse> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/evaluation/runs/${encodeURIComponent(runId)}`
+  );
+  if (!res.ok) {
+    throw new Error(`Evaluation run: ${res.status} ${res.statusText}`);
+  }
+  return parseJson<EvaluationRunDetailResponse>(res);
+}
+
+export async function patchEvaluationItem(
+  itemId: string,
+  body: { ground_truth?: string; notes?: string; manual_score?: number }
+): Promise<{ item?: EvaluationRunItem; run_id?: string }> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/evaluation/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Patch item: ${res.status} ${t.slice(0, 200)}`);
+  }
+  return parseJson<{ item?: EvaluationRunItem; run_id?: string }>(res);
+}

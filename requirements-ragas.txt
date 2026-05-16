@@ -1,0 +1,6 @@
+# Optional: offline RAGAS evaluation (scripts/evaluation_ragas.py).
+# Install inside portfolio container when needed:
+#   pip install -r requirements-ragas.txt
+ragas>=0.1.9,<0.3
+datasets>=2.14.0
+# langchain-openai already in main requirements.txt

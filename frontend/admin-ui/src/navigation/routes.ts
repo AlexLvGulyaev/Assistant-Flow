@@ -20,4 +20,5 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/retrieval", label: "Retrieval Settings" },
   { path: "/logs", label: "Логи" },
   { path: "/memory", label: "Memory" },
+  { path: "/evaluation", label: "Evaluation" },
 ];

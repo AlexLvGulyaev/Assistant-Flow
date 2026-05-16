@@ -58,12 +58,7 @@ def build_rag_query_service_for_eval(config: AppConfig) -> RagQueryService:
     return RagQueryService(manager, chat, config, tuning_resolver=tuning)
 
 
-def diagnostics_to_blobs(
-    result: RagQueryResult, *, wall_ms: int
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split diagnostics into retrieval-heavy vs generation/token fields for JSONB columns."""
-    d = result.diagnostics.to_log_details() if result.diagnostics is not None else {}
-    retrieval_keys = (
+_RETRIEVAL_DIAG_KEYS = (
         "query_preview",
         "top_k",
         "retrieved_count",
@@ -91,8 +86,9 @@ def diagnostics_to_blobs(
         "retrieval_vector_hits_raw",
         "retrieval_ready_query",
         "best_distance",
-    )
-    gen_keys = (
+)
+
+_GENERATION_DIAG_KEYS = (
         "llm_latency_ms",
         "rag_pipeline_wall_ms",
         "llm_provider",
@@ -100,10 +96,35 @@ def diagnostics_to_blobs(
         "input_tokens",
         "output_tokens",
         "total_tokens",
-    )
-    ret: dict[str, Any] = {k: d[k] for k in retrieval_keys if k in d}
-    gen: dict[str, Any] = {k: d[k] for k in gen_keys if k in d}
-    gen["wall_ms_client"] = int(wall_ms)
+)
+
+
+def split_log_details_to_blobs(
+    details: dict[str, Any], *, wall_ms: int | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split ``processing_logs.details`` (RAG) into evaluation_item JSONB columns."""
+    skip = frozenset({"user_input", "answer_text", "route", "downstream_route", "mode"})
+    ret: dict[str, Any] = {
+        k: details[k] for k in _RETRIEVAL_DIAG_KEYS if k in details and k not in skip
+    }
+    gen: dict[str, Any] = {k: details[k] for k in _GENERATION_DIAG_KEYS if k in details}
+    if wall_ms is not None:
+        gen["wall_ms_client"] = int(wall_ms)
+    rpm = details.get("rag_pipeline_wall_ms")
+    if rpm is not None and "rag_pipeline_wall_ms_diag" not in gen:
+        try:
+            gen["rag_pipeline_wall_ms_diag"] = int(rpm)
+        except (TypeError, ValueError):
+            pass
+    return ret, gen
+
+
+def diagnostics_to_blobs(
+    result: RagQueryResult, *, wall_ms: int
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split diagnostics into retrieval-heavy vs generation/token fields for JSONB columns."""
+    d = result.diagnostics.to_log_details() if result.diagnostics is not None else {}
+    ret, gen = split_log_details_to_blobs(d, wall_ms=wall_ms)
     if result.diagnostics is not None and result.diagnostics.rag_pipeline_wall_ms is not None:
         gen["rag_pipeline_wall_ms_diag"] = int(result.diagnostics.rag_pipeline_wall_ms)
     return ret, gen

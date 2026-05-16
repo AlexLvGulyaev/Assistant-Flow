@@ -5,6 +5,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { ExitPage } from "./pages/ExitPage";
 import { ImagesPage } from "./pages/ImagesPage";
 import { LogsPage } from "./pages/LogsPage";
+import { EvaluationPage } from "./pages/EvaluationPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RagPage } from "./pages/RagPage";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="retrieval" element={<RetrievalSettingsPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="memory" element={<MemoryPage />} />
+        <Route path="evaluation" element={<EvaluationPage />} />
       </Route>
     </Routes>
   );

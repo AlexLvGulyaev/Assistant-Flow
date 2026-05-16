@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { fetchOverview, fetchRecentLogs, type LogItem, type RetrievalPlatformCompact } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
+import { OperationalRetrievalChunksSection } from "../components/OperationalRetrievalChunksSection";
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
+import { chunkFromRagSessionChunk } from "../utils/retrievalChunks";
 import { StatusBadge } from "../components/StatusBadge";
 import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
 import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
@@ -51,27 +52,6 @@ function telemetryGapText(kind: TelemetryGapKind): string {
 
 function TelemetryGap({ kind }: { kind: TelemetryGapKind }) {
   return <span className="telemetry-gap muted">{telemetryGapText(kind)}</span>;
-}
-
-function resolvedChunkBackendId(
-  chunk: RagChunk,
-  session: RagSession | null,
-  platform: RetrievalPlatformCompact | null
-): string {
-  const a = (chunk.backend || "").trim().toLowerCase();
-  if (a) return a;
-  const b = (session?.activeBackend || "").trim().toLowerCase();
-  if (b) return b;
-  return (platform?.effective_backend || "").trim().toLowerCase();
-}
-
-function displayChunkBackendTitle(
-  chunk: RagChunk,
-  session: RagSession | null,
-  platform: RetrievalPlatformCompact | null
-): string {
-  const id = resolvedChunkBackendId(chunk, session, platform);
-  return formatRetrievalBackendTitle(id || undefined);
 }
 
 interface RagChunk {
@@ -153,12 +133,6 @@ export function RagPage() {
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pendingListFocusRef = useRef(false);
-  const [chunkFullTextModal, setChunkFullTextModal] = useState<{
-    chunk: RagChunk;
-    displayIndex: number;
-    relevanceLabel: string;
-    backendTitle: string;
-  } | null>(null);
 
   const fetchLimit = LOG_LIMIT_BY_WINDOW[windowLabel] ?? LOG_LIMIT_BY_WINDOW["24h"];
   const sinceHours = windowLabel === "48h" ? 48 : windowLabel === "7d" ? 24 * 7 : 24;
@@ -195,19 +169,6 @@ export function RagPage() {
       cancelled = true;
     };
   }, [fetchLimit, sinceHours, refreshNonce]);
-
-  useEffect(() => {
-    setChunkFullTextModal(null);
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!chunkFullTextModal) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setChunkFullTextModal(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [chunkFullTextModal]);
 
   const sessions = useMemo(() => buildRagSessions(items), [items]);
   const fallbackOptions = useMemo(
@@ -897,93 +858,35 @@ export function RagPage() {
                   </div>
                 </div>
 
-                <section className="rag-chunks-primary" aria-label="Найденные чанки">
-                  <h3 className="logs-timeline-heading rag-chunks-primary__title">Найденные чанки</h3>
-                  {selected.retrievalDedupeApplied === true ? (
-                    <p className="muted rag-chunks-primary__dedupe-note" style={{ fontSize: "0.78rem", margin: "0 0 0.45rem" }}>
-                      Дедупликация retrieval: удалено повторов —{" "}
-                      <span className="mono">{selected.retrievedDuplicateCount ?? "—"}</span>
-                      {selected.retrievalVectorHitsRaw != null ? (
-                        <>
-                          {" "}
-                          (всего попаданий до дедупа:{" "}
-                          <span className="mono">{selected.retrievalVectorHitsRaw}</span>)
-                        </>
-                      ) : null}
-                    </p>
-                  ) : null}
-                  {selected.chunks.length === 0 ? (
-                    <div className="panel panel--muted rag-chunks-empty">
-                      Чанки не переданы в логах или retrieval пустой.
-                    </div>
-                  ) : (
-                    selected.chunks.map((chunk, i) => {
-                      const idx = chunk.chunkIndex ?? i;
-                      return (
-                        <article key={`${chunk.source}-${i}`} className="rag-chunk-card">
-                          <header className="rag-chunk-card__header">
-                            <div className="rag-chunk-card__meta-row">
-                              <div className="rag-chunk-card__meta-left mono">
-                                <span className="rag-chunk-card__filename" title={chunk.source}>
-                                  {chunk.source || "неизвестный файл"}
-                                </span>
-                                <span className="rag-chunk-card__chunk-no">#{idx}</span>
-                                <span className="rag-chunk-card__distance">
-                                  {chunk.distance != null ? (
-                                    <span title="Score / distance (семантика зависит от backend)">
-                                      {chunk.distance.toFixed(4)}
-                                    </span>
-                                  ) : (
-                                    <span className="muted">—</span>
-                                  )}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                className="rag-chunk-card__fulltext-cta"
-                                onClick={() =>
-                                  setChunkFullTextModal({
-                                    chunk,
-                                    displayIndex: idx,
-                                    relevanceLabel: relevanceLabel(chunk, selected.relevanceThreshold),
-                                    backendTitle: displayChunkBackendTitle(
-                                      chunk,
-                                      selected,
-                                      retrievalPlatform
-                                    ),
-                                  })
-                                }
-                              >
-                                показать полный текст
-                              </button>
-                              <div className="rag-chunk-card__meta-right">
-                                <span className="rag-chunk-card__relevance">
-                                  {relevanceLabel(chunk, selected.relevanceThreshold)}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="muted rag-chunk-card__backend-line" style={{ fontSize: "0.8rem", margin: "0.2rem 0 0" }}>
-                              Backend:{" "}
-                              <strong className="rag-chunk-card__backend-name">
-                                {displayChunkBackendTitle(chunk, selected, retrievalPlatform)}
-                              </strong>
-                              {" · "}
-                              Источник: <span className="mono">{chunk.source || "—"}</span>
-                              {" · "}
-                              Score:{" "}
-                              {chunk.distance != null && Number.isFinite(chunk.distance)
-                                ? chunk.distance.toFixed(4)
-                                : "—"}
-                            </p>
-                          </header>
-                          <div className="rag-chunk-card__body">
-                            <p className="rag-chunk-card__preview mono">{chunkPreviewText(chunk)}</p>
-                          </div>
-                        </article>
-                      );
-                    })
-                  )}
-                </section>
+                <OperationalRetrievalChunksSection
+                  chunks={selected.chunks.map((c) => chunkFromRagSessionChunk(c))}
+                  relevanceThreshold={selected.relevanceThreshold}
+                  getBackendTitle={(chunk) => {
+                    const id =
+                      (chunk.backend || "").trim().toLowerCase() ||
+                      (selected.activeBackend || "").trim().toLowerCase() ||
+                      (retrievalPlatform?.effective_backend || "").trim().toLowerCase();
+                    return formatRetrievalBackendTitle(id || undefined);
+                  }}
+                  dedupeNote={
+                    selected.retrievalDedupeApplied === true ? (
+                      <p
+                        className="muted rag-chunks-primary__dedupe-note"
+                        style={{ fontSize: "0.78rem", margin: "0 0 0.45rem" }}
+                      >
+                        Дедупликация retrieval: удалено повторов —{" "}
+                        <span className="mono">{selected.retrievedDuplicateCount ?? "—"}</span>
+                        {selected.retrievalVectorHitsRaw != null ? (
+                          <>
+                            {" "}
+                            (всего попаданий до дедупа:{" "}
+                            <span className="mono">{selected.retrievalVectorHitsRaw}</span>)
+                          </>
+                        ) : null}
+                      </p>
+                    ) : undefined
+                  }
+                />
 
                 <details className="rag-diagnostics-fold page__mt">
                   <summary className="rag-diagnostics-fold__summary">
@@ -1036,18 +939,6 @@ export function RagPage() {
                   body={JSON.stringify(selected.rows, null, 2)}
                 />
                 </div>
-                {typeof document !== "undefined" && chunkFullTextModal
-                  ? createPortal(
-                      <RagChunkFullTextModal
-                        chunk={chunkFullTextModal.chunk}
-                        displayIndex={chunkFullTextModal.displayIndex}
-                        relevanceLabel={chunkFullTextModal.relevanceLabel}
-                        backendTitle={chunkFullTextModal.backendTitle}
-                        onClose={() => setChunkFullTextModal(null)}
-                      />,
-                      document.body,
-                    )
-                  : null}
               </>
             )}
           </section>
@@ -1188,74 +1079,6 @@ function OpsRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function RagChunkFullTextModal({
-  chunk,
-  displayIndex,
-  relevanceLabel,
-  backendTitle,
-  onClose,
-}: {
-  chunk: RagChunk;
-  displayIndex: number;
-  relevanceLabel: string;
-  backendTitle: string;
-  onClose: () => void;
-}) {
-  const full = chunk.fullText?.trim()
-    ? chunk.fullText
-    : "Текст чанка не передан в логах.";
-  return (
-    <div className="rag-chunk-modal-backdrop" role="presentation" onClick={onClose}>
-      <div
-        className="rag-chunk-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="rag-chunk-modal-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="rag-chunk-modal__head">
-          <h2 id="rag-chunk-modal-title" className="rag-chunk-modal__title">
-            Полный текст чанка
-          </h2>
-          <button
-            type="button"
-            className="rag-chunk-modal__close"
-            onClick={onClose}
-            aria-label="Закрыть"
-          >
-            ×
-          </button>
-        </div>
-        <dl className="kv rag-chunk-modal__meta modality-ops-panel__kv">
-          <OpsRow label="Backend" value={<span className="mono">{backendTitle}</span>} />
-          <OpsRow
-            label="Файл"
-            value={<span className="mono break-all">{chunk.source || "неизвестный файл"}</span>}
-          />
-          <OpsRow label="Индекс чанка" value={<span className="mono">#{displayIndex}</span>} />
-          <OpsRow
-            label="distance"
-            value={
-              chunk.distance != null && Number.isFinite(chunk.distance) ? (
-                <span className="mono">{chunk.distance.toFixed(4)}</span>
-              ) : (
-                <TelemetryGap kind="log" />
-              )
-            }
-          />
-          <OpsRow label="Релевантность" value={relevanceLabel} />
-        </dl>
-        <pre className="mono rag-chunk-modal__body">{full}</pre>
-        <div className="rag-chunk-modal__foot">
-          <button type="button" className="rag-chunk-modal__done" onClick={onClose}>
-            Закрыть
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function pickSessionLatencyMs(detailsPool: Record<string, unknown>[]): number | null {
   let best: number | null = null;
   for (const d of detailsPool) {
@@ -1278,20 +1101,6 @@ function retrievalReadyQueryDisclosure(session: RagSession): boolean {
   const shown = collapseComparableQueryText(session.query);
   if (!shown) return true;
   return collapseComparableQueryText(rq) !== shown;
-}
-
-function chunkPreviewText(chunk: RagChunk): string {
-  const fromPreview = chunk.preview?.trim();
-  if (fromPreview) {
-    const clipped = clipText(fromPreview, CHUNK_PREVIEW_CHARS);
-    return clipped ?? fromPreview;
-  }
-  const ft = chunk.fullText?.trim();
-  if (ft) {
-    const clipped = clipText(ft, CHUNK_PREVIEW_CHARS);
-    return clipped ?? ft.slice(0, CHUNK_PREVIEW_CHARS);
-  }
-  return "Текст превью в логах не передан.";
 }
 
 function buildRagSessions(rows: LogItem[]): RagSession[] {

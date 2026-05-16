@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from admin_api.routes.evaluation import router as evaluation_router
 from admin_api.routes.assets import router as assets_router
 from admin_api.routes.documents import router as documents_router
 from admin_api.routes.health import router as health_router
@@ -60,6 +61,7 @@ def create_admin_api_app() -> FastAPI:
     application.include_router(memory_router)
     application.include_router(assets_router)
     application.include_router(documents_router)
+    application.include_router(evaluation_router)
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(
