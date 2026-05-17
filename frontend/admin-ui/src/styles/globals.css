@@ -5271,7 +5271,7 @@ code {
 .evaluation-page .eval-detail-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 0.62rem 0.72rem 0.75rem;
   scrollbar-gutter: stable;
 }
@@ -5326,14 +5326,8 @@ code {
   margin: 0.25rem 0 0;
 }
 
-.evaluation-page .eval-source-ids {
-  font-size: 0.72rem;
-  margin: 0.2rem 0 0;
-  word-break: break-all;
-}
-
 .evaluation-page .eval-top-panels--compact.modality-ops-panels {
-  max-height: min(26vh, 230px);
+  max-height: min(24vh, 208px);
 }
 
 .evaluation-page .eval-run-workspace {
@@ -5342,6 +5336,7 @@ code {
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 0.55rem;
   min-height: 0;
+  height: calc(100% - 0.22rem);
 }
 
 .evaluation-page .eval-item-nav-panel {
@@ -5349,6 +5344,7 @@ code {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.015);
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -5472,16 +5468,24 @@ code {
 
 .evaluation-page .eval-item-forensic-zone {
   min-height: 0;
+  height: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.015);
   padding: 0.42rem;
+  overflow: auto;
 }
 
 .evaluation-page .eval-item-forensic-panel {
   display: flex;
   flex-direction: column;
   gap: 0.42rem;
+  min-height: min-content;
+}
+
+.evaluation-page .eval-run-name-input {
+  flex: 1 1 19rem;
+  min-width: 16rem;
 }
 
 .evaluation-page .eval-item-identity {
@@ -5562,12 +5566,18 @@ code {
 }
 
 @media (max-width: 900px) {
+  .evaluation-page .eval-detail-scroll {
+    overflow: auto;
+  }
+
   .evaluation-page .eval-run-workspace {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .evaluation-page .eval-item-nav-panel {
     max-height: 32vh;
+    height: auto;
   }
 
   .evaluation-page .eval-answer-compare-grid {

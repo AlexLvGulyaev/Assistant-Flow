@@ -60,7 +60,7 @@ function metricVal(
   if (m.numeric != null && !Number.isNaN(Number(m.numeric))) {
     return Number(m.numeric).toFixed(3);
   }
-  if (m.json?.status === "not_collected") return "not collected";
+  if (m.json?.status === "not_collected") return "не оценено";
   return "—";
 }
 
@@ -139,7 +139,7 @@ function RagTurnRow({
           className="eval-checkbox"
           checked={checked}
           onChange={onToggle}
-          aria-label="Выбрать turn"
+          aria-label="Выбрать сессию"
         />
       </span>
       <span className="logs-item__row logs-item__row--tight">
@@ -158,7 +158,7 @@ function RagTurnRow({
           {[
             `k=${row.top_k ?? "—"}`,
             `ret=${row.retrieved_count ?? "—"}`,
-            row.has_ragas_metrics ? "RAGAS: yes" : null,
+            row.has_ragas_metrics ? "RAGAS: да" : null,
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -188,7 +188,7 @@ function RunRow({
       <span className="logs-item__main">
         <span className="logs-item__title">{row.name || shortId(row.id)}</span>
         <span className="logs-item__meta muted">
-          {formatTimestampMsk(row.created_at)} · items={row.item_count ?? 0} ·{" "}
+          {formatTimestampMsk(row.created_at)} · RAG-сессий={row.item_count ?? 0} ·{" "}
           {row.import_mode || "—"}
         </span>
       </span>
@@ -240,7 +240,7 @@ function TurnDetailPanel({
   return (
     <div className="logs-detail rag-modality-detail eval-detail-scroll">
       <div className="modality-card__head">
-        <h2 className="modality-card__title">RAG turn</h2>
+        <h2 className="modality-card__title">RAG-сессия</h2>
         <div className="eval-detail-head__badges">
           {fallback ? <StatusBadge status={fallback === "none" ? "ok" : "warning"} /> : null}
           <StatusBadge status={detail.has_ragas_metrics ? "ok" : "—"} />
@@ -259,13 +259,13 @@ function TurnDetailPanel({
                 label="execution_id"
                 value={<span className="mono">{detail.execution_id}</span>}
               />
-              <OpsRow label="backend" value={backend} />
+              <OpsRow label="Backend" value={backend} />
               <OpsRow label="top_k" value={String(topK ?? "—")} />
               <OpsRow
-                label="latency_ms"
+                label="Задержка, мс"
                 value={String(detail.latency_ms_total ?? gd.rag_pipeline_wall_ms ?? "—")}
               />
-              <OpsRow label="tokens" value={tokens != null ? String(tokens) : "—"} />
+              <OpsRow label="Токены" value={tokens != null ? String(tokens) : "—"} />
             </dl>
           </div>
         </div>
@@ -273,13 +273,13 @@ function TurnDetailPanel({
           <div className="modality-ops-panel">
             <div className="modality-ops-panel__name">Retrieval</div>
             <dl className="kv modality-ops-panel__kv">
-              <OpsRow label="retrieved_count" value={String(retrieved ?? "—")} />
+              <OpsRow label="Найдено чанков" value={String(retrieved ?? "—")} />
               <OpsRow
-                label="fallback_reason"
+                label="Причина fallback"
                 value={fallback || "—"}
               />
               <OpsRow
-                label="unique_sources"
+                label="Уникальных источников"
                 value={String(uniqueSources ?? "—")}
               />
             </dl>
@@ -288,8 +288,8 @@ function TurnDetailPanel({
             <div className="modality-ops-panel__name">RAGAS</div>
             <dl className="kv modality-ops-panel__kv">
               <OpsRow
-                label="scored"
-                value={detail.has_ragas_metrics ? "да" : "not scored"}
+                label="Оценка выполнена"
+                value={detail.has_ragas_metrics ? "Да" : "Нет"}
               />
             </dl>
           </div>
@@ -376,11 +376,11 @@ function RunItemNavRow({
       <div className="eval-item-nav-row__head">
         <span className="mono eval-item-nav-row__ordinal">#{item.ordinal ?? "—"}</span>
         <StatusBadge status={item.status || "—"} />
-        {hasWarning ? <span className="eval-item-nav-row__warn">attention</span> : null}
+        {hasWarning ? <span className="eval-item-nav-row__warn">внимание</span> : null}
       </div>
       <p className="eval-item-nav-row__query">{item.query?.slice(0, 140) || "—"}</p>
       <div className="eval-item-nav-row__meta muted">
-        <span>{missingGroundTruth ? "ground_truth: missing" : "ground_truth: ready"}</span>
+        <span>{missingGroundTruth ? "эталон: не задан" : "эталон: задан"}</span>
         <span className="mono">{shortId(item.execution_id || undefined, 12)}</span>
       </div>
       <div className="eval-item-nav-row__chips">
@@ -478,9 +478,9 @@ function SelectedItemForensicPanel({
     <div className="eval-item-forensic-panel">
       <div className="eval-item-identity">
         <div className="eval-item-identity__left">
-          <span className="mono">Item #{item.ordinal ?? "—"}</span>
+          <span className="mono">RAG-сессия #{item.ordinal ?? "—"}</span>
           <StatusBadge status={item.status || "—"} />
-          {!gt.trim() ? <span className="eval-item-nav-row__warn">ground_truth missing</span> : null}
+          {!gt.trim() ? <span className="eval-item-nav-row__warn">эталон не задан</span> : null}
         </div>
         <p className="eval-item-identity__meta muted mono">
           {shortId(item.execution_id || undefined, 14)} · latency={item.latency_ms_total ?? "—"}ms ·
@@ -489,19 +489,19 @@ function SelectedItemForensicPanel({
       </div>
 
       <section className="logs-detail-block">
-        <h3 className="logs-detail-block__title">Question</h3>
+        <h3 className="logs-detail-block__title">Что спросил пользователь</h3>
         <pre className="logs-pre logs-pre--compact mono">{item.query || "—"}</pre>
       </section>
 
       <div className="eval-answer-compare-grid">
         <section className="logs-detail-block">
-          <h3 className="logs-detail-block__title">Generated answer</h3>
+          <h3 className="logs-detail-block__title">Что ответила система</h3>
           <pre className="logs-pre logs-pre--compact mono">{item.answer || "—"}</pre>
           {fallback ? <p className="muted eval-item-fallback">fallback_reason: {fallback}</p> : null}
         </section>
 
         <section className="logs-detail-block">
-          <h3 className="logs-detail-block__title">Ground truth / Manual judgement</h3>
+          <h3 className="logs-detail-block__title">Эталон / ручная оценка</h3>
           <textarea
             className="logs-search eval-item-edit__textarea"
             rows={4}
@@ -514,13 +514,13 @@ function SelectedItemForensicPanel({
               className="logs-search eval-item-edit__input"
               value={score}
               onChange={(e) => setScore(e.target.value)}
-              placeholder="manual 0 / 0.5 / 1"
+              placeholder="ручная 0 / 0.5 / 1"
             />
             <input
               className="logs-search eval-item-edit__input eval-item-edit__input--wide"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="notes"
+              placeholder="заметки"
             />
             <button
               type="button"
@@ -536,7 +536,7 @@ function SelectedItemForensicPanel({
       </div>
 
       <section className="logs-detail-block">
-        <h3 className="logs-detail-block__title">Metrics</h3>
+        <h3 className="logs-detail-block__title">Метрики</h3>
         <div className="eval-item-nav-row__chips">
           <EvaluationMetricChip
             label="faithfulness"
@@ -562,13 +562,13 @@ function SelectedItemForensicPanel({
       </section>
 
       <OperationalRetrievalChunksSection
-        title={`Retrieval chunks (${sharedChunks.length})`}
+        title={`Найденные чанки (${sharedChunks.length})`}
         chunks={sharedChunks}
         relevanceThreshold={relevanceThreshold}
         getBackendTitle={(chunk) =>
           formatRetrievalBackendTitle(chunk.backend || backend || undefined)
         }
-        emptyMessage="Чанки не найдены для выбранного item."
+        emptyMessage="Чанки не найдены для выбранной RAG-сессии."
       />
 
       <SessionJsonSnapshot
@@ -608,7 +608,6 @@ function RunDetailPanel({
   const runMeans = (ragasBlock?.run_means || {}) as Record<string, number | null>;
   const unavailable = (ragasBlock?.unavailable_metrics || []) as string[];
   const snap = run.config_snapshot ?? {};
-  const execIds = (snap.execution_ids || run.source_execution_ids || []) as string[];
 
   useEffect(() => {
     setSelectedItemId((prev) => {
@@ -626,7 +625,9 @@ function RunDetailPanel({
     <div className="logs-detail rag-modality-detail eval-detail-scroll">
       <div className="modality-card__head eval-run-head">
         <div>
-          <h2 className="modality-card__title">{run.name || shortId(run.id)}</h2>
+          <h2 className="modality-card__title">
+            Анализ набора: {run.name || shortId(run.id)}
+          </h2>
           <p className="eval-detail-head__sub muted mono">
             {shortId(run.id, 14)} · {formatTimestampMsk(run.created_at)}
           </p>
@@ -638,7 +639,7 @@ function RunDetailPanel({
             disabled={ragasBusy || run.status !== "completed"}
             onClick={onRunRagas}
           >
-            {ragasBusy ? "RAGAS…" : "Run RAGAS"}
+            {ragasBusy ? "RAGAS…" : "Запустить RAGAS"}
           </button>
           <OperationalRefreshButton loading={ragasBusy} onClick={onRefreshRun} />
           <StatusBadge status={run.status || "—"} />
@@ -648,13 +649,15 @@ function RunDetailPanel({
       <div className="modality-ops-panels modality-ops-panels--rag-split modality-ops-panels--eval-top eval-top-panels eval-top-panels--compact">
         <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--stack">
           <div className="modality-ops-panel">
-            <div className="modality-ops-panel__name">Run</div>
+            <div className="modality-ops-panel__name">Параметры запуска</div>
             <dl className="kv modality-ops-panel__kv">
-              <OpsRow label="items" value={String(run.item_count ?? items.length)} />
-              <OpsRow label="import_mode" value={String(run.import_mode || snap.import_mode || "—")} />
-              <OpsRow label="dataset" value={String(snap.dataset_slug || "—")} />
-              <OpsRow label="backend" value={String(snap.backend || "—")} />
-              <OpsRow label="top_k" value={String(snap.top_k ?? "—")} />
+              <OpsRow label="RAG-сессий" value={String(run.item_count ?? items.length)} />
+              <OpsRow
+                label="Режим импорта"
+                value={String(run.import_mode || snap.import_mode || "—")}
+              />
+              <OpsRow label="Набор" value={String(snap.dataset_slug || "—")} />
+              <OpsRow label="top_k retrieval" value={String(snap.top_k ?? "—")} />
             </dl>
           </div>
         </div>
@@ -662,7 +665,7 @@ function RunDetailPanel({
           <div className="modality-ops-panel">
             <div className="modality-ops-panel__name">RAGAS summary</div>
             <dl className="kv modality-ops-panel__kv">
-              <OpsRow label="status" value={String(ragasBlock?.status ?? "—")} />
+              <OpsRow label="Статус" value={String(ragasBlock?.status ?? "—")} />
               <OpsRow
                 label="faithfulness"
                 value={String(runMeans["ragas.faithfulness"] ?? "null")}
@@ -678,18 +681,9 @@ function RunDetailPanel({
             </dl>
             {unavailable.length ? (
               <p className="muted eval-ragas-unavail">
-                unavailable: {unavailable.join(", ")}
+                недоступны: {unavailable.join(", ")}
               </p>
             ) : null}
-          </div>
-          <div className="modality-ops-panel">
-            <div className="modality-ops-panel__name">Source</div>
-            <p className="mono eval-source-ids muted">
-              {(execIds as string[]).slice(0, 3).map((id) => shortId(id, 12)).join(", ")}
-              {(execIds as string[]).length > 3
-                ? ` +${(execIds as string[]).length - 3}`
-                : ""}
-            </p>
           </div>
         </div>
       </div>
@@ -697,7 +691,7 @@ function RunDetailPanel({
       <div className="eval-run-workspace">
         <aside className="eval-item-nav-panel">
           <div className="eval-item-nav-panel__head">
-            <h3 className="logs-timeline-heading">Items</h3>
+            <h3 className="logs-timeline-heading">RAG-сессии</h3>
             <span className="muted mono">{items.length}</span>
           </div>
           <div className="eval-item-nav-list">
@@ -717,8 +711,8 @@ function RunDetailPanel({
             <SelectedItemForensicPanel item={selectedItem} onSaved={onRefreshRun} />
           ) : (
             <EmptyState
-              title="Нет item для анализа"
-              message="Выберите run с импортированными item."
+              title="Нет RAG-сессии для анализа"
+              message="Выберите набор с импортированными RAG-сессиями."
             />
           )}
         </section>
@@ -738,6 +732,7 @@ export function EvaluationPage() {
   const [error, setError] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [runNameInput, setRunNameInput] = useState("");
 
   const [turns, setTurns] = useState<RagTurnListItem[]>([]);
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
@@ -890,9 +885,9 @@ export function EvaluationPage() {
       const res = await postEvaluationImport({
         execution_ids: ids,
         dataset: "interactive_eval_ui",
-        run_name: `ui-${ids.length}-turns`,
+        run_name: runNameInput.trim() || `ui-${ids.length}-turns`,
       });
-      setImportMsg(`Imported → run ${shortId(res.run_id, 16)}`);
+      setImportMsg(`Импортировано → run ${shortId(res.run_id, 16)}`);
       setTab("runs");
       setSelectedRunId(res.run_id);
       setRefreshNonce((n) => n + 1);
@@ -962,27 +957,27 @@ export function EvaluationPage() {
       if (!turns.length) {
         return (
           <EmptyState
-            title="Нет RAG turns"
+            title="Нет RAG-сессий"
             message="За выбранное окно нет rag_answer_done в логах."
           />
         );
       }
       if (turnDetailLoading && !turnDetail) {
-        return <LoadingState label="Детали turn…" />;
+        return <LoadingState label="Детали сессии…" />;
       }
       if (turnDetail) {
         return <TurnDetailPanel detail={turnDetail} listRow={selectedTurnRow} />;
       }
-      return <LoadingState label="Детали turn…" />;
+      return <LoadingState label="Детали сессии…" />;
     }
     if (runDetailLoading && !runDetail) {
-      return <LoadingState label="Детали run…" />;
+      return <LoadingState label="Детали набора…" />;
     }
     if (!runs.length) {
       return (
         <EmptyState
-          title="Нет evaluation runs"
-          message="Импортируйте RAG turns с вкладки Recent."
+          title="Нет наборов анализа"
+          message="Импортируйте RAG-сессии с вкладки «Недавние RAG-сессии»."
         />
       );
     }
@@ -997,14 +992,14 @@ export function EvaluationPage() {
         />
       );
     }
-    return <LoadingState label="Детали run…" />;
+    return <LoadingState label="Детали набора…" />;
   })();
 
   return (
     <div className="page logs-page rag-page evaluation-page">
-      <h1 className="page__title">Evaluation / RAGAS</h1>
+      <h1 className="page__title">Анализ качества RAG</h1>
       <p className="page__lead muted">
-        Operational console: импорт RAG turns из логов · offline RAGAS · без CLI UUID workflow
+        Операционная диагностика retrieval и качества ответов
       </p>
 
       <div className="logs-quick-row eval-console-tabs">
@@ -1013,14 +1008,14 @@ export function EvaluationPage() {
           className={`logs-chip${tab === "turns" ? " logs-chip--active" : ""}`}
           onClick={() => setTab("turns")}
         >
-          Recent RAG turns
+          Недавние RAG-сессии
         </button>
         <button
           type="button"
           className={`logs-chip${tab === "runs" ? " logs-chip--active" : ""}`}
           onClick={() => setTab("runs")}
         >
-          Evaluation runs
+          Анализ
         </button>
       </div>
 
@@ -1055,7 +1050,7 @@ export function EvaluationPage() {
                     onChange={(e) => setFallbackFilter(e.target.value)}
                     aria-label="Fallback"
                   >
-                    <option value="all">все fallback</option>
+                    <option value="all">все fallback-режимы</option>
                     <option value="none">нет fallback</option>
                   </select>
                   <select
@@ -1064,7 +1059,7 @@ export function EvaluationPage() {
                     onChange={(e) => setHasMetricsFilter(e.target.value)}
                     aria-label="RAGAS scored"
                   >
-                    <option value="all">все RAGAS</option>
+                    <option value="all">все оценки</option>
                     <option value="yes">есть метрики</option>
                     <option value="no">нет метрик</option>
                   </select>
@@ -1077,13 +1072,21 @@ export function EvaluationPage() {
                   placeholder="Поиск: вопрос, ответ, execution_id…"
                 />
                 <div className="logs-quick-row eval-actions-row">
+                  <input
+                    className="logs-search eval-run-name-input"
+                    type="text"
+                    value={runNameInput}
+                    onChange={(e) => setRunNameInput(e.target.value)}
+                    placeholder="Имя набора анализа (например: Weaviate c1000 k5 baseline)"
+                    aria-label="Имя набора анализа"
+                  />
                   <button
                     type="button"
                     className="logs-page-btn"
                     disabled={importBusy || checkedTurns.size === 0}
                     onClick={importSelected}
                   >
-                    Import selected ({checkedTurns.size})
+                    Импорт выбранных ({checkedTurns.size})
                   </button>
                   <button
                     type="button"
@@ -1091,7 +1094,7 @@ export function EvaluationPage() {
                     disabled={importBusy || turns.length === 0}
                     onClick={() => importLastN(5)}
                   >
-                    Import last 5
+                    Импорт последних 5
                   </button>
                   <OperationalRefreshButton loading={loading} onClick={refresh} />
                 </div>
@@ -1112,7 +1115,7 @@ export function EvaluationPage() {
             />
             {tab === "turns" ? (
               <div className="logs-filter-meta muted eval-list-extra-meta">
-                <span>selected for import: {selectedCount}</span>
+                <span>выбрано для импорта: {selectedCount}</span>
               </div>
             ) : null}
           </div>
@@ -1126,8 +1129,8 @@ export function EvaluationPage() {
                 title="Нет данных"
                 message={
                   tab === "turns"
-                    ? "Нет RAG turns за выбранное окно"
-                    : "Нет evaluation runs"
+                    ? "Нет RAG-сессий за выбранное окно"
+                    : "Нет наборов анализа"
                 }
               />
             )}
