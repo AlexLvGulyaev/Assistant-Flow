@@ -1020,17 +1020,19 @@ class AdminService:
                 ),
             },
             "cache": {
-                "enable_retrieval_cache": c.enable_retrieval_cache,
+                "enable_retrieval_cache": eff.enable_retrieval_cache,
+                "enable_retrieval_cache_source": fs.get("enable_retrieval_cache", "env"),
                 "enable_answer_cache": c.enable_answer_cache,
                 "retrieval_cache_ttl_seconds": c.retrieval_cache_ttl_seconds,
                 "answer_cache_ttl_seconds": c.answer_cache_ttl_seconds,
                 "rag_retrieval_generation": (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip()
                 or None,
                 "cache_db_path": c.cache_db_path,
-                "rag_retrieval_generation_hint": (
-                    "Bump RAG_RETRIEVAL_GENERATION after corpus reindex when retrieval cache is enabled."
+                "editable_via_api": db_ok,
+                "apply_note": (
+                    "enable_retrieval_cache via PUT /api/retrieval/tuning; "
+                    "effective ~2.5s (backend wrapper rebuild)."
                 ),
-                "editable_via_api": False,
             },
             "paths": {
                 "chroma_host": c.chroma_host,

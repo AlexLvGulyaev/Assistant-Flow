@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from services.rag_chroma_store import ChromaRagStore
+    from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
     from utils.config import AppConfig
 
 
@@ -45,6 +46,7 @@ def build_retrieval_backend(
     *,
     chroma_store: "ChromaRagStore | None" = None,
     embeddings: "Embeddings | None" = None,
+    tuning_resolver: "RetrievalTuningResolver | None" = None,
 ) -> RetrievalBackend:
     """
     Собирает RetrievalBackend для runtime RAG.
@@ -120,8 +122,10 @@ def build_retrieval_backend(
             f"Допустимо: chroma (по умолчанию), faiss, weaviate."
         )
 
-    if getattr(config, "enable_retrieval_cache", False):
-        from services.cache.caching_retrieval_backend import CachingRetrievalBackend
+    from services.cache.caching_retrieval_backend import CachingRetrievalBackend
 
-        return CachingRetrievalBackend(backend, config=config)
-    return backend
+    return CachingRetrievalBackend(
+        backend,
+        config=config,
+        tuning_resolver=tuning_resolver,
+    )

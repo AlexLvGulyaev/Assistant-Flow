@@ -26,6 +26,23 @@ class TuningPutBody(BaseModel):
     rag_embedding_request_timeout: int | float | None = None
     rag_chunk_size: int | None = None
     rag_chunk_overlap: int | None = None
+    enable_retrieval_cache: bool | None = Field(
+        default=None,
+        description="Retrieval cache ON/OFF; stored in platform_settings.retrieval_tuning",
+    )
+
+
+def _tuning_put_patch_from_body(body: TuningPutBody) -> dict[str, Any]:
+    """
+    Fields present in the JSON body only (exclude_unset).
+    Preserves explicit ``false`` for booleans — must not use truthiness filters.
+    """
+    patch: dict[str, Any] = {}
+    for key, value in body.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        patch[key] = value
+    return patch
 
 
 @router.get("/overview")
@@ -50,7 +67,7 @@ def api_retrieval_tuning_get() -> dict[str, Any]:
 
 @router.put("/tuning")
 def api_retrieval_tuning_put(body: TuningPutBody) -> dict[str, Any]:
-    patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    patch = _tuning_put_patch_from_body(body)
     if not patch:
         raise HTTPException(
             status_code=400,

@@ -22,7 +22,8 @@ def invalidate_retrieval_cache(reason: str) -> int:
     safe = (reason or "").replace("\n", " ")[:200]
     print(
         "[assistant-flow] cache: invalidate_retrieval "
-        f"namespace={CacheNamespaces.RETRIEVAL} cleared={n} reason={safe!r}",
+        f"cache_layer={CacheNamespaces.RETRIEVAL} cache_invalidation_reason={safe!r} "
+        f"namespace={CacheNamespaces.RETRIEVAL} cleared={n}",
         flush=True,
     )
     return n

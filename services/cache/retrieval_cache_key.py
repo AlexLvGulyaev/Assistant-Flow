@@ -24,6 +24,11 @@ def normalize_query_text(query: str) -> str:
     return " ".join((query or "").strip().split())
 
 
+def current_retrieval_generation() -> str:
+    """Current retrieval cache generation marker (env-driven, stable default)."""
+    return (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip() or "unset"
+
+
 def build_retrieval_fingerprint(
     config: "AppConfig",
     *,
@@ -31,7 +36,7 @@ def build_retrieval_fingerprint(
     top_k: int,
     security_fingerprint_extra: str | None = None,
 ) -> str:
-    gen = (os.getenv("RAG_RETRIEVAL_GENERATION") or "").strip() or "unset"
+    gen = current_retrieval_generation()
     # Вторая строка fingerprint — нормализованный RAG backend (должна совпадать с
     # активным backend при сборке CachingRetrievalBackend через RetrievalBackendManager).
     parts = [

@@ -35,10 +35,19 @@ def build_rag_query_service_for_eval(config: AppConfig) -> RagQueryService:
     Same construction pattern as production RAG (Telegram path), without importing telegram_bot
     (avoids loading pyTelegramBotAPI).
     """
-    chroma_dir = _resolve_project_path(config, config.chroma_persist_dir)
-    tuning = RetrievalTuningResolver(config)
+    # Evaluation must remain reproducible; retrieval cache is explicitly bypassed here.
+    cfg_eval = config
+    if config.enable_retrieval_cache:
+        cfg_eval = AppConfig(
+            **{
+                **config.__dict__,
+                "enable_retrieval_cache": False,
+            }
+        )
+    chroma_dir = _resolve_project_path(cfg_eval, cfg_eval.chroma_persist_dir)
+    tuning = RetrievalTuningResolver(cfg_eval)
     manager = RetrievalBackendManager(
-        config,
+        cfg_eval,
         project_root=_project_root(),
         chroma_persist_directory=chroma_dir,
         tuning_resolver=tuning,
@@ -54,8 +63,8 @@ def build_rag_query_service_for_eval(config: AppConfig) -> RagQueryService:
     except Exception as exc:
         print(f"[evaluation] retrieval healthcheck failed: {exc}", flush=True)
         raise
-    chat = OpenAIChatProvider(config)
-    return RagQueryService(manager, chat, config, tuning_resolver=tuning)
+    chat = OpenAIChatProvider(cfg_eval)
+    return RagQueryService(manager, chat, cfg_eval, tuning_resolver=tuning)
 
 
 _RETRIEVAL_DIAG_KEYS = (
@@ -79,6 +88,11 @@ _RETRIEVAL_DIAG_KEYS = (
         "active_collection_count",
         "retrieval_readiness",
         "retrieval_cache_hit",
+        "retrieval_cache_miss",
+        "cache_layer",
+        "cache_latency_ms",
+        "retrieval_cache_generation",
+        "retrieval_cache_backend",
         "retrieval_cache_key_hash_prefix",
         "retrieval_cache_fingerprint_backend",
         "retrieved_duplicate_count",
@@ -107,6 +121,8 @@ def split_log_details_to_blobs(
     ret: dict[str, Any] = {
         k: details[k] for k in _RETRIEVAL_DIAG_KEYS if k in details and k not in skip
     }
+    ret["evaluation_cache_bypass"] = True
+    ret["evaluation_cache_policy"] = "retrieval_cache_disabled"
     gen: dict[str, Any] = {k: details[k] for k in _GENERATION_DIAG_KEYS if k in details}
     if wall_ms is not None:
         gen["wall_ms_client"] = int(wall_ms)

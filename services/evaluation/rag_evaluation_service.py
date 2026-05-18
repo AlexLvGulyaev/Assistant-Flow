@@ -85,6 +85,8 @@ class RagEvaluationService:
                 "filtered_count": diag.filtered_count,
                 "fallback_reason": diag.fallback_reason,
                 "context_chars": diag.context_chars,
+                "evaluation_cache_bypass": True,
+                "evaluation_cache_policy": "retrieval_cache_disabled",
             }
         return EvaluationSample(
             question=question,

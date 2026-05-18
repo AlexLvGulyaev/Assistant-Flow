@@ -60,6 +60,37 @@ def main() -> int:
     if p.get("rag_top_k") != 5:
         return _fail("partial normalize rag_top_k")
 
+    p_on = validate_and_normalize_patch(cfg, {}, {"enable_retrieval_cache": True})
+    if p_on.get("enable_retrieval_cache") is not True:
+        return _fail("enable_retrieval_cache=true normalize")
+
+    p_off = validate_and_normalize_patch(cfg, {}, {"enable_retrieval_cache": False})
+    if p_off.get("enable_retrieval_cache") is not False:
+        return _fail("enable_retrieval_cache=false normalize")
+
+    eff_on = apply_db_overrides_to_config(cfg, {"enable_retrieval_cache": True})
+    if not eff_on.enable_retrieval_cache:
+        return _fail("effective enable_retrieval_cache after true override")
+
+    eff_off = apply_db_overrides_to_config(cfg, {"enable_retrieval_cache": False})
+    if eff_off.enable_retrieval_cache:
+        return _fail("effective enable_retrieval_cache after false override")
+
+    try:
+        from admin_api.routes.retrieval import TuningPutBody, _tuning_put_patch_from_body
+
+        assert _tuning_put_patch_from_body(
+            TuningPutBody.model_validate({"enable_retrieval_cache": True})
+        ) == {"enable_retrieval_cache": True}
+        assert _tuning_put_patch_from_body(
+            TuningPutBody.model_validate({"enable_retrieval_cache": False})
+        ) == {"enable_retrieval_cache": False}
+        assert _tuning_put_patch_from_body(TuningPutBody.model_validate({})) == {}
+    except ImportError as exc:
+        print(f"[retrieval_tuning_smoke] SKIP route patch test: {exc}")
+    except Exception as exc:
+        return _fail(f"route patch from body: {exc}")
+
     merged = {**{}, **p}
     eff = apply_db_overrides_to_config(cfg, merged)
     if eff.rag_top_k != 5:

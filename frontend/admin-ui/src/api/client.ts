@@ -207,9 +207,9 @@ async function parseFastApiError(res: Response, fallback: string): Promise<strin
 }
 
 export interface RetrievalTuningResponse {
-  effective: Record<string, number>;
-  env_defaults: Record<string, number>;
-  db_overrides: Record<string, number>;
+  effective: Record<string, number | boolean>;
+  env_defaults: Record<string, number | boolean>;
+  db_overrides: Record<string, number | boolean>;
   requires_reindex_keys: string[];
   runtime_keys: string[];
   reindex_required?: boolean;
@@ -224,7 +224,7 @@ export async function fetchRetrievalTuning(): Promise<RetrievalTuningResponse> {
 }
 
 export async function putRetrievalTuning(
-  patch: Record<string, number>
+  patch: Record<string, number | boolean>
 ): Promise<RetrievalTuningResponse> {
   const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`, {
     method: "PUT",

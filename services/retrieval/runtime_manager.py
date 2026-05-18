@@ -143,11 +143,13 @@ class RetrievalBackendManager:
                 cfg,
                 chroma_store=store,
                 embeddings=emb,
+                tuning_resolver=self._tuning,
             )
         backend = build_retrieval_backend(
             cfg,
             chroma_store=None,
             embeddings=emb,
+            tuning_resolver=self._tuning,
         )
         if name == "faiss":
             idx = resolve_faiss_index_dir(cfg, project_root=self._project_root)
@@ -156,14 +158,18 @@ class RetrievalBackendManager:
             self._faiss_fp = None
         return backend
 
+    def _backend_build_key(self) -> str:
+        # Cache ON/OFF is resolved live in CachingRetrievalBackend via tuning_resolver.
+        return self.effective_backend_name()
+
     def _ensure_fresh(self) -> None:
-        key = self.effective_backend_name()
+        key = self._backend_build_key()
         if self._backend is None or self._built_key != key:
             self._backend = self._build_backend()
             self._built_key = key
             print(
                 "[assistant-flow] retrieval_manager: "
-                f"backend_built effective={key} active_backend={key}",
+                f"backend_built build_key={key!r}",
                 flush=True,
             )
             return
@@ -204,6 +210,8 @@ class RetrievalBackendManager:
         self._eff_cached_backend = None
         self._embeddings = None
         self._emb_sig = None
+        if self._tuning is not None:
+            self._tuning.invalidate()
 
     def snapshot_health_active(self) -> RetrievalHealth:
         return self.get_retrieval().healthcheck()

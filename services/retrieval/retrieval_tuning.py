@@ -24,6 +24,7 @@ TUNING_RUNTIME_KEYS: frozenset[str] = frozenset(
         "rag_answer_max_tokens",
         "rag_retrieval_timeout",
         "rag_embedding_request_timeout",
+        "enable_retrieval_cache",
     }
 )
 TUNING_INDEXING_KEYS: frozenset[str] = frozenset(
@@ -99,6 +100,8 @@ def apply_db_overrides_to_config(base: AppConfig, db: dict[str, Any]) -> AppConf
         kwargs["rag_chunk_size"] = int(db["rag_chunk_size"])
     if "rag_chunk_overlap" in db:
         kwargs["rag_chunk_overlap"] = int(db["rag_chunk_overlap"])
+    if "enable_retrieval_cache" in db:
+        kwargs["enable_retrieval_cache"] = bool(db["enable_retrieval_cache"])
     return replace(base, **kwargs)
 
 
@@ -145,6 +148,20 @@ def _validate_one(key: str, raw: Any) -> Any:
         if not (0 <= v <= 1000):
             raise ValueError(f"rag_chunk_overlap: expected integer 0..1000, got {v}")
         return v
+    if key == "enable_retrieval_cache":
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)) and raw in (0, 1):
+            return bool(int(raw))
+        if isinstance(raw, str):
+            s = raw.strip().lower()
+            if s in ("true", "1", "yes", "on"):
+                return True
+            if s in ("false", "0", "no", "off"):
+                return False
+        raise ValueError(
+            f"enable_retrieval_cache: expected boolean, got {raw!r}"
+        )
     raise ValueError(f"unsupported tuning key {key!r}")
 
 

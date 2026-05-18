@@ -26,6 +26,7 @@ import { OperationalModalityBadge } from "../components/OperationalModalityBadge
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { OperationalRetrievalChunksSection } from "../components/OperationalRetrievalChunksSection";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
+import { EvaluationCachePolicyPanel } from "../components/EvaluationCachePolicyPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatRetrievalBackendTitle, formatTimestampMsk } from "../utils/operationalLabels";
 import { chunkFromEvalDiagnostic } from "../utils/retrievalChunks";
@@ -249,6 +250,8 @@ function TurnDetailPanel({
       <p className="eval-detail-head__sub muted mono">
         {shortId(detail.execution_id, 14)} · {formatTimestampMsk(createdAt as string)}
       </p>
+
+      <EvaluationCachePolicyPanel retrievalDiag={rd} />
 
       <div className="modality-ops-panels modality-ops-panels--rag-split modality-ops-panels--eval-top eval-top-panels">
         <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--stack modality-ops-panels__rag-col--session">
@@ -487,6 +490,8 @@ function SelectedItemForensicPanel({
           tokens={totalTokens ?? "—"}
         </p>
       </div>
+
+      <EvaluationCachePolicyPanel retrievalDiag={rd} />
 
       <section className="logs-detail-block">
         <h3 className="logs-detail-block__title">Что спросил пользователь</h3>

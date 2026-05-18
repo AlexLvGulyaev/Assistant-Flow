@@ -30,6 +30,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from services.cache.caching_retrieval_backend import CachingRetrievalBackend
 from services.retrieval.chroma_backend import ChromaBackend
 from services.retrieval.factory import build_retrieval_backend, normalize_rag_backend
 from services.retrieval.runtime_manager import RetrievalBackendManager
@@ -59,6 +60,12 @@ def _minimal_app_config(
     )
 
 
+def _unwrap_retrieval_backend(backend: object) -> object:
+    if isinstance(backend, CachingRetrievalBackend):
+        return backend._inner  # noqa: SLF001
+    return backend
+
+
 def _fake_chroma_store() -> MagicMock:
     store = MagicMock()
     store.collection_count.return_value = 0
@@ -79,8 +86,10 @@ def main() -> int:
     store = _fake_chroma_store()
 
     b1 = build_retrieval_backend(_minimal_app_config(rag_backend="chroma"), chroma_store=store)
-    if not isinstance(b1, ChromaBackend):
-        failed.append("rag_backend=chroma → ChromaBackend")
+    if not isinstance(b1, CachingRetrievalBackend):
+        failed.append("factory must wrap with CachingRetrievalBackend")
+    if not isinstance(_unwrap_retrieval_backend(b1), ChromaBackend):
+        failed.append("rag_backend=chroma → ChromaBackend (inner)")
     if b1.backend_name != "chroma":
         failed.append("backend_name chroma")
 

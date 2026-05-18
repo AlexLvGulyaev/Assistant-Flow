@@ -245,6 +245,12 @@ def _routing_identity_for_logs(
     if cache_probe:
         for k in (
             "retrieval_cache_hit",
+            "retrieval_cache_miss",
+            "retrieval_cache_disabled",
+            "cache_layer",
+            "cache_latency_ms",
+            "retrieval_cache_generation",
+            "retrieval_cache_backend",
             "retrieval_cache_key_hash_prefix",
             "retrieval_cache_fingerprint_backend",
             "retrieved_duplicate_count",
@@ -437,6 +443,12 @@ def _build_diagnostics(
         faiss_index_path=rx.get("faiss_index_path"),  # type: ignore[arg-type]
         chroma_collection_name=rx.get("chroma_collection_name"),  # type: ignore[arg-type]
         retrieval_cache_hit=rx.get("retrieval_cache_hit"),  # type: ignore[arg-type]
+        retrieval_cache_miss=rx.get("retrieval_cache_miss"),  # type: ignore[arg-type]
+        retrieval_cache_disabled=rx.get("retrieval_cache_disabled"),  # type: ignore[arg-type]
+        cache_layer=rx.get("cache_layer"),  # type: ignore[arg-type]
+        cache_latency_ms=rx.get("cache_latency_ms"),  # type: ignore[arg-type]
+        retrieval_cache_generation=rx.get("retrieval_cache_generation"),  # type: ignore[arg-type]
+        retrieval_cache_backend=rx.get("retrieval_cache_backend"),  # type: ignore[arg-type]
         retrieval_cache_key_hash_prefix=rx.get("retrieval_cache_key_hash_prefix"),  # type: ignore[arg-type]
         retrieval_cache_fingerprint_backend=rx.get("retrieval_cache_fingerprint_backend"),  # type: ignore[arg-type]
         followup_question_detected=followup_question_detected,
@@ -708,6 +720,9 @@ class RagQueryService:
             raw_list, backend_label=be_label
         )
         cp: dict[str, object] = dict(cache_probe) if cache_probe else {}
+        if not self._eff().enable_retrieval_cache:
+            if cp.get("retrieval_cache_hit") is None and cp.get("retrieval_cache_miss") is None:
+                cp["retrieval_cache_disabled"] = True
         if removed > 0:
             cp["retrieved_duplicate_count"] = int(removed)
             cp["retrieval_vector_hits_raw"] = int(raw_n)

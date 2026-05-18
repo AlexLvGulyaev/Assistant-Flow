@@ -36,7 +36,12 @@ class RetrievalTuningResolver:
         try:
             with get_connection() as conn:
                 return load_retrieval_tuning_db(conn)
-        except Exception:
+        except Exception as exc:
+            print(
+                "[assistant-flow] retrieval_tuning_resolver: db_unavailable "
+                f"using_env_fallback detail={type(exc).__name__}: {exc}",
+                flush=True,
+            )
             return {}
 
     def effective_config(self) -> AppConfig:

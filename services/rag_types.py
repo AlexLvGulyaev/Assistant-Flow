@@ -83,6 +83,12 @@ class RagRequestDiagnostics:
     faiss_index_path: str | None = None
     chroma_collection_name: str | None = None
     retrieval_cache_hit: bool | None = None
+    retrieval_cache_miss: bool | None = None
+    retrieval_cache_disabled: bool | None = None
+    cache_layer: str | None = None
+    cache_latency_ms: int | None = None
+    retrieval_cache_generation: str | None = None
+    retrieval_cache_backend: str | None = None
     retrieval_cache_key_hash_prefix: str | None = None
     retrieval_cache_fingerprint_backend: str | None = None
     # Memory v1.1: conversational assembly (counts/flags only; no full prompts).
@@ -165,6 +171,18 @@ class RagRequestDiagnostics:
             out["chroma_collection_name"] = self.chroma_collection_name
         if self.retrieval_cache_hit is not None:
             out["retrieval_cache_hit"] = bool(self.retrieval_cache_hit)
+        if self.retrieval_cache_miss is not None:
+            out["retrieval_cache_miss"] = bool(self.retrieval_cache_miss)
+        if self.retrieval_cache_disabled is not None:
+            out["retrieval_cache_disabled"] = bool(self.retrieval_cache_disabled)
+        if self.cache_layer:
+            out["cache_layer"] = self.cache_layer
+        if self.cache_latency_ms is not None:
+            out["cache_latency_ms"] = int(self.cache_latency_ms)
+        if self.retrieval_cache_generation:
+            out["retrieval_cache_generation"] = self.retrieval_cache_generation
+        if self.retrieval_cache_backend:
+            out["retrieval_cache_backend"] = self.retrieval_cache_backend
         if self.retrieval_cache_key_hash_prefix:
             out["retrieval_cache_key_hash_prefix"] = self.retrieval_cache_key_hash_prefix
         if self.retrieval_cache_fingerprint_backend:
@@ -283,6 +301,34 @@ class RagRequestDiagnostics:
             print(
                 f"[assistant-flow] rag diagnostics: retrieval_cache_hit="
                 f"{self.retrieval_cache_hit}",
+                flush=True,
+            )
+        if self.retrieval_cache_miss is not None:
+            print(
+                f"[assistant-flow] rag diagnostics: retrieval_cache_miss="
+                f"{self.retrieval_cache_miss}",
+                flush=True,
+            )
+        if self.cache_layer:
+            print(
+                f"[assistant-flow] rag diagnostics: cache_layer={self.cache_layer!r}",
+                flush=True,
+            )
+        if self.cache_latency_ms is not None:
+            print(
+                f"[assistant-flow] rag diagnostics: cache_latency_ms={self.cache_latency_ms}",
+                flush=True,
+            )
+        if self.retrieval_cache_generation:
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_cache_generation="
+                f"{self.retrieval_cache_generation!r}",
+                flush=True,
+            )
+        if self.retrieval_cache_backend:
+            print(
+                "[assistant-flow] rag diagnostics: retrieval_cache_backend="
+                f"{self.retrieval_cache_backend!r}",
                 flush=True,
             )
         if self.retrieval_cache_fingerprint_backend:

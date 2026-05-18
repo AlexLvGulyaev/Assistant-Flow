@@ -29,6 +29,14 @@ def _bootstrap_rag():
     from utils.config import load_config
 
     config = load_config()
+    if config.enable_retrieval_cache:
+        # Evaluation smoke should bypass retrieval cache for reproducibility.
+        config = type(config)(
+            **{
+                **config.__dict__,
+                "enable_retrieval_cache": False,
+            }
+        )
     chroma_path = Path(config.chroma_persist_dir)
     if not chroma_path.is_absolute():
         chroma_path = ROOT / chroma_path

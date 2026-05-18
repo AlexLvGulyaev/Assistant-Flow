@@ -14,6 +14,7 @@ import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { SectionCard } from "../components/SectionCard";
+import { RetrievalCacheSettingsPanel } from "../components/RetrievalCacheSettingsPanel";
 
 function Badge({
   text,
@@ -116,6 +117,7 @@ export function RetrievalSettingsPage() {
   const [tuningLoadError, setTuningLoadError] = useState<string | null>(null);
   const [tuningDraft, setTuningDraft] = useState<Record<string, string>>({});
   const [tuningBusy, setTuningBusy] = useState(false);
+  const [cacheBusy, setCacheBusy] = useState(false);
   const [tuningSaveError, setTuningSaveError] = useState<string | null>(null);
   const [lastTuneReindex, setLastTuneReindex] = useState(false);
 
@@ -221,6 +223,24 @@ export function RetrievalSettingsPage() {
       setTuningSaveError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setTuningBusy(false);
+    }
+  };
+
+  const onSetRetrievalCache = async (enabled: boolean) => {
+    if (!data?.database_configured || cacheBusy) return;
+    setCacheBusy(true);
+    setTuningSaveError(null);
+    try {
+      const res = await putRetrievalTuning({
+        enable_retrieval_cache: enabled === true,
+      });
+      setTuning(res);
+      setTuningDraft(draftFromTuning(res));
+      setRefreshNonce((n) => n + 1);
+    } catch (e) {
+      setTuningSaveError(e instanceof Error ? e.message : "Cache toggle failed");
+    } finally {
+      setCacheBusy(false);
     }
   };
 
@@ -591,61 +611,23 @@ export function RetrievalSettingsPage() {
       </div>
 
       <SectionCard
-        title="Cache"
-        description="Read-only today; structure reserved for future runtime edits."
+        title="Retrieval cache"
+        description="ENABLE_RETRIEVAL_CACHE via tuning API (~2.5s). Hit/miss on RAG page."
       >
-        <div className="retrieval-settings__cache-split">
-          <div className="retrieval-settings__cache-col">
-            <dl className="retrieval-settings__kv retrieval-settings__kv--grid retrieval-settings__kv--cache-half">
-              <dt>ENABLE_RETRIEVAL_CACHE</dt>
-              <dd>
-                <input readOnly className="retrieval-settings__ro" value={fmt(cache.enable_retrieval_cache)} />
-              </dd>
-              <dt>ENABLE_ANSWER_CACHE</dt>
-              <dd>
-                <input readOnly className="retrieval-settings__ro" value={fmt(cache.enable_answer_cache)} />
-              </dd>
-              <dt>RETRIEVAL_CACHE_TTL_SECONDS</dt>
-              <dd>
-                <input
-                  readOnly
-                  className="retrieval-settings__ro"
-                  value={fmt(cache.retrieval_cache_ttl_seconds)}
-                />
-              </dd>
-              <dt>ANSWER_CACHE_TTL_SECONDS</dt>
-              <dd>
-                <input readOnly className="retrieval-settings__ro" value={fmt(cache.answer_cache_ttl_seconds)} />
-              </dd>
-            </dl>
-          </div>
-          <div className="retrieval-settings__cache-col">
-            <dl className="retrieval-settings__kv retrieval-settings__kv--grid retrieval-settings__kv--cache-half">
-              <dt>RAG_RETRIEVAL_GENERATION</dt>
-              <dd>
-                <input readOnly className="retrieval-settings__ro" value={fmt(cache.rag_retrieval_generation)} />
-              </dd>
-              <dt>CACHE_DB_PATH</dt>
-              <dd>
-                <input readOnly className="retrieval-settings__ro" value={fmt(cache.cache_db_path)} />
-              </dd>
-            </dl>
-            <ul className="retrieval-settings__note-list muted">
-              <li>Retrieval and answer cache are planned editable runtime settings.</li>
-              <li>
-                <code>CACHE_DB_PATH</code> is infrastructure read-only.
-              </li>
-              <li>{fmt(cache.rag_retrieval_generation_hint)}</li>
-            </ul>
-          </div>
-        </div>
+        <RetrievalCacheSettingsPanel
+          cache={cache}
+          databaseConfigured={Boolean(data?.database_configured)}
+          cacheBusy={cacheBusy}
+          onSetRetrievalCache={(v) => void onSetRetrievalCache(v)}
+        />
       </SectionCard>
 
+
       <details className="retrieval-settings__details">
-        <summary className="retrieval-settings__details-summary">System paths & connectivity</summary>
+        <summary className="retrieval-settings__details-summary">Системные пути и подключения</summary>
         <div className="retrieval-settings__details-body">
           <p className="muted retrieval-settings__micro">
-            Read-only connectivity and storage paths (expand). Same values as process env / AppConfig.
+            Только чтение: пути и подключения из env / AppConfig (для инфраструктурной проверки).
           </p>
           <dl className="retrieval-settings__kv retrieval-settings__kv--grid retrieval-settings__kv--wide">
             <dt>CHROMA_HOST</dt>

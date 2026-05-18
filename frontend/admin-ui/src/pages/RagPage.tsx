@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fetchOverview, fetchRecentLogs, type LogItem, type RetrievalPlatformCompact } from "../api/client";
+import {
+  fetchOverview,
+  fetchRecentLogs,
+  fetchRetrievalOverview,
+  type LogItem,
+  type RetrievalPlatformCompact,
+} from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -7,7 +13,19 @@ import { OperationalRetrievalChunksSection } from "../components/OperationalRetr
 import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmptyHint";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { chunkFromRagSessionChunk } from "../utils/retrievalChunks";
+import { CacheObservabilityBadge } from "../components/CacheObservabilityBadge";
+import {
+  RagCacheComparePanel,
+  RagCacheDiagnosticsPanel,
+} from "../components/RagCacheDiagnosticsPanel";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  extractCacheTelemetry,
+  findPreviousMatchingSession,
+  isRetrievalCacheGloballyEnabled,
+  type CacheState,
+  type CacheTelemetry,
+} from "../utils/cacheObservability";
 import { OperationalModalityBadge } from "../components/OperationalModalityBadge";
 import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
 import {
@@ -116,11 +134,16 @@ interface RagSession {
   retrievalVectorHitsRaw: number | null;
   /** Exact string passed to vector retrieval (from diagnostics); absent in older logs. */
   retrievalReadyQuery: string | null;
+  cacheState: CacheState;
+  cacheTelemetry: CacheTelemetry;
 }
 
 export function RagPage() {
   const [items, setItems] = useState<LogItem[]>([]);
   const [retrievalPlatform, setRetrievalPlatform] = useState<RetrievalPlatformCompact | null>(null);
+  const [retrievalCacheGloballyEnabled, setRetrievalCacheGloballyEnabled] = useState<boolean | null>(
+    null
+  );
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -143,9 +166,10 @@ export function RagPage() {
       setLoading(true);
       setError(null);
       try {
-        const [lr, or] = await Promise.allSettled([
+        const [lr, or, rr] = await Promise.allSettled([
           fetchRecentLogs({ limit: fetchLimit, sinceHours }),
           fetchOverview(),
+          fetchRetrievalOverview(),
         ]);
         if (cancelled) return;
         if (lr.status === "fulfilled") {
@@ -161,6 +185,16 @@ export function RagPage() {
         } else {
           setRetrievalPlatform(null);
         }
+        if (rr.status === "fulfilled") {
+          const cache = rr.value.cache as Record<string, unknown> | undefined;
+          setRetrievalCacheGloballyEnabled(
+            cache?.enable_retrieval_cache == null
+              ? null
+              : isRetrievalCacheGloballyEnabled(cache.enable_retrieval_cache)
+          );
+        } else {
+          setRetrievalCacheGloballyEnabled(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -170,7 +204,10 @@ export function RagPage() {
     };
   }, [fetchLimit, sinceHours, refreshNonce]);
 
-  const sessions = useMemo(() => buildRagSessions(items), [items]);
+  const sessions = useMemo(
+    () => buildRagSessions(items, { retrievalCacheGloballyEnabled }),
+    [items, retrievalCacheGloballyEnabled]
+  );
   const fallbackOptions = useMemo(
     () =>
       Array.from(new Set(sessions.map((s) => s.fallbackReason || "").filter(Boolean))).sort(),
@@ -236,6 +273,11 @@ export function RagPage() {
     pageSessions.find((s) => s.executionId === selectedId) ??
     filtered.find((s) => s.executionId === selectedId) ??
     null;
+
+  const cachePreviousMatch = useMemo(() => {
+    if (!selected) return null;
+    return findPreviousMatchingSession(sessions, selected);
+  }, [sessions, selected]);
 
   function resetPagination() {
     pendingListFocusRef.current = true;
@@ -480,6 +522,7 @@ export function RagPage() {
                         {formatTimestampMsk(s.lastAt)}
                       </span>
                       <OperationalModalityBadge modality="rag" />
+                      <CacheObservabilityBadge state={s.cacheState} />
                       <StatusBadge status={s.status} />
                     </div>
                     <div className="logs-item__preview">{clipText(s.query, 96) || "запрос не найден в логах"}</div>
@@ -521,8 +564,8 @@ export function RagPage() {
                   </span>
                 </div>
 
-                <div className="modality-ops-panels modality-ops-panels--rag-balanced">
-                  <div className="modality-ops-panels__rag-balanced-left">
+                <div className="modality-ops-panels modality-ops-panels--rag-header-grid">
+                  <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--stack">
                     <div className="modality-ops-panel">
                       <div className="modality-ops-panel__name">Параметры сессии</div>
                       <dl className="kv modality-ops-panel__kv">
@@ -679,8 +722,8 @@ export function RagPage() {
                       </dl>
                     </div>
                   </div>
-                  <div className="modality-ops-panels__rag-balanced-right">
-                    <div className="modality-ops-panel modality-ops-panel--rag-retrieval-tall">
+                  <div className="modality-ops-panels__rag-col">
+                    <div className="modality-ops-panel modality-ops-panel--rag-header-compact">
                       <div className="modality-ops-panel__name">Retrieval</div>
                       <dl className="kv modality-ops-panel__kv">
                         <OpsRow
@@ -744,16 +787,6 @@ export function RagPage() {
                           }
                         />
                         <OpsRow
-                          label="Отфильтровано"
-                          value={
-                            hasNum(selected.filteredCount) ? (
-                              String(selected.filteredCount)
-                            ) : (
-                              <TelemetryGap kind="log" />
-                            )
-                          }
-                        />
-                        <OpsRow
                           label="Источников"
                           value={
                             hasNum(selected.uniqueSourcesCount) ? (
@@ -774,40 +807,6 @@ export function RagPage() {
                           }
                         />
                         <OpsRow
-                          label="Реплик истории (user turns)"
-                          value={
-                            hasNum(selected.historyTurnsUsed) ? (
-                              String(selected.historyTurnsUsed)
-                            ) : (
-                              <TelemetryGap kind="log" />
-                            )
-                          }
-                        />
-                        <OpsRow
-                          label="Follow-up (эвристика)"
-                          value={
-                            selected.followupDetected === true ? (
-                              "да"
-                            ) : selected.followupDetected === false ? (
-                              "нет"
-                            ) : (
-                              <TelemetryGap kind="log" />
-                            )
-                          }
-                        />
-                        <OpsRow
-                          label="Тримминг истории"
-                          value={
-                            selected.historyTrimmingApplied === true ? (
-                              "да"
-                            ) : selected.historyTrimmingApplied === false ? (
-                              "нет"
-                            ) : (
-                              <TelemetryGap kind="log" />
-                            )
-                          }
-                        />
-                        <OpsRow
                           label="Модель embeddings"
                           value={
                             selected.embeddingModel?.trim() ? (
@@ -818,14 +817,50 @@ export function RagPage() {
                           }
                         />
                         <OpsRow
-                          label="Коллекция / метка (лог)"
+                          label="Отфильтровано"
+                          value={
+                            hasNum(selected.filteredCount) ? (
+                              String(selected.filteredCount)
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Реплик истории"
+                          value={
+                            hasNum(selected.historyTurnsUsed) ? (
+                              String(selected.historyTurnsUsed)
+                            ) : (
+                              <TelemetryGap kind="log" />
+                            )
+                          }
+                        />
+                        <OpsRow
+                          label="Follow-up"
+                          value={
+                            selected.followupDetected === true
+                              ? "да"
+                              : selected.followupDetected === false
+                                ? "нет"
+                                : <TelemetryGap kind="log" />
+                          }
+                        />
+                        <OpsRow
+                          label="Тримминг истории"
+                          value={
+                            selected.historyTrimmingApplied === true
+                              ? "да"
+                              : selected.historyTrimmingApplied === false
+                                ? "нет"
+                                : <TelemetryGap kind="log" />
+                          }
+                        />
+                        <OpsRow
+                          label="Коллекция / метка"
                           value={
                             selected.collectionName?.trim() ? (
                               <span className="mono">{selected.collectionName}</span>
-                            ) : selected.activeBackend?.trim() ? (
-                              <span className="mono">
-                                {formatRetrievalBackendTitle(selected.activeBackend)}
-                              </span>
                             ) : (
                               <TelemetryGap kind="log" />
                             )
@@ -833,6 +868,18 @@ export function RagPage() {
                         />
                       </dl>
                     </div>
+                  </div>
+                  <div className="modality-ops-panels__rag-col modality-ops-panels__rag-col--stack">
+                    <RagCacheDiagnosticsPanel
+                      telemetry={selected.cacheTelemetry}
+                      previousMatch={cachePreviousMatch}
+                      current={selected}
+                    />
+                    <RagCacheComparePanel
+                      telemetry={selected.cacheTelemetry}
+                      previousMatch={cachePreviousMatch}
+                      current={selected}
+                    />
                   </div>
                 </div>
 
@@ -1103,7 +1150,10 @@ function retrievalReadyQueryDisclosure(session: RagSession): boolean {
   return collapseComparableQueryText(rq) !== shown;
 }
 
-function buildRagSessions(rows: LogItem[]): RagSession[] {
+function buildRagSessions(
+  rows: LogItem[],
+  opts?: { retrievalCacheGloballyEnabled?: boolean | null }
+): RagSession[] {
   const grouped = new Map<string, LogItem[]>();
   for (const row of rows) {
     if (!isRagEvent(row)) continue;
@@ -1147,6 +1197,9 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       .map((r) => toTs(r.created_at))
       .filter((t): t is number => t != null);
     const wallDurationMs = sessionWallDurationMs(tsList);
+    const cacheTelemetry = extractCacheTelemetry(detailsPool, {
+      retrievalCacheGloballyEnabled: opts?.retrievalCacheGloballyEnabled,
+    });
 
     out.push({
       executionId,
@@ -1212,6 +1265,8 @@ function buildRagSessions(rows: LogItem[]): RagSession[] {
       retrievedDuplicateCount: pickNumber(detailsPool, ["retrieved_duplicate_count"]),
       retrievalVectorHitsRaw: pickNumber(detailsPool, ["retrieval_vector_hits_raw"]),
       retrievalReadyQuery: pickText(detailsPool, ["retrieval_ready_query"]),
+      cacheState: cacheTelemetry.state,
+      cacheTelemetry,
     });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
