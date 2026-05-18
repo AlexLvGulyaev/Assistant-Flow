@@ -57,3 +57,4 @@ storage/assets/
 legacy/
 .cursor/
 cursor_tasks_local/
+docs/cursor_sessions/
