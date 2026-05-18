@@ -8,34 +8,43 @@
 
 ## Схема верхнего уровня
 
-```text
- +-------------------+       +----------------------+
- |     Telegram      |       |  Admin UI (React)    |
- +---------+---------+       +----------+-----------+
-           |                            |
-           v                            v
- +---------+---------+       +----------+-----------+
- |  Telegram-бот     |       |  Admin API (FastAPI) |
- +---------+---------+       +----------+-----------+
-           \                            /
-            v                          v
-          +--------------------------------+
-          |   Оркестратор запросов       |
-          +----------------+-------------+
-                           |
-     +-------+-------+-----+-----+-------+
-     v       v       v           v       v
- [Текст] [Аудио] [Изобр.] [RAG/поиск] [Память]
-     |       |       |           |       |
-     +-------+-------+-----------+-------+
-                         |
-                         v
-              [ OpenAI / GigaChat / Proxy API ]
-                         |
-         +---------------+---------------+
-         v               v               v
-   [Chroma/FAISS/   [PostgreSQL]   [Логи, телеметрия,
-    Weaviate]                        Evaluation/RAGAS]
+Та же схема, что в [README.md](../README.md#архитектура-платформы):
+
+```mermaid
+flowchart TD
+    TG[Telegram] --> BOT[Telegram-бот]
+    UI[Admin UI] --> API[Admin API]
+
+    BOT --> ORCH[Оркестратор запросов]
+    API --> ORCH
+
+    ORCH --> TEXT[Текстовый контур]
+    ORCH --> RAG[RAG]
+    ORCH --> OCR[OCR]
+    ORCH --> VOICE[Voice STT/TTS]
+    ORCH --> IMG[Генерация изображений]
+    ORCH --> MEM[Memory]
+
+    TEXT --> PROV[AI providers<br/>OpenAI · GigaChat · Proxy API]
+    RAG --> PROV
+    OCR --> PROV
+    VOICE --> PROV
+    IMG --> PROV
+
+    RAG --> CACHE[Retrieval Cache]
+    CACHE --> RET[Retrieval backends<br/>Chroma · FAISS · Weaviate]
+    RAG --> PG[(PostgreSQL<br/>metadata · sessions · logs)]
+
+    MEM --> PG
+    API --> PG
+
+    STOR[Asset / Storage<br/>assets · documents · outputs]
+    IMG --> STOR
+    OCR --> STOR
+    API --> STOR
+
+    ORCH --> OBS[Логи и телеметрия]
+    API --> OBS
 ```
 
 ---
