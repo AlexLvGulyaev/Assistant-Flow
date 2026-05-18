@@ -1,107 +1,108 @@
-# Локальный smoke-test RAG (ChromaDB)
+# Smoke-тест RAG
 
-Инкремент 2 добавляет **read-only** сервис запросов к векторному индексу и **локальный индексатор** файлов. Для **админской индексации** с отчётом и опциональным PostgreSQL используйте `scripts/admin_index_documents.py` (**`docs/ADMIN_INDEXING.md`**); этот документ описывает smoke-test «индекс + вопрос» в одном скрипте.
+Проверка поиска по базе знаний после подъёма стека или изменений retrieval/кэша. Для полной индексации с Postgres см. [ADMIN_INDEXING.md](ADMIN_INDEXING.md).
 
-## Режимы Chroma (HTTP vs локальный persist)
+---
 
-Индексация и поиск используют **один и тот же** нативный клиент `chromadb`:
-
-| Режим | Переменные | Когда использовать |
-|--------|------------|-------------------|
-| **HTTP** | `CHROMA_USE_HTTP=true`, `CHROMA_HOST`, `CHROMA_PORT` | Chroma в **Docker** на сервере; с локальной машины — **SSH-туннель** (например `127.0.0.1:8000` → контейнер). Рекомендуется на **Windows**: встроенный `PersistentClient` на локальной папке может завершать процесс с кодом **-1073741819** при `collection.add()`. |
-| **Локальный persist** | `CHROMA_USE_HTTP=false`, `CHROMA_PERSIST_DIR` | Встроенная БД в каталоге на диске (удобно на Linux/macOS при стабильном окружении). |
-
-`CHROMA_PERSIST_DIR` при **HTTP** не хранит векторы: путь остаётся **подсказкой** для `/stats` и скриптов (см. `.env.example`).
-
-Типичный сценарий **Docker + туннель**:
-
-1. На сервере поднят Chroma с HTTP API (порт 8000 в контейнере).
-2. Локально: `ssh -L 8000:127.0.0.1:8000 user@server` (или аналог).
-3. В `.env`: `CHROMA_USE_HTTP=true`, `CHROMA_HOST=127.0.0.1`, `CHROMA_PORT=8000`.
-
-## Зависимости
-
-Установите зависимости проекта (`requirements.txt`), в том числе `chromadb`, LangChain (core) и `pypdf`.
-
-## Переменные окружения
-
-Минимально для embeddings и ответа LLM:
-
-| Переменная | Назначение |
-|------------|------------|
-| `OPENAI_API_KEY` | Ключ API (или используйте `PROXY_API_KEY`) |
-| `OPENAI_BASE_URL` | Необязательно; для OpenAI-совместимого прокси (например ProxyAPI) |
-| `OPENAI_MODEL` | Модель чата для ответа (по умолчанию из `.env.example`) |
-| `OPENAI_EMBEDDING_MODEL` | Модель эмбеддингов (по умолчанию `text-embedding-3-small`) |
-
-Каталоги и параметры RAG / Chroma:
-
-| Переменная | По умолчанию |
-|------------|----------------|
-| `CHROMA_USE_HTTP` | `false` (в `.env.example` задано `true` как ориентир для удалённой Chroma) |
-| `CHROMA_HOST` | `127.0.0.1` |
-| `CHROMA_PORT` | `8000` |
-| `CHROMA_PERSIST_DIR` | `data/chroma_db` |
-| `RAG_DOCUMENTS_DIR` | `data/documents` |
-| `RAG_TOP_K` | `3` |
-| `RAG_CHUNK_SIZE` | `1000` |
-| `RAG_CHUNK_OVERLAP` | `200` |
-| `RAG_ANSWER_MAX_TOKENS` | `1500` |
-
-См. также корневой `.env.example`.
-
-## Документы для индексации
-
-Положите файлы **`.txt`**, **`.md`** или **`.pdf`** в каталог `data/documents/` (или в путь из `RAG_DOCUMENTS_DIR`). Подкаталоги обходятся рекурсивно.
-
-В репозитории есть пример: `data/documents/sample_career_rag.txt`.
-
-## Запуск smoke-test
-
-Из **корня репозитория** `assistant-flow`:
+## 1. Запуск portfolio-стека
 
 ```bash
-python scripts/rag_smoke_test.py
+cp .env.example .env
+COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
-Полная переиндексация (удаляет **коллекцию на сервере Chroma** при HTTP или каталог `CHROMA_PERSIST_DIR` при локальном режиме, затем строит индекс заново):
+Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy), при живом боте — `TELEGRAM_BOT_TOKEN`.
+
+---
+
+## 2. Health Admin API
+
+```bash
+curl -sS http://localhost:8600/api/health | jq .
+```
+
+**Успех:** HTTP 200, JSON с полями зависимостей; общий статус `ok` или осознанный `degraded` (например, без ключей LLM) с понятными причинами в теле.
+
+---
+
+## 3. Admin UI — RAG
+
+1. Открыть `http://localhost:8080/rag`.
+2. **Успех:** страница загружается, нет ошибки CORS к `localhost:8600`.
+
+---
+
+## 4. Документы и индекс
+
+1. Загрузить тестовый `.txt` / `.md` в **Документы** или положить файл в `data/documents/`.
+2. Выполнить индексацию (UI pipeline или `python scripts/admin_index_documents.py --reindex`).
+3. **Успех:** документ в списке, `chunk_count` > 0 (при Postgres).
+
+---
+
+## 5. Тестовый RAG-запрос
+
+**Через Admin UI (RAG):** вопрос по содержимому загруженного файла.
+
+**Через CLI (без Telegram):**
+
+```bash
+python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос по документам"
+```
+
+**Успех:**
+
+- ответ с опорой на контекст;
+- блок найденных **чанков** (файл, score/расстояние);
+- при пустом индексе — явный fallback, а не «тишина».
+
+---
+
+## 6. Кэш запросов (если включён)
+
+В `.env` или **Retrieval Settings**: `ENABLE_RETRIEVAL_CACHE=true`.
+
+1. Два одинаковых запроса подряд в RAG UI.
+2. **Успех:** первый — MISS (или OFF при выключенном кэше), второй — **HIT**; в заголовке карточки видны задержки поиска и кэша.
+3. Сравнение Δ между сессиями — только когда кэш участвовал в обеих (см. `docs/architecture/cache_observability_console_design.md`).
+
+---
+
+## 7. Параметры в UI
+
+В RAG-консоли и **Retrieval Settings** проверить видимость:
+
+- активного **backend** (chroma / faiss / weaviate);
+- **top_k** и связанных параметров поиска (если отображаются в текущей сборке).
+
+---
+
+## 8. Telegram (опционально)
+
+```bash
+# в контейнере или локально с тем же .env
+python run_telegram_bot.py
+```
+
+`/mode rag` → вопрос по индексу → ответ + **Источники:** в сообщении.
+
+---
+
+## Локальный smoke без compose
+
+Если Postgres/Chroma уже подняты вручную:
 
 ```bash
 python scripts/rag_smoke_test.py --reindex
-```
-
-Свой вопрос:
-
-```bash
 python scripts/rag_smoke_test.py --question "Что такое RAG в этом проекте?"
 ```
 
-Другой каталог с документами:
+Режимы Chroma (HTTP vs persist), переменные — в `.env.example`. Модули: `services/rag_chroma_store.py`, `rag_query_service.py`, `providers/rag_embeddings.py`.
 
-```bash
-python scripts/rag_smoke_test.py --documents-dir path/to/docs --reindex
-```
+---
 
-Скрипт печатает найденные источники (с метрикой расстояния/скора Chroma) и итоговый ответ модели.
+## Ожидаемые коды выхода CLI индексации
 
-## Архитектура модулей (кратко)
+`scripts/admin_index_documents.py`: `0` — успех; ненулевой — ошибки по файлам (см. вывод консоли).
 
-- `services/rag_chroma_store.py` — нативный `chromadb` (Http или Persistent), `collection.add` / `collection.query` (без LangChain Chroma для retrieval).
-- `services/rag_document_loader.py` — загрузка и chunking файлов.
-- `services/rag_local_indexer.py` — запись чанков в индекс (CLI / админские сценарии).
-- `services/rag_query_service.py` — **read-only** поиск + формирование ответа через LLM.
-- `providers/rag_embeddings.py` — фабрика эмбеддингов OpenAI-совместого API.
-- `providers/openai_chat_provider.py` — синхронный вызов chat completions для ответа.
-
-Индексация через Telegram пользователям **не предлагается**; для продукта предусмотрены отдельные админ-процессы (следующие инкременты).
-
-## Telegram: режим RAG
-
-После индексации запустите бота (`python run_telegram_bot.py`). Команды:
-
-- `/mode rag` — вопросы по базе; ответ дополняется списком источников (файл + score), если чанки найдены.
-- `/mode text` — прежний сценарий (GigaChat, генерация изображений по ключевым словам).
-- `/stats` — число чанков в Chroma и путь/режим backend (HTTP или persist).
-- `/reset` — режим снова `text`, история RAG в памяти очищена.
-
-Нужны те же ключи OpenAI/Proxy, что и для smoke-test (эмбеддинги + ответ). Режим пользователя пока in-memory (см. TODO в `utils/telegram_user_state.py`).
+См. также: [DEMO_SCENARIOS.md](DEMO_SCENARIOS.md), [OPERATIONS.md](OPERATIONS.md).

@@ -1,61 +1,82 @@
-# Подготовка к публикации на GitHub
+# Подготовка к публикации GitHub v2.0
 
-Этот файл — **план действий** перед открытым репозиторием. Он **не выполняет** деструктивную очистку и не заменяет решение владельца репозитория.
+Чеклист перед открытым репозиторием. Документ **не выполняет** очистку автоматически и не заменяет решение владельца репозитория.
 
-## Зачем это нужно
+Связанные документы: [README.md](../README.md), [RUNBOOK.md](../RUNBOOK.md), [USER_GUIDE.md](../USER_GUIDE.md), [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
-В истории и индексе git могут оказаться:
+---
 
-- каталоги **`frontend/admin-ui/node_modules/`** (огромный объём, лицензионный шум);
-- **`frontend/admin-ui/dist/`** (артефакты сборки);
-- **`_test_chroma/chroma.sqlite3`** и другие локальные SQLite;
-- бинарные ассеты под **`storage/assets/`** (изображения, документы, потенциально чувствительные данные среды разработки).
+## 1. Публичная документация
 
-Пока эти пути **закоммичены**, `.gitignore` только предотвращает **новые** добавления; уже отслеживаемые файлы остаются в индексе до явного `git rm --cached` и/или переписывания истории.
+| Пункт | Проверка |
+|-------|----------|
+| [README.md](../README.md) | Актуален под v2: мультимодальность, ASCII-архитектура, portfolio-compose, ссылки на RUNBOOK/USER_GUIDE |
+| [RUNBOOK.md](../RUNBOOK.md) | Эксплуатация portfolio; server-контур вынесен в advanced |
+| [USER_GUIDE.md](../USER_GUIDE.md) | Пользовательские сценарии (draft допустим) |
+| [docs/ARCHITECTURE.md](ARCHITECTURE.md) | FastAPI + React Admin UI, без Streamlit как текущего UI |
+| [docs/OPERATIONS.md](OPERATIONS.md) | Каноническая команда `-p portfolio-test`, порты, Chroma/кэш |
+| [docs/screenshots/](screenshots/) | Скриншоты для README (15 файлов, пути `docs/screenshots/*.png`) |
+| Внутренние логи | `docs/cursor_sessions/` **не** в публичной навигации README |
 
-## Чек-лист перед публичным push
+---
 
-1. **`git status`** — убедиться, что нет неожиданных незакоммиченных секретов.
-2. **Просмотр отслеживаемых путей** (примеры команд ниже) — убедиться, что нет `.env`, ключей, дампов.
-3. **Сканирование секретов:** [gitleaks](https://github.com/gitleaks/gitleaks), `git secrets`, или аналог — на всём репозитории.
-4. **Ручная выборка:** поиск по репо строк вида `sk-`, длинных токенов, `postgresql://` с паролями в коммитах.
+## 2. Конфигурация и compose
 
-## Удаление из индекса (без переписывания истории)
+| Пункт | Проверка |
+|-------|----------|
+| [.env.example](../.env.example) | Только плейсхолдеры, без реальных ключей |
+| [docker-compose.portfolio.yml](../docker-compose.portfolio.yml) | Канонический demo-стек: postgres, chroma, weaviate, bot, admin-api, admin-ui |
+| Секреты | `.env`, `.env.server` в `.gitignore`, не в индексе |
+| Server-compose | Упоминается только в RUNBOOK/OPERATIONS как advanced, не в README как основной путь |
 
-Если цель — только перестать трекать мусор **с следующего коммита** (история останется тяжёлой, но рабочее дерево станет чище):
+---
+
+## 3. Код и артефакты
+
+| Пункт | Проверка |
+|-------|----------|
+| `git status` | Нет неожиданных секретов, дампов, личных токенов |
+| `frontend/admin-ui/node_modules/` | Не в git (`.gitignore`) |
+| `frontend/admin-ui/dist/` | Не в git |
+| `_test_chroma/`, локальные SQLite | Не коммитить runtime cache/shm/wal без необходимости |
+| `storage/assets/` | Нет чувствительных данных среды разработки |
+| `cursor_tasks_local/` | Не в публичной навигации (может оставаться в репо для команды) |
+
+---
+
+## 4. Сканирование секретов
+
+- [gitleaks](https://github.com/gitleaks/gitleaks), `git secrets` или аналог по всему репо.
+- Ручная выборка: `sk-`, длинные токены, `postgresql://` с паролями в истории коммитов.
+
+---
+
+## 5. Smoke после клона
 
 ```bash
-# Пример: убрать из индекса, файлы на диске сохранить
+cp .env.example .env
+COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+curl -sS http://localhost:8600/api/health
+```
+
+Далее по [RAG_SMOKE_TEST.md](RAG_SMOKE_TEST.md) и [DEMO_SCENARIOS.md](DEMO_SCENARIOS.md).
+
+---
+
+## 6. Очистка индекса git (по решению владельца)
+
+Если тяжёлые пути уже в истории:
+
+```bash
 git rm -r --cached frontend/admin-ui/node_modules
 git rm -r --cached frontend/admin-ui/dist
 git rm -r --cached _test_chroma
-# При необходимости — выборочно storage/assets/...
-git commit -m "chore: stop tracking build artifacts and local chroma"
 ```
 
-**Риски:** объём репозитория и прошлые коммиты по-прежнему содержат удалённые блобы; для «чистого» GitHub-зеркала обычно нужна перезапись истории (см. ниже).
+Полная очистка истории (`git filter-repo`, BFG) — только после backup и согласования; **force-push** деструктивен.
 
-## Полная очистка истории (только после явного подтверждения)
+---
 
-Инструменты: **`git filter-repo`**, **BFG Repo-Cleaner**.
+## 7. [PROJECT_STATE.md](../PROJECT_STATE.md)
 
-- Требуются согласование с командой, backup, новые клоны у всех участников.
-- После переписывания — **force-push** на целевой remote (деструктивно для старых ссылок).
-- **На текущем этапе проекта эти шаги сознательно не выполняются автоматически** — только по решению владельца.
-
-Пример направления работы (не копировать слепо без чтения документации инструмента):
-
-- исключить из истории пути: `frontend/admin-ui/node_modules`, `frontend/admin-ui/dist`, `_test_chroma`, при необходимости `storage/assets/**`.
-
-## Судьба `storage/assets`
-
-Варианты:
-
-- **Удалить из git** и оставить только пустую структуру / `.gitkeep` там, где нужно;
-- заменить на **синтетические** демо-файлы с понятной лицензией;
-- документировать в README, что ассеты создаются при работе приложения и не входят в минимальный клон.
-
-## После очистки
-
-- Проверить **`docker compose -f docker-compose.portfolio.yml build`** и smoke-тест API/UI.
-- Убедиться, что **`.env.example`** и **`.env.server.example`** актуальны и не содержат реальных секретов.
+Инженерный backlog для команды; не обязателен внешнему reviewer, но должен не противоречить README по статусу подсистем.
