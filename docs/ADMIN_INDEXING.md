@@ -2,6 +2,8 @@
 
 Пользователи **не** загружают документы через Telegram. Корпус пополняет **оператор** через Admin UI или CLI.
 
+PostgreSQL должна быть инициализирована (portfolio: [RUNBOOK.md](../RUNBOOK.md) §D, [OPERATIONS.md](OPERATIONS.md)). Без `DATABASE_URL` метаданные документов в Postgres не пишутся.
+
 ---
 
 ## Admin UI (основной путь)

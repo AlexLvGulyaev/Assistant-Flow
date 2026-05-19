@@ -71,12 +71,17 @@ Assistant Flow поддерживает текстовые AI-ответы че�
 
 📷 Скриншоты:
 
+![Пример текстового ответа в Telegram](docs/screenshots/text-tg.png)
 
-![text — tg](docs/screenshots/text-tg.png)
+<p align="center"><em>
+Пример текстового ответа Telegram-ассистента в режиме обычного диалога.
+</em></p>
 
+![Консоль текстового pipeline](docs/screenshots/text-adm.png)
 
-![text — adm](docs/screenshots/text-adm.png)
-
+<p align="center"><em>
+Консоль текстового pipeline: параметры LLM-запроса, telemetry и таймлайн обработки text-response.
+</em></p>
 
 ---
 
@@ -97,24 +102,49 @@ Assistant Flow поддерживает текстовые AI-ответы че�
 
 📷 Скриншоты:
 
+![RAG-ответ в Telegram](docs/screenshots/rag-tg.png)
 
-![rag — tg](docs/screenshots/rag-tg.png)
+<p align="center"><em>
+RAG-ответ Telegram-ассистента на основе корпоративной базы знаний Assistant Flow.
+</em></p>
 
+![Операционная консоль RAG-сессий](docs/screenshots/rag-adm.png)
 
-![rag — adm](docs/screenshots/rag-adm.png)
+<p align="center"><em>
+Операционная консоль RAG-сессий с диагностикой retrieval, latency, cache-state и найденных чанков.
+</em></p>
 
+![Расширенная диагностика retrieval](docs/screenshots/retrieval-details-adm.png)
 
-![documents — adm](docs/screenshots/documents-adm.png)
+<p align="center"><em>
+Расширенная диагностика retrieval: найденные чанки, relevance-score, latency retrieval и состояние retrieval cache.
+</em></p>
 
+![Управление документами knowledge base](docs/screenshots/documents-adm.png)
 
-![rs — adm](docs/screenshots/rs-adm.png)
+<p align="center"><em>
+Управление документами knowledge base: индексация, preprocessing, версии документов и жизненный цикл ingestion pipeline.
+</em></p>
 
+![Панель Retrieval Settings](docs/screenshots/rs-adm.png)
+
+<p align="center"><em>
+Панель управления retrieval backend: переключение vector storage, runtime tuning, chunking и cache-настройки RAG.
+</em></p>
 
 ---
 
 ### Кэширование запросов к базе знаний
 
 Повторяемые RAG-запросы можно ускорять кэшем результатов поиска. В консоли видны состояния OFF / MISS / HIT и задержки поиска. Включение и TTL — в **Retrieval Settings** или через `.env` (подробности — `docs/architecture/cache_layer_design.md`).
+
+📷 Скриншот:
+
+![Сравнение retrieval cache MISS и HIT](docs/screenshots/cache-hit-adm.png)
+
+<p align="center"><em>
+Сравнение retrieval cache MISS и HIT: снижение latency retrieval при повторном запросе.
+</em></p>
 
 ---
 
@@ -126,9 +156,11 @@ Assistant Flow поддерживает текстовые AI-ответы че�
 
 📷 Скриншот:
 
+![Диагностика runtime memory](docs/screenshots/mem-adm.png)
 
-![mem — adm](docs/screenshots/mem-adm.png)
-
+<p align="center"><em>
+Диагностика runtime memory: контекст диалога, trimming history и политика ограничения conversational memory.
+</em></p>
 
 ---
 
@@ -144,12 +176,17 @@ Assistant Flow поддерживает текстовые AI-ответы че�
 
 📷 Скриншоты:
 
+![Голосовое взаимодействие в Telegram](docs/screenshots/audio-tg.png)
 
-![audio — tg](docs/screenshots/audio-tg.png)
+<p align="center"><em>
+Пример голосового взаимодействия с Telegram-ассистентом: распознавание речи и генерация аудио-ответа.
+</em></p>
 
+![Консоль voice pipeline](docs/screenshots/audio-adm.png)
 
-![audio — adm](docs/screenshots/audio-adm.png)
-
+<p align="center"><em>
+Операционная консоль voice pipeline: STT/TTS telemetry, аудио-сессия и таймлайн обработки голосового запроса.
+</em></p>
 
 ---
 
@@ -166,12 +203,17 @@ Assistant Flow поддерживает генерацию изображени�
 
 📷 Скриншоты:
 
+![Генерация изображения в Telegram](docs/screenshots/image-tg.png)
 
-![image — tg](docs/screenshots/image-tg.png)
+<p align="center"><em>
+Пример генерации изображения Telegram-ассистентом по текстовому запросу пользователя.
+</em></p>
 
+![Консоль генерации изображений](docs/screenshots/image-adm.png)
 
-![image — adm](docs/screenshots/image-adm.png)
-
+<p align="center"><em>
+Консоль генерации изображений: refined prompt, telemetry image pipeline и сохранённый generated asset.
+</em></p>
 
 ---
 
@@ -190,12 +232,17 @@ Assistant Flow поддерживает генерацию изображени�
 
 📷 Скриншоты:
 
+![OCR в Telegram](docs/screenshots/ocr_tg.png)
 
-![OCR Telegram](docs/screenshots/ocr_tg.png)
+<p align="center"><em>
+Пример OCR-обработки изображения в Telegram: распознавание текста средствами OpenAI Vision.
+</em></p>
 
+![OCR / Vision pipeline в консоли](docs/screenshots/ocr_adm.png)
 
-![OCR Admin UI](docs/screenshots/ocr_adm.png)
-
+<p align="center"><em>
+OCR/Vision pipeline: распознавание изображения, telemetry обработки и извлечённый текст документа.
+</em></p>
 
 Подробнее — [USER_GUIDE.md](USER_GUIDE.md).
 
@@ -234,15 +281,23 @@ Assistant Flow поддерживает генерацию изображени�
 
 📷 Скриншоты:
 
+![Обзор состояния платформы](docs/screenshots/overview-adm.png)
 
-![overview — adm](docs/screenshots/overview-adm.png)
+<p align="center"><em>
+Обзор состояния платформы Assistant Flow: health-check сервисов, активные AI-провайдеры, retrieval backend и операционные метрики.
+</em></p>
 
+![Сводная операционная статистика](docs/screenshots/summary-adm.png)
 
-![summary — adm](docs/screenshots/summary-adm.png)
+<p align="center"><em>
+Сводная операционная статистика платформы: маршруты обработки, этапы pipeline, телеметрия провайдеров и агрегированные метрики.
+</em></p>
 
+![Журнал execution-сессий](docs/screenshots/logs-adm.png)
 
-![logs — adm](docs/screenshots/logs-adm.png)
-
+<p align="center"><em>
+Журнал execution-сессий и трассировка pipeline обработки запросов Assistant Flow.
+</em></p>
 
 ---
 
@@ -260,11 +315,19 @@ Assistant Flow поддерживает генерацию изображени�
 
 Это позволяет не только запускать RAG, но и контролировать качество работы поиска по базе знаний.
 
-📷 Скриншот:
+📷 Скриншоты:
 
+![Консоль оценки качества RAG](docs/screenshots/ragas-adm.png)
 
-![ragas — adm](docs/screenshots/ragas-adm.png)
+<p align="center"><em>
+Консоль оценки качества RAG: RAGAS-метрики, ручная валидация ответов и анализ retrieved chunks.
+</em></p>
 
+![Сравнение сессий в evaluation run](docs/screenshots/evaluation-run-adm.png)
+
+<p align="center"><em>
+Сравнение отдельных RAG-сессий внутри evaluation run с отображением метрик quality evaluation.
+</em></p>
 
 ---
 

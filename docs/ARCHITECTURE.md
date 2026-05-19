@@ -128,8 +128,31 @@ Telegram → оркестратор → GigaChat (и связанные серв
 
 ### Image / Audio
 
-Изображения: оркестратор → image-провайдер → ассет в чат.  
+Изображения: оркестратор → image-провайдер → ассет в `storage/assets` → отправка в чат.  
 Аудио: STT → текстовый/RAG-путь; TTS при включении.
+
+### OCR / Vision
+
+Отдельный маршрут `vision_ocr` (не локальный Tesseract).
+
+```text
+Telegram: фото или image/* document
+    → run_telegram_ocr_flow (interfaces/telegram_bot.py)
+    → caption_requests_ocr() или режим /mode ocr
+    → VisionOcrService (services/vision_ocr_service.py)
+    → OpenAIChatProvider.extract_text_from_image (vision API)
+    → ответ «Распознанный текст: …» в чат
+    → lifecycle: ocr_started / ocr_done / ocr_error → processing_logs
+    → входной файл → AssetRepository (storage/assets)
+```
+
+| Условие | Поведение |
+|---------|-----------|
+| `/mode ocr` | любое фото обрабатывается как OCR |
+| `/mode text` или `rag` | OCR только при подписи с маркерами («распознай», «OCR», «извлеки текст», …) |
+| Иначе | подсказка включить OCR; RAG по картинке без OCR не выполняется |
+
+Подпись в `/mode ocr` дополняет vision-prompt (один вызов API). Диагностика в Admin UI — семейство **Текст**, route `vision_ocr`.
 
 ### Document indexing
 
@@ -144,6 +167,18 @@ Telegram → оркестратор → GigaChat (и связанные серв
 - **GET /api/health** — postgres, chroma, rag, LLM; статус `degraded` при частичных сбоях.
 
 Страницы: Overview, Summary, Logs; модальные экраны по модальностям.
+
+![Расширенная диагностика retrieval](screenshots/retrieval-details-adm.png)
+
+<p align="center"><em>
+Расширенная диагностика retrieval: найденные чанки, relevance-score, latency retrieval и состояние retrieval cache.
+</em></p>
+
+![Журнал execution-сессий](screenshots/logs-adm.png)
+
+<p align="center"><em>
+Журнал execution-сессий и трассировка pipeline обработки запросов Assistant Flow.
+</em></p>
 
 ---
 

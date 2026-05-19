@@ -11,7 +11,7 @@ cp .env.example .env
 COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
-Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy), при живом боте — `TELEGRAM_BOT_TOKEN`.
+Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy). Telegram: свой бот через BotFather — [RUNBOOK.md](../RUNBOOK.md) §G (плейсхолдер-токен polling не запускает).
 
 ---
 
