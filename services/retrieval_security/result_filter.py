@@ -12,6 +12,10 @@ from typing import Any
 from services.retrieval.base import RetrievalSearchResult
 from services.retrieval_security.context import RetrievalSecurityContext
 from services.retrieval_security.telemetry import emit_retrieval_security_event
+from services.retrieval_security.visibility import (
+    VISIBILITY_RESTRICTED,
+    effective_visibility,
+)
 
 
 def _chunk_tags(meta: dict[str, Any]) -> frozenset[str]:
@@ -53,6 +57,15 @@ def _allowed_by_required_tags(meta: dict[str, Any], ctx: RetrievalSecurityContex
     return ctx.required_tags.issubset(tags)
 
 
+def _allowed_by_visibility(meta: dict[str, Any], ctx: RetrievalSecurityContext) -> bool:
+    if ctx.allowed_visibility is None:
+        return True
+    if not ctx.allowed_visibility:
+        return False
+    vis = effective_visibility(meta)
+    return vis in ctx.allowed_visibility
+
+
 def filter_search_results_by_security(
     results: list[RetrievalSearchResult],
     ctx: RetrievalSecurityContext,
@@ -66,6 +79,7 @@ def filter_search_results_by_security(
     kept: list[RetrievalSearchResult] = []
     denied_source = 0
     denied_other = 0
+    restricted_filtered = 0
 
     for r in results:
         meta = dict(r.chunk.metadata)
@@ -80,6 +94,11 @@ def filter_search_results_by_security(
             continue
         if not _allowed_by_metadata_filters(meta, ctx):
             denied_other += 1
+            continue
+        if not _allowed_by_visibility(meta, ctx):
+            denied_other += 1
+            if effective_visibility(meta) == VISIBILITY_RESTRICTED:
+                restricted_filtered += 1
             continue
         if not _allowed_by_required_tags(meta, ctx):
             denied_other += 1
@@ -96,5 +115,21 @@ def filter_search_results_by_security(
             denied_source=denied_source,
             denied_other=denied_other,
             kept=len(kept),
+        )
+    if ctx.allowed_visibility is not None:
+        emit_retrieval_security_event(
+            "visibility_applied",
+            role=ctx.role,
+            retrieval_scope=ctx.retrieval_scope,
+            security_scope_used=ctx.retrieval_scope,
+            allowed_visibility=",".join(sorted(ctx.allowed_visibility)),
+            kept=len(kept),
+        )
+    if restricted_filtered:
+        emit_retrieval_security_event(
+            "restricted_filtered",
+            role=ctx.role,
+            retrieval_scope=ctx.retrieval_scope,
+            count=restricted_filtered,
         )
     return kept

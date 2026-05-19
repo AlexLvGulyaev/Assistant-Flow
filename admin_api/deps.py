@@ -158,6 +158,19 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
         "retrieved_duplicate_count",
         "retrieval_dedupe_applied",
         "retrieval_vector_hits_raw",
+        "retrieval_security_role",
+        "retrieval_scope",
+        "document_visibility",
+        "visibility_distribution_retrieved",
+        "visibility_distribution_kept",
+        "retrieval_security_summary",
+        "sanitized",
+        "sanitization_policy",
+        "redacted_fields",
+        "truncated_fields",
+        "transcript_preview",
+        "transcript_chars",
+        "chunk_text_full_redacted",
         "intent",
         "scanned_turns",
         "matched_turns",
@@ -172,9 +185,7 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
         "command",
         "deactivated_sessions",
         "telegram_user_id",
-        "user_input",
-        "query",
-        "prompt",
+        "retrieval_ready_query_len",
         "prompt_tokens",
         "completion_tokens",
         "token_usage",
@@ -185,6 +196,9 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
 
 def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
     """Shrink heavy RAG fields while keeping telemetry & summaries for the Admin UI."""
+    from services.security.log_sanitizer import is_forensic_log_policy, sanitize_log_details
+
+    forensic = is_forensic_log_policy(details)
     out: dict[str, Any] = {}
     for k in _PRESERVED_DETAIL_KEYS:
         if k in details:
@@ -229,11 +243,14 @@ def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
                 "passed_filter": raw_c.get("passed_filter"),
                 "text_preview": ps if len(ps) <= 96 else ps[:93] + "…",
             }
-            full_src = raw_c.get("chunk_text_full") or raw_c.get("text_full")
-            if full_src is not None:
-                fs = str(full_src)
-                cap = 10_000
-                row["chunk_text_full"] = fs if len(fs) <= cap else fs[: cap - 1] + "…"
+            if forensic:
+                full_src = raw_c.get("chunk_text_full") or raw_c.get("text_full")
+                if full_src is not None:
+                    fs = str(full_src)
+                    cap = 2000
+                    row["chunk_text_full"] = fs if len(fs) <= cap else fs[: cap - 1] + "…"
+            elif raw_c.get("chunk_text_full_redacted"):
+                row["chunk_text_full_redacted"] = True
             tfp = raw_c.get("text_fp")
             if tfp is not None and str(tfp).strip():
                 row["text_fp"] = str(tfp).strip()[:24]
@@ -249,7 +266,7 @@ def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
             if isinstance(v, (str, int, float, bool)) or v is None:
                 out[passthrough] = v
 
-    return out
+    return sanitize_log_details(out, forensic=forensic)
 
 
 def truncate_details(details: Any, *, max_len: int = 4000) -> Any:
@@ -273,7 +290,11 @@ def truncate_details(details: Any, *, max_len: int = 4000) -> Any:
         s = str(details)
         return s[:500] if len(s) > 500 else s
     if len(raw) <= max_len:
-        return details
+        from services.security.log_sanitizer import is_forensic_log_policy, sanitize_log_details
+
+        return sanitize_log_details(
+            details, forensic=is_forensic_log_policy(details)
+        )
 
     slim = _slim_details_for_payload(details)
     try:

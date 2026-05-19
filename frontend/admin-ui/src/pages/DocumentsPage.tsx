@@ -13,6 +13,7 @@ import {
   postDocumentTextEdit,
   postDocumentsReindex,
   uploadDocument,
+  type DocumentVisibility,
   type DocumentDetailChunk,
   type DocumentDetailResponse,
   type DocumentsResponse,
@@ -118,6 +119,8 @@ export function DocumentsPage() {
 
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadHint, setUploadHint] = useState<string | null>(null);
+  const [uploadVisibility, setUploadVisibility] =
+    useState<DocumentVisibility>("internal");
   const [reindexDocBusy, setReindexDocBusy] = useState(false);
   const [reindexAllBusy, setReindexAllBusy] = useState(false);
   const [actionHint, setActionHint] = useState<string | null>(null);
@@ -472,16 +475,17 @@ export function DocumentsPage() {
     setUploadBusy(true);
     setUploadHint("Загрузка…");
     try {
-      const r = await uploadDocument(f);
+      const r = await uploadDocument(f, uploadVisibility);
       if (r.success) {
         const sizes =
           r.original_bytes != null && r.cleaned_bytes != null
             ? ` · raw ${formatBytes(r.original_bytes)} → cleaned ${formatBytes(r.cleaned_bytes)}`
             : "";
+        const visLabel = r.document_visibility ?? uploadVisibility;
         setUploadHint(
           r.chunks != null
-            ? `Загружено, индексация завершена · чанков: ${r.chunks}${sizes}`
-            : `Загружено${sizes}`
+            ? `Загружено (${visLabel}), индексация завершена · чанков: ${r.chunks}${sizes}`
+            : `Загружено (${visLabel})${sizes}`
         );
         setRefreshKey((k) => k + 1);
         if (r.document_id) {
@@ -674,6 +678,22 @@ export function DocumentsPage() {
             aria-hidden
             onChange={onFileChange}
           />
+          <label className="docs-visibility-label muted">
+            Видимость
+            <select
+              className="docs-visibility-select"
+              value={uploadVisibility}
+              disabled={uploadBusy}
+              onChange={(e) =>
+                setUploadVisibility(e.target.value as DocumentVisibility)
+              }
+              aria-label="Видимость загружаемого документа"
+            >
+              <option value="public">public — доступен guest</option>
+              <option value="internal">internal — employee+ (по умолчанию)</option>
+              <option value="restricted">restricted — только admin</option>
+            </select>
+          </label>
           <button
             type="button"
             className="docs-action-btn docs-action-btn--primary"
@@ -919,6 +939,9 @@ export function DocumentsPage() {
                       <span className="logs-item__route-status">
                         {String(d.status || "").toUpperCase()} · v
                         {d.active_version ?? "—"} · чанков {d.chunk_count ?? 0}
+                        {d.document_visibility ? (
+                          <> · vis {d.document_visibility}</>
+                        ) : null}
                       </span>
                     </div>
                     <div className="logs-item__preview">{d.filename || "—"}</div>

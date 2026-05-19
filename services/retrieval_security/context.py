@@ -33,6 +33,8 @@ class RetrievalSecurityContext:
     retrieval_scope: str = "unrestricted"
     metadata_filters: tuple[tuple[str, str], ...] = ()
     required_tags: frozenset[str] = frozenset()
+    #: Допустимые значения ``visibility`` / ``document_visibility``; ``None`` — без фильтра.
+    allowed_visibility: frozenset[str] | None = None
 
     @classmethod
     def permissive_default(cls) -> RetrievalSecurityContext:
@@ -43,6 +45,7 @@ class RetrievalSecurityContext:
             retrieval_scope="unrestricted",
             metadata_filters=(),
             required_tags=frozenset(),
+            allowed_visibility=None,
         )
 
     def is_fully_unrestricted(self) -> bool:
@@ -51,6 +54,7 @@ class RetrievalSecurityContext:
             and self.retrieval_scope == "unrestricted"
             and not self.metadata_filters
             and not self.required_tags
+            and self.allowed_visibility is None
         )
 
     def restricts_vector_query(self) -> bool:
@@ -59,6 +63,8 @@ class RetrievalSecurityContext:
         ``allowed_sources == frozenset()`` не требует where: недопустимый ``$in: []``.
         """
         if self.allowed_sources is not None and len(self.allowed_sources) > 0:
+            return True
+        if self.allowed_visibility is not None and len(self.allowed_visibility) > 0:
             return True
         return any(str(k).strip() for k, _ in self.metadata_filters)
 
@@ -81,4 +87,6 @@ class RetrievalSecurityContext:
             )
         if self.required_tags:
             parts.append("req_tags=" + ",".join(sorted(self.required_tags)))
+        if self.allowed_visibility is not None:
+            parts.append("vis=" + ",".join(sorted(self.allowed_visibility)))
         return "|".join(parts)

@@ -101,6 +101,18 @@ class RuntimeLifecycleService:
 
         et = (error_text or "")[:_MAX_ERROR_TEXT] if error_text else None
 
+        safe_details = details
+        if isinstance(details, dict) and not details.get("sanitized"):
+            from services.security.log_sanitizer import (
+                is_forensic_log_policy,
+                sanitize_log_details,
+            )
+
+            safe_details = sanitize_log_details(
+                dict(details),
+                forensic=is_forensic_log_policy(details),
+            )
+
         try:
             with get_connection() as conn:
                 self._repo.insert_processing_log(
@@ -109,7 +121,7 @@ class RuntimeLifecycleService:
                     intake_event_id=intake_event_id,
                     stage=stage,
                     status=status,
-                    details=details,
+                    details=safe_details,
                     error_text=et,
                     attempt=attempt,
                 )

@@ -3157,3 +3157,166 @@ portfolio-test-
 - Увеличение retrieval-контекста может повышать шум.
 - Метрики RAGAS полезны как автоматическая диагностика, но не заменяют ручную проверку.
 - Для production-подхода требуются reranking, развитая retrieval-диагностика и ручной review спорных кейсов.
+
+---
+
+## 56. P8.0 Security / RBAC architecture audit (append-only)
+
+### 56.1 Назначение
+
+Архитектурный **security audit** и **RBAC foundation** без production IAM, без миграций и без изменений runtime. Закрывает пункт unified roadmap **P8 — Security / RBAC / Multi-user groundwork** (фаза design, 2026-05-19).
+
+### 56.2 Артефакты
+
+- Design: ``docs/architecture/security_rbac_design.md`` — trust boundaries, insertion points, metadata model, PII masking strategy, bounded roadmap P8.1+.
+- Session: ``docs/cursor_sessions/2026-05-19_security-rbac-architecture-audit.md``.
+- Обновлены: ``docs/SECURITY_NOTES.md`` (PII в logs, статус P6.7 на Telegram-пути).
+
+### 56.3 Ключевые выводы audit
+
+- Основной RAG-путь Telegram: ``rag_service.answer()`` **без** ``security_context`` → permissive retrieval для всех пользователей.
+- Утечки PII: ``processing_logs`` (``user_input``, ``chunk_text_full``, ``retrieval_ready_query``), retrieval cache SQLite, передача context во внешний LLM.
+- Admin API ``/api/*`` без auth; demo-порты Postgres/Chroma/Weaviate на хосте.
+- P6.7 (``services/retrieval_security/``) — готовый задел; masking **не** подключён к runtime.
+
+### 56.4 Следующий bounded pass (P8.1, не в этой сессии)
+
+- Policy resolver + ``security_context`` в ``telegram_bot.py``.
+- Pre-LLM masking для ``requires_masking``.
+- Log sanitization tier; metadata на upload — без JWT/OAuth/RLS.
+
+---
+
+## 57. P8.1 Retrieval security wiring (append-only)
+
+### 57.1 Назначение
+
+Первый bounded **runtime** pass: подключение P6.7/P8.0 foundation к Telegram RAG без production IAM.
+
+### 57.2 Реализовано
+
+- ``services/retrieval_security/policy_resolver.py`` — env mapping → ``RetrievalSecurityContext``.
+- ``interfaces/telegram_bot.py`` — ``security_context`` в ``RagQueryService.answer()``.
+- ``allowed_visibility`` в ``RetrievalSecurityContext``; post-filter + Chroma ``where``.
+- ``services/retrieval_security/visibility.py`` — нормализация ``visibility`` / ``document_visibility``.
+- Pre-LLM masking в ``rag_query_service._mask_context_before_llm``.
+- Log tier: ``RagRequestDiagnostics.to_log_details(forensic=)`` — summary vs admin forensic.
+- Smoke: ``scripts/test_p8_1_retrieval_security_wiring_smoke.py``.
+
+### 57.3 Env (Telegram retrieval roles)
+
+- ``TELEGRAM_DEFAULT_RETRIEVAL_ROLE`` — ``guest`` | ``employee`` | ``admin`` (default: ``employee``).
+- ``TELEGRAM_ADMIN_USER_IDS`` — comma-separated telegram user id → admin.
+- ``TELEGRAM_GUEST_USER_IDS`` — comma-separated → guest (ниже admin).
+
+### 57.4 Политика ``visibility=unspecified``
+
+- **guest:** ``unspecified`` **не** доступен (только ``public``).
+- **employee:** ``unspecified`` трактуется как legacy internal-compatible (public + internal + unspecified).
+- **restricted:** только admin (unrestricted).
+
+### 57.5 Ограничения (намеренно)
+
+- Нет JWT/OAuth/frontend auth; Admin API открыт.
+- ~~Metadata на upload не обогащается автоматически~~ → см. §58 P8.2 (upload + stamp на чанках).
+- FAISS: pre-vector filter ограничен (oversample + post-filter, как P6.7).
+
+---
+
+## 58. P8.2 Security-aware document ingestion (append-only)
+
+### 58.1 Назначение
+
+Ingestion/indexing проставляет ``visibility`` / ``document_visibility`` на чанках (PostgreSQL JSONB + vector backends) без миграции таблицы ``documents``.
+
+### 58.2 Реализовано
+
+- ``services/retrieval_security/document_security.py`` — normalize, default ``internal``, ``stamp_chunks_visibility``.
+- Upload: ``POST /api/documents/upload`` form field ``visibility``; Admin UI select на Documents.
+- ``AdminKnowledgeIndexer.index_single_file(..., document_visibility=)``; reindex сохраняет visibility из PG.
+- Список документов: ``document_visibility`` из первого чанка активной версии.
+- RAG diagnostics: ``visibility`` на чанке, ``visibility_distribution_*``, ``retrieval_security_summary``.
+- Telemetry: ``visibility_applied``, ``restricted_filtered`` (P8.2).
+- Smoke: ``scripts/test_p8_2_security_aware_document_ingestion_smoke.py``.
+
+### 58.3 Default policy
+
+- **Новые upload:** default ``internal`` (guest не видит без явного ``public``).
+- **Legacy corpus:** ``unspecified`` на старых чанках — employee/admin по P8.1.
+- **Миграция:** не выполняется.
+
+---
+
+## 59. P8.3 Retrieval-aware logging sanitization (append-only)
+
+### 59.1 Назначение
+
+Bounded слой sanitization для operational logs / RAG diagnostics без giant logging rewrite.
+
+### 59.2 Реализовано
+
+- ``services/security/log_sanitizer.py`` — ``sanitize_log_details``, ``sanitize_text_for_log``, policies ``operational`` / ``forensic_admin``.
+- ``RagRequestDiagnostics.to_log_details`` → sanitizer; ``retrieval_ready_query_len`` в operational; полный ``retrieval_ready_query`` только forensic.
+- ``RuntimeLifecycleService.log_processing_event`` — sanitization если ``details`` ещё не ``sanitized``.
+- ``interfaces/telegram_bot.py`` — финальный ``rag_details`` через sanitizer.
+- ``admin_api/deps.py`` — markers в preserved keys; ``chunk_text_full`` только forensic (cap 2k); финальный ``sanitize_log_details``.
+- Smoke: ``scripts/test_p8_3_logging_sanitization_smoke.py``.
+
+### 59.3 Known limitations (без изменений в P8.3)
+
+- Retrieval cache SQLite — полные chunk texts (retrieval quality).
+- ``chat_messages`` / memory — не переписывались.
+- Исторические ``processing_logs`` — не очищаются.
+- Admin API без auth.
+
+---
+
+## 60. P8.4 Security verification & homework report (append-only)
+
+### 60.1 Назначение
+
+Bounded verification P8.1–P8.3 без нового security subsystem; финальный artefact для урока 9 модуля 5.
+
+### 60.2 Реализовано
+
+- ``scripts/test_p8_4_security_verification_smoke.py`` — матрица guest/employee/admin, diagnostics/sanitization, регрессия P8.1–P8.3.
+- ``docs/homework/module5_lesson9_security_rag_report.md`` — краткий engineering report (роли, меры, выводы).
+- Session log: ``docs/cursor_sessions/2026-05-19_p8-4-security-verification-and-homework-report.md``.
+
+### 60.3 Verification status
+
+| Сценарий | Результат |
+|----------|-----------|
+| Guest: только public | OK (smoke) |
+| Employee: public+internal+unspecified | OK (smoke) |
+| Admin: unrestricted + forensic bounded | OK (smoke) |
+| Operational logs без raw chunk/query | OK (P8.3 + P8.4) |
+| P8.1–P8.3 regression | OK (в составе P8.4 smoke) |
+
+### 60.4 Known limitations (без изменений)
+
+См. §59.3 + homework report: historical logs, cache SQLite, memory, no auth, no RLS, no encrypted storage.
+
+---
+
+## 61. P8.5 Security case packaging (append-only)
+
+### 61.1 Назначение
+
+Исправление operational discipline (self-contained session logs P8.1–P8.4) + demo-oriented security walkthrough для portfolio case.
+
+### 61.2 Реализовано
+
+- Session logs ``docs/cursor_sessions/2026-05-19_p8-{1,2,3,4}-*.md`` — встроен полный текст task prompt (без единственной ссылки на ``cursor_tasks_local/``).
+- ``docs/security/security_walkthrough.md`` — до/после P8, E2E сценарии, known limitations, demo commands.
+- Session log: ``docs/cursor_sessions/2026-05-19_p8-5-security-case-packaging.md``.
+
+### 61.3 Артефакты для демонстрации
+
+| Артефакт | Назначение |
+|----------|------------|
+| ``docs/security/security_walkthrough.md`` | Portfolio demo / урок 9 |
+| ``docs/homework/module5_lesson9_security_rag_report.md`` | Краткий homework report |
+| ``scripts/test_p8_4_security_verification_smoke.py`` | Агрегированная верификация P8.1–P8.3 |
+
+Runtime-код не менялся.

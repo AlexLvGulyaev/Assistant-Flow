@@ -110,9 +110,15 @@ export async function fetchDocumentDetail(
   return parseJson<DocumentDetailResponse>(res);
 }
 
-export async function uploadDocument(file: File): Promise<UploadDocumentResponse> {
+export type DocumentVisibility = "public" | "internal" | "restricted";
+
+export async function uploadDocument(
+  file: File,
+  visibility: DocumentVisibility = "internal"
+): Promise<UploadDocumentResponse> {
   const fd = new FormData();
   fd.append("file", file);
+  fd.append("visibility", visibility);
   const res = await fetch(`${getApiBaseUrl()}/api/documents/upload`, {
     method: "POST",
     body: fd,
@@ -424,6 +430,7 @@ export interface DocumentItem {
   path_category?: string | null;
   last_indexing_event?: LogItem | null;
   preprocessing?: DocumentPreprocessingPublic | null;
+  document_visibility?: string | null;
 }
 
 export interface DocumentsObservability {
@@ -512,6 +519,7 @@ export interface UploadDocumentResponse {
   error?: string | null;
   chunks?: number;
   document_id?: string | null;
+  document_visibility?: string | null;
   preprocessing?: DocumentPreprocessingPublic | null;
   original_bytes?: number | null;
   cleaned_bytes?: number | null;

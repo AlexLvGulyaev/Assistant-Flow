@@ -31,6 +31,9 @@ from services.asset_repository import AssetRef, AssetRepository
 from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_query_service import RagQueryService
+from services.retrieval_security.context import ROLE_ADMIN
+from services.retrieval_security.policy_resolver import resolve_telegram_retrieval_security
+from services.security.log_sanitizer import sanitize_log_details
 from services.rag_types import RagQueryResult
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
 from services.retrieval.runtime_manager import RetrievalBackendManager
@@ -1846,8 +1849,10 @@ def create_bot() -> telebot.TeleBot:
                             )
                     else:
                         bot.send_message(message.chat.id, "Ищу в базе знаний… ⏳")
+                        security_ctx = resolve_telegram_retrieval_security(uid)
                         print(
-                            "[assistant-flow] rag before rag_service.answer",
+                            "[assistant-flow] rag before rag_service.answer "
+                            f"role={security_ctx.role} scope={security_ctx.retrieval_scope}",
                             flush=True,
                         )
                         result = rag_service.answer(
@@ -1855,15 +1860,26 @@ def create_bot() -> telebot.TeleBot:
                             conversation_history=history,
                             hybrid_session_id=hybrid_session_id,
                             hybrid_user_id=hybrid_user_id,
+                            security_context=security_ctx,
                         )
                         print(
                             "[assistant-flow] rag after rag_service.answer",
                             flush=True,
                         )
                         rag_diag = result.diagnostics
-                        rag_details: dict[str, object] = {"route": "rag", "user_input": text}
+                        forensic_logs = security_ctx.role == ROLE_ADMIN
+                        rag_details: dict[str, object] = {
+                            "route": "rag",
+                            "query_preview": _safe_query_preview_for_log(text),
+                            "retrieval_security_role": security_ctx.role,
+                            "retrieval_scope": security_ctx.retrieval_scope,
+                        }
+                        if forensic_logs:
+                            rag_details["user_input"] = text
                         if rag_diag is not None:
-                            rag_details.update(rag_diag.to_log_details())
+                            rag_details.update(
+                                rag_diag.to_log_details(forensic=forensic_logs)
+                            )
                         rag_status = (
                             "error"
                             if rag_details.get("fallback_reason") == "llm_error"
@@ -1871,8 +1887,9 @@ def create_bot() -> telebot.TeleBot:
                         )
                         reply = _format_rag_telegram_reply(result)
                         telegram_reply = format_for_telegram(reply)
-                        rag_details["answer_text"] = _safe_answer_text_for_log(
-                            telegram_reply
+                        rag_details["answer_text"] = telegram_reply
+                        rag_details = sanitize_log_details(
+                            rag_details, forensic=forensic_logs
                         )
                         lifecycle.log_processing_event(
                             execution_id=execution_id,

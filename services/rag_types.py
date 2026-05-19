@@ -17,6 +17,7 @@ class RagRetrievedChunkDiagnostics:
     text_fp: str = ""
     retrieval_backend: str | None = None
     source_backend: str | None = None
+    visibility: str | None = None
 
     def to_log_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -39,6 +40,9 @@ class RagRetrievedChunkDiagnostics:
             if rb:
                 out["retrieval_backend"] = rb
                 out["source_backend"] = sb
+        vis = (self.visibility or "").strip()
+        if vis:
+            out["visibility"] = vis
         return out
 
 
@@ -108,8 +112,14 @@ class RagRequestDiagnostics:
     #: Exact query string passed to retrieval (embed + vector search), after any future
     #: rewrite/expansion; today typically equals the normalized user message. Not a preview.
     retrieval_ready_query: str | None = None
+    #: P8.1: роль retrieval policy для sanitization логов.
+    security_role: str | None = None
+    retrieval_scope_applied: str | None = None
+    visibility_distribution_retrieved: dict[str, int] | None = None
+    visibility_distribution_kept: dict[str, int] | None = None
+    retrieval_security_summary: dict[str, object] | None = None
 
-    def to_log_details(self) -> dict[str, object]:
+    def to_log_details(self, *, forensic: bool = False) -> dict[str, object]:
         """Compact JSON-safe payload for ``processing_logs.details``."""
         out: dict[str, object] = {
             "query_preview": self.query_preview,
@@ -122,7 +132,10 @@ class RagRequestDiagnostics:
             "scores": [float(s) for s in self.scores],
             "context_chars": int(self.context_chars),
             "fallback_reason": self.fallback_reason,
-            "retrieved_chunks": [c.to_log_dict() for c in self.retrieved_chunks],
+            "retrieved_chunks": [
+                c.to_log_dict() if forensic else _chunk_log_dict_summary(c)
+                for c in self.retrieved_chunks
+            ],
             "used_chunks_count": int(self.filtered_count),
         }
         if self.scores:
@@ -213,13 +226,31 @@ class RagRequestDiagnostics:
             out["retrieval_dedupe_applied"] = bool(self.retrieval_dedupe_applied)
         if self.retrieval_vector_hits_raw is not None:
             out["retrieval_vector_hits_raw"] = int(self.retrieval_vector_hits_raw)
+        if self.security_role:
+            out["retrieval_security_role"] = self.security_role
+        if self.retrieval_scope_applied:
+            out["retrieval_scope"] = self.retrieval_scope_applied
+        if self.visibility_distribution_retrieved:
+            out["visibility_distribution_retrieved"] = dict(
+                self.visibility_distribution_retrieved
+            )
+        if self.visibility_distribution_kept:
+            out["visibility_distribution_kept"] = dict(
+                self.visibility_distribution_kept
+            )
+        if self.retrieval_security_summary:
+            out["retrieval_security_summary"] = dict(self.retrieval_security_summary)
         rq = (self.retrieval_ready_query or "").strip()
         if rq:
-            out["retrieval_ready_query"] = rq
-        return out
+            out["retrieval_ready_query_len"] = len(rq)
+            if forensic:
+                out["retrieval_ready_query"] = rq
+        from services.security.log_sanitizer import sanitize_log_details
+
+        return sanitize_log_details(out, forensic=forensic)
 
     def emit_stdout(self) -> None:
-        """Log one block of rag diagnostics lines to stdout."""
+        """Log one block of rag diagnostics lines to stdout (без полных тел чанков)."""
         scores_str = "[" + ", ".join(f"{s:.4f}" for s in self.scores) + "]"
         print(
             f"[assistant-flow] rag diagnostics: query_preview={self.query_preview!r}",
@@ -279,103 +310,10 @@ class RagRequestDiagnostics:
                 f"{self.rag_pipeline_wall_ms}",
                 flush=True,
             )
-        if self.backend_wrapper_class:
+        if self.security_role:
             print(
-                f"[assistant-flow] rag diagnostics: backend_wrapper_class="
-                f"{self.backend_wrapper_class}",
-                flush=True,
-            )
-        if self.backend_inner_class:
-            print(
-                f"[assistant-flow] rag diagnostics: backend_inner_class="
-                f"{self.backend_inner_class}",
-                flush=True,
-            )
-        if self.backend_storage_label:
-            print(
-                f"[assistant-flow] rag diagnostics: backend_storage_label="
-                f"{self.backend_storage_label!r}",
-                flush=True,
-            )
-        if self.retrieval_cache_hit is not None:
-            print(
-                f"[assistant-flow] rag diagnostics: retrieval_cache_hit="
-                f"{self.retrieval_cache_hit}",
-                flush=True,
-            )
-        if self.retrieval_cache_miss is not None:
-            print(
-                f"[assistant-flow] rag diagnostics: retrieval_cache_miss="
-                f"{self.retrieval_cache_miss}",
-                flush=True,
-            )
-        if self.cache_layer:
-            print(
-                f"[assistant-flow] rag diagnostics: cache_layer={self.cache_layer!r}",
-                flush=True,
-            )
-        if self.cache_latency_ms is not None:
-            print(
-                f"[assistant-flow] rag diagnostics: cache_latency_ms={self.cache_latency_ms}",
-                flush=True,
-            )
-        if self.retrieval_cache_generation:
-            print(
-                "[assistant-flow] rag diagnostics: retrieval_cache_generation="
-                f"{self.retrieval_cache_generation!r}",
-                flush=True,
-            )
-        if self.retrieval_cache_backend:
-            print(
-                "[assistant-flow] rag diagnostics: retrieval_cache_backend="
-                f"{self.retrieval_cache_backend!r}",
-                flush=True,
-            )
-        if self.retrieval_cache_fingerprint_backend:
-            print(
-                "[assistant-flow] rag diagnostics: retrieval_cache_fingerprint_backend="
-                f"{self.retrieval_cache_fingerprint_backend!r}",
-                flush=True,
-            )
-        if self.followup_question_detected is not None:
-            print(
-                "[assistant-flow] rag diagnostics: followup_question_detected="
-                f"{self.followup_question_detected}",
-                flush=True,
-            )
-        if self.history_turns_used is not None:
-            print(
-                f"[assistant-flow] rag diagnostics: history_turns_used={self.history_turns_used}",
-                flush=True,
-            )
-        if self.history_trimming_applied is not None:
-            print(
-                "[assistant-flow] rag diagnostics: history_trimming_applied="
-                f"{self.history_trimming_applied}",
-                flush=True,
-            )
-        if self.conversational_context_size_chars is not None:
-            print(
-                "[assistant-flow] rag diagnostics: conversational_context_size_chars="
-                f"{self.conversational_context_size_chars}",
-                flush=True,
-            )
-        if self.retrieval_dedupe_applied is not None:
-            print(
-                "[assistant-flow] rag diagnostics: retrieval_dedupe_applied="
-                f"{self.retrieval_dedupe_applied}",
-                flush=True,
-            )
-        if self.retrieved_duplicate_count is not None:
-            print(
-                "[assistant-flow] rag diagnostics: retrieved_duplicate_count="
-                f"{self.retrieved_duplicate_count}",
-                flush=True,
-            )
-        if self.retrieval_vector_hits_raw is not None:
-            print(
-                "[assistant-flow] rag diagnostics: retrieval_vector_hits_raw="
-                f"{self.retrieval_vector_hits_raw}",
+                f"[assistant-flow] rag diagnostics: retrieval_security_role="
+                f"{self.security_role}",
                 flush=True,
             )
         rq = (self.retrieval_ready_query or "").strip()
@@ -386,6 +324,31 @@ class RagRequestDiagnostics:
                 f"{len(rq)} preview={preview!r}",
                 flush=True,
             )
+
+
+def _chunk_log_dict_summary(chunk: RagRetrievedChunkDiagnostics) -> dict[str, object]:
+    """Chunk snapshot без полного текста (operational tier)."""
+    out: dict[str, object] = {
+        "source": chunk.source,
+        "score": chunk.score,
+        "passed_filter": bool(chunk.passed_filter),
+        "text_preview": chunk.text_preview,
+    }
+    fp = (chunk.text_fp or "").strip()
+    if fp:
+        out["text_fp"] = fp
+    rb0 = chunk.retrieval_backend
+    sb0 = chunk.source_backend
+    if rb0 or sb0:
+        rb = (rb0 or sb0 or "").strip().lower()
+        sb = (sb0 or rb0 or rb).strip().lower()
+        if rb:
+            out["retrieval_backend"] = rb
+            out["source_backend"] = sb
+    vis = (chunk.visibility or "").strip()
+    if vis:
+        out["visibility"] = vis
+    return out
 
 
 @dataclass(frozen=True)

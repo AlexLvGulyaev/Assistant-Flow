@@ -43,6 +43,7 @@ from services.retrieval.retrieval_tuning import (
     validate_and_normalize_patch,
 )
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
+from services.retrieval_security.document_security import normalize_upload_visibility
 from services.retrieval.factory import (
     KNOWN_RAG_BACKENDS,
     build_retrieval_backend,
@@ -570,7 +571,13 @@ class AdminService:
                 out.append(p.name)
         return sorted(out)
 
-    def save_uploaded_document(self, filename: str, data: bytes) -> tuple[Path, dict[str, Any]]:
+    def save_uploaded_document(
+        self,
+        filename: str,
+        data: bytes,
+        *,
+        document_visibility: str | None = None,
+    ) -> tuple[Path, dict[str, Any]]:
         """
         Raw asset (immutable) → preprocessing → cleaned UTF-8 → RAG compatibility ``.txt``.
 
@@ -630,10 +637,12 @@ class AdminService:
         if not raw_src.exists() or not raw_src.is_file():
             raise RuntimeError(f"AssetRepository raw asset not accessible: {raw_src}")
 
+        vis_norm = normalize_upload_visibility(document_visibility)
         base: dict[str, Any] = {
             "upload_id": pipeline_id,
             "execution_id": pipeline_id,
             "source": "admin_api",
+            "document_visibility": vis_norm,
             "filename": index_name,
             "source_filename": index_name,
             "original_upload_filename": safe,
@@ -1574,9 +1583,18 @@ class AdminService:
         except Exception:
             return []
 
-    def upload_txt_and_index(self, filename: str, data: bytes) -> dict[str, Any]:
+    def upload_txt_and_index(
+        self,
+        filename: str,
+        data: bytes,
+        *,
+        document_visibility: str | None = None,
+    ) -> dict[str, Any]:
         """Save document via preprocessing pipeline, then index canonical ``.txt``."""
-        dest, upload_summary = self.save_uploaded_document(filename, data)
+        vis = normalize_upload_visibility(document_visibility)
+        dest, upload_summary = self.save_uploaded_document(
+            filename, data, document_visibility=vis
+        )
         pipeline_id = str(upload_summary.get("upload_id") or uuid.uuid4())
         snap = _document_upload_log_snapshot_from_summary(upload_summary)
         self._lifecycle.log_processing_event(
@@ -1594,7 +1612,7 @@ class AdminService:
         )
         outcome: FileIndexOutcome | None = None
         try:
-            outcome = indexer.index_single_file(dest)
+            outcome = indexer.index_single_file(dest, document_visibility=vis)
         except Exception as exc:
             self._lifecycle.log_processing_event(
                 execution_id=pipeline_id,
@@ -1708,6 +1726,7 @@ class AdminService:
             "error": outcome.error,
             "chunks": outcome.chunks,
             "document_id": doc_id,
+            "document_visibility": upload_summary.get("document_visibility"),
             "preprocessing": upload_summary.get("preprocessing"),
             "original_bytes": upload_summary.get("original_bytes"),
             "cleaned_bytes": upload_summary.get("cleaned_bytes"),
@@ -1792,7 +1811,18 @@ class AdminService:
             chroma_dir=self._chroma_dir,
             use_postgres=True,
         )
-        outcome = indexer.index_single_file(path)
+        preserved_vis: str | None = None
+        try:
+            with get_connection() as conn:
+                preserved_vis = self._doc_repo.get_active_version_visibility(
+                    conn, document_id
+                )
+                conn.commit()
+        except Exception:
+            preserved_vis = None
+        outcome = indexer.index_single_file(
+            path, document_visibility=preserved_vis
+        )
         if outcome.error:
             self._lifecycle.log_processing_event(
                 execution_id=execution_id,
@@ -1802,6 +1832,7 @@ class AdminService:
                 details={
                     "document_id": str(document_id),
                     "filename": source_fn or path.name,
+                    "document_visibility": preserved_vis,
                 },
                 error_text=str(outcome.error)[:8000],
             )

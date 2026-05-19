@@ -31,6 +31,10 @@ from services.retrieval.faiss_backend import (
 )
 from services.retrieval.factory import normalize_rag_backend
 from services.retrieval.weaviate_backend import WEAVIATE_PG_COLLECTION_LABEL, WeaviateBackend
+from services.retrieval_security.document_security import (
+    normalize_upload_visibility,
+    stamp_chunks_visibility,
+)
 from utils.config import AppConfig
 
 
@@ -295,10 +299,18 @@ class AdminKnowledgeIndexer:
             outcomes=outcomes,
         )
 
-    def index_single_file(self, file_path: Path) -> FileIndexOutcome:
+    def index_single_file(
+        self,
+        file_path: Path,
+        *,
+        document_visibility: str | None = None,
+    ) -> FileIndexOutcome:
         """
         Index one file already under ``documents_dir`` without wiping Chroma.
         Used for admin single-document reindex / post-upload indexing.
+
+        ``document_visibility``: public | internal | restricted; None → только legacy
+        ``unspecified`` на чанках (без принудительного stamp).
         """
         root = self._documents_dir.resolve()
         try:
@@ -355,9 +367,15 @@ class AdminKnowledgeIndexer:
             target_resolved = resolved.resolve()
             last_for_target: FileIndexOutcome | None = None
             for fp in iter_supported_files(self._documents_dir):
+                vis_arg = (
+                    document_visibility
+                    if fp.resolve() == target_resolved
+                    else None
+                )
                 outcome = self._index_one_file(
                     file_path=fp,
                     vector_backend=vector_backend,
+                    document_visibility=vis_arg,
                 )
                 if fp.resolve() == target_resolved:
                     last_for_target = outcome
@@ -401,9 +419,15 @@ class AdminKnowledgeIndexer:
             target_resolved = resolved.resolve()
             last_for_target_w: FileIndexOutcome | None = None
             for fp in iter_supported_files(self._documents_dir):
+                vis_arg = (
+                    document_visibility
+                    if fp.resolve() == target_resolved
+                    else None
+                )
                 outcome = self._index_one_file(
                     file_path=fp,
                     vector_backend=vector_backend_w,
+                    document_visibility=vis_arg,
                 )
                 if fp.resolve() == target_resolved:
                     last_for_target_w = outcome
@@ -433,13 +457,40 @@ class AdminKnowledgeIndexer:
             persist_directory=self._chroma_dir,
         )
         chroma_b = ChromaBackend(store)
-        return self._index_one_file(file_path=resolved, vector_backend=chroma_b)
+        return self._index_one_file(
+            file_path=resolved,
+            vector_backend=chroma_b,
+            document_visibility=document_visibility,
+        )
+
+    def _resolve_document_visibility_for_file(
+        self,
+        abs_path: str,
+        explicit: str | None,
+    ) -> str | None:
+        if explicit is not None and str(explicit).strip():
+            return normalize_upload_visibility(explicit)
+        if not self._use_postgres or not (self._config.database_url or "").strip():
+            return None
+        try:
+            with get_connection() as conn:
+                doc_id = self._doc_repo.find_latest_document_id_by_storage_path(
+                    conn, abs_path
+                )
+                if doc_id is None:
+                    return None
+                vis = self._doc_repo.get_active_version_visibility(conn, doc_id)
+                conn.commit()
+            return vis
+        except Exception:
+            return None
 
     def _index_one_file(
         self,
         *,
         file_path: Path,
         vector_backend: RetrievalBackend,
+        document_visibility: str | None = None,
     ) -> FileIndexOutcome:
         abs_path = str(file_path.resolve())
         title = file_path.stem
@@ -515,6 +566,17 @@ class AdminKnowledgeIndexer:
             with get_connection() as conn:
                 with conn.transaction():
                     self._doc_repo.delete_document_chunks_for_version(conn, ver_id)
+
+        vis_to_stamp = self._resolve_document_visibility_for_file(
+            abs_path, document_visibility
+        )
+        if vis_to_stamp is not None:
+            raw_chunks = stamp_chunks_visibility(raw_chunks, vis_to_stamp)
+            print(
+                "[assistant-flow] indexer: visibility_applied "
+                f"file={source_filename!r} visibility={vis_to_stamp}",
+                flush=True,
+            )
 
         chunks = self._attach_chroma_metadata(raw_chunks, doc_id, ver_id)
 

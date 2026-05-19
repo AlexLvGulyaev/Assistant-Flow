@@ -40,8 +40,26 @@
 
 ## RAG и политики доступа
 
-- Фильтрация поиска по источникам / метаданным (`retrieval_security`) — **направление развития**, не завершённый продуктовый контур для мультитенанта.
-- По умолчанию Telegram-путь использует permissive-политику; не полагаться на изоляцию «клиентов» без явной настройки.
+- **P8.1 (2026-05-19):** основной Telegram RAG path передаёт `security_context` через `policy_resolver` (env: `TELEGRAM_DEFAULT_RETRIEVAL_ROLE`, `TELEGRAM_ADMIN_USER_IDS`, `TELEGRAM_GUEST_USER_IDS`).
+- Роли: **guest** → только `visibility=public`; **employee** → public + internal + legacy `unspecified`; **admin** → unrestricted.
+- Дефолтная роль Telegram: **employee** (совместимость с corpus без явной visibility).
+- **P8.2:** при upload через Admin API задаётся `visibility` (`public` | `internal` | `restricted`); default **internal**; metadata попадает в chunk/vector store. Legacy `unspecified` не меняется.
+- Admin API по-прежнему **без** auth.
+- Design: [architecture/security_rbac_design.md](architecture/security_rbac_design.md).
+
+---
+
+## PII и операционные логи
+
+- **P8.3 (2026-05-19):** централизованный `services/security/log_sanitizer.py` — sanitization перед записью в `processing_logs` и при отдаче через Admin API (`truncate_details` / `_slim_details_for_payload`).
+- Operational policy: redact `user_input`, `retrieval_ready_query`, `chunk_text_full`, `transcript`, `context`, `query`, `raw_payload`; PII masking + length caps; markers `sanitized`, `redacted_fields`, `truncated_fields`, `sanitization_policy`.
+- Forensic (role=admin / `forensic=True`): bounded поля с PII masking, не raw unlimited.
+- **P8.1:** pre-LLM masking перед LLM; retrieval cache изолирован по security fingerprint.
+- Admin API `/api/logs/recent` без auth — оператор видит записанное в БД (новые записи — sanitized; исторические строки — без ретро-очистки).
+- STT: `transcript` redact в operational logs → `transcript_preview` + `transcript_chars` (через lifecycle sanitizer).
+- **Known limitations:** retrieval cache SQLite (полные тексты чанков для hit quality); `chat_messages` / memory subsystem; исторические `processing_logs` в PostgreSQL.
+- **P8.4:** верификация — `scripts/test_p8_4_security_verification_smoke.py`; отчёт для ДЗ — `docs/homework/module5_lesson9_security_rag_report.md`.
+- **P8.5:** demo walkthrough — [security/security_walkthrough.md](security/security_walkthrough.md); session logs P8.1–P8.4 приведены к self-contained формату (полные prompt'ы встроены).
 
 ---
 

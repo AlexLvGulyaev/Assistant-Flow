@@ -15,6 +15,11 @@ from services.retrieval.base import RetrievalBackend
 from services.retrieval.runtime_manager import RetrievalBackendManager
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
 from services.retrieval_security.context import RetrievalSecurityContext
+from services.retrieval_security.document_security import visibility_label_from_metadata
+from services.retrieval_security.retrieval_diagnostics import (
+    build_retrieval_security_summary,
+    visibility_distribution,
+)
 from services.conversational_context_assembly import (
     RagConversationalContextAssembly,
     build_rag_conversational_context,
@@ -292,6 +297,7 @@ def _build_retrieved_chunks_diagnostics(
         passed_filter = score_num is None or score_num <= max_distance
         page = doc.page_content
         tfp = _chunk_text_fingerprint(page)
+        meta = dict(getattr(doc, "metadata", None) or {})
         out.append(
             RagRetrievedChunkDiagnostics(
                 source=source,
@@ -306,6 +312,7 @@ def _build_retrieved_chunks_diagnostics(
                 text_fp=tfp,
                 retrieval_backend=be_label,
                 source_backend=be_label,
+                visibility=visibility_label_from_metadata(meta),
             )
         )
     return tuple(out)
@@ -398,6 +405,11 @@ def _build_diagnostics(
     retrieval_dedupe_applied: bool | None = None,
     retrieval_vector_hits_raw: int | None = None,
     retrieval_ready_query: str | None = None,
+    security_role: str | None = None,
+    retrieval_scope_applied: str | None = None,
+    visibility_distribution_retrieved: dict[str, int] | None = None,
+    visibility_distribution_kept: dict[str, int] | None = None,
+    retrieval_security_summary: dict[str, object] | None = None,
 ) -> RagRequestDiagnostics:
     scores = _numeric_scores_only(filtered)
     uniq = len(
@@ -464,7 +476,39 @@ def _build_diagnostics(
         retrieval_dedupe_applied=rx.get("retrieval_dedupe_applied"),  # type: ignore[arg-type]
         retrieval_vector_hits_raw=rx.get("retrieval_vector_hits_raw"),  # type: ignore[arg-type]
         retrieval_ready_query=_retrieval_ready_query_for_logs(retrieval_ready_query),
+        security_role=security_role,
+        retrieval_scope_applied=retrieval_scope_applied,
+        visibility_distribution_retrieved=visibility_distribution_retrieved,
+        visibility_distribution_kept=visibility_distribution_kept,
+        retrieval_security_summary=retrieval_security_summary,
     )
+
+
+def _security_diag_extras(
+    *,
+    raw: list[tuple[Document, float]],
+    filtered: list[tuple[Document, float]],
+    security_context: RetrievalSecurityContext | None,
+) -> dict[str, object]:
+    """Visibility distribution + summary для diagnostics (без PII)."""
+    sec_role, sec_scope = _security_diag_from_context(security_context)
+    vis_raw = visibility_distribution(raw) if raw else {}
+    vis_kept = visibility_distribution(filtered) if filtered else {}
+    summary = build_retrieval_security_summary(
+        security_role=sec_role,
+        retrieval_scope=sec_scope,
+        retrieved_count=len(raw),
+        filtered_count=len(filtered),
+        visibility_before=vis_raw,
+        visibility_after_relevance=vis_kept,
+    )
+    return {
+        "security_role": sec_role,
+        "retrieval_scope_applied": sec_scope,
+        "visibility_distribution_retrieved": vis_raw or None,
+        "visibility_distribution_kept": vis_kept or None,
+        "retrieval_security_summary": summary,
+    }
 
 
 def _format_context(results: Sequence[tuple[Document, float]]) -> str:
@@ -474,6 +518,23 @@ def _format_context(results: Sequence[tuple[Document, float]]) -> str:
         content = (doc.page_content or "").strip()
         parts.append(f"[Источник {i}: {source}]\n{content}\n")
     return "\n".join(parts)
+
+
+def _mask_context_before_llm(context: str) -> str:
+    """Pre-LLM PII masking (P8.1): email, phone, long digit runs."""
+    from services.retrieval_security.masking import mask_common_pii_with_telemetry
+
+    return mask_common_pii_with_telemetry(context or "")
+
+
+def _security_diag_from_context(
+    security_context: RetrievalSecurityContext | None,
+) -> tuple[str | None, str | None]:
+    if security_context is None:
+        return None, None
+    role = (security_context.role or "").strip() or None
+    scope = (security_context.retrieval_scope or "").strip() or None
+    return role, scope
 
 
 def _sources_from_results(
@@ -777,6 +838,9 @@ class RagQueryService:
             retrieval_readiness=rdy,
             routing_extras=routing,
             retrieval_ready_query=query,
+            **_security_diag_extras(
+                raw=raw, filtered=filtered, security_context=security_context
+            ),
         ).emit_stdout()
         return _sources_from_results(filtered)
 
@@ -835,7 +899,6 @@ class RagQueryService:
             system_context_chars=0,
             query=normalized,
         )
-
         if not raw:
             diagnostics = _build_diagnostics(
                 query=normalized,
@@ -859,6 +922,9 @@ class RagQueryService:
                 routing_extras=routing,
                 **v11_diag_idle,
                 retrieval_ready_query=retrieval_query,
+                **_security_diag_extras(
+                    raw=raw, filtered=[], security_context=security_context
+                ),
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -891,6 +957,9 @@ class RagQueryService:
                 routing_extras=routing,
                 **v11_diag_idle,
                 retrieval_ready_query=retrieval_query,
+                **_security_diag_extras(
+                    raw=raw, filtered=filtered, security_context=security_context
+                ),
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
@@ -930,10 +999,11 @@ class RagQueryService:
 
         print("[assistant-flow] rag answer: before LLM call", flush=True)
         t_llm0 = time.monotonic()
+        llm_context = _mask_context_before_llm(context)
         try:
             answer = self._rag_llm(
                 normalized,
-                context,
+                llm_context,
                 history_for_llm=list(assembly.history_for_llm),
                 followup_hint=assembly.followup_question_detected,
                 memory_section_present=memory_section_present,
@@ -982,6 +1052,9 @@ class RagQueryService:
                 query=normalized,
             ),
             retrieval_ready_query=retrieval_query,
+            **_security_diag_extras(
+                raw=raw, filtered=filtered, security_context=security_context
+            ),
         )
         diagnostics.emit_stdout()
 

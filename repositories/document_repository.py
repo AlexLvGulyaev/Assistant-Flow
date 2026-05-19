@@ -224,7 +224,20 @@ class DocumentRepository:
                         FROM document_versions dv
                         WHERE dv.document_id = d.id AND dv.is_active = true
                         LIMIT 1
-                    ) AS last_indexed_at
+                    ) AS last_indexed_at,
+                    (
+                        SELECT COALESCE(
+                            NULLIF(TRIM(dc.metadata->>'visibility'), ''),
+                            NULLIF(TRIM(dc.metadata->>'document_visibility'), ''),
+                            'unspecified'
+                        )
+                        FROM document_chunks dc
+                        INNER JOIN document_versions dv
+                            ON dv.id = dc.document_version_id
+                        WHERE dv.document_id = d.id AND dv.is_active = true
+                        ORDER BY dc.chunk_index ASC
+                        LIMIT 1
+                    ) AS document_visibility
                 FROM documents d
                 ORDER BY d.created_at DESC
                 """
@@ -293,6 +306,31 @@ class DocumentRepository:
                 (document_id,),
             )
             return list(cur.fetchall())
+
+    def get_active_version_visibility(
+        self, conn: Connection, document_id: uuid.UUID
+    ) -> str | None:
+        """Visibility первого чанка активной версии (для reindex без потери политики)."""
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(
+                    NULLIF(TRIM(dc.metadata->>'visibility'), ''),
+                    NULLIF(TRIM(dc.metadata->>'document_visibility'), '')
+                )
+                FROM document_chunks dc
+                INNER JOIN document_versions dv ON dv.id = dc.document_version_id
+                WHERE dv.document_id = %s AND dv.is_active = true
+                ORDER BY dc.chunk_index ASC
+                LIMIT 1
+                """,
+                (document_id,),
+            )
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        s = str(row[0]).strip().lower()
+        return s if s else None
 
     def insert_document_chunk(
         self,

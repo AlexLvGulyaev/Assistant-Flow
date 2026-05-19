@@ -3091,6 +3091,24 @@ code {
   border-bottom: none;
 }
 
+.docs-visibility-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.docs-visibility-select {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  max-width: 16rem;
+}
+
 .docs-toolbar__filters {
   padding-top: 0.08rem;
 }

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from admin_api.deps import get_admin_service, log_row_to_entry
@@ -164,6 +164,7 @@ def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[s
                 "path_category": None,
                 "last_indexing_event": linked,
                 "preprocessing": preprocessing,
+                "document_visibility": str(row.get("document_visibility") or "unspecified"),
             },
         )
 
@@ -211,12 +212,15 @@ class DocumentTextEditRequest(BaseModel):
 
 
 @router.post("/documents/upload")
-async def api_documents_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+async def api_documents_upload(
+    file: UploadFile = File(...),
+    visibility: str = Form(default="internal"),
+) -> dict[str, Any]:
     svc = get_admin_service()
     raw = await file.read()
     name = file.filename or "upload.txt"
     try:
-        result = svc.upload_txt_and_index(name, raw)
+        result = svc.upload_txt_and_index(name, raw, document_visibility=visibility)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
