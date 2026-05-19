@@ -15,9 +15,9 @@
 
 ## Admin API и Admin UI
 
-- Маршруты `/api` **без** встроенной аутентификации и RBAC.
-- Любой с сетевым доступом к порту **8600** может читать логи, обзор, загружать документы и запускать reindex — в объёме реализованного API.
-- Admin UI (**8080**) рассчитан на **demo / single-tenant**; не выставлять в открытый интернет без:
+- По умолчанию ``AF_AUTH_MIDDLEWARE_MODE=disabled`` — Admin API открыт; для staging задайте ``required`` и используйте login (P9.3) или Basic.
+- **P9.3:** ``POST /api/auth/login`` выдаёт Bearer token; задайте ``AF_SESSION_SECRET`` в production (не dev fallback).
+- Admin UI (**8080**) хранит token в ``sessionStorage``; не выставлять в открытый интернет без:
   - reverse proxy с TLS;
   - VPN, IP allowlist, OAuth2-proxy или аналога;
   - ограничения rate limit и размера тел.
@@ -63,6 +63,18 @@
 
 ---
 
+## Identity & control plane (P9.0–P9.1)
+
+- **P9.0:** архитектура — [architecture/identity_and_security_architecture.md](architecture/identity_and_security_architecture.md).
+- **P9.1 (2026-05-19):** identity foundation — `app_users` расширен, `user_channel_identities`, `auth_login_events`, `IdentityService`, `PrincipalContext`, middleware foundation, bootstrap admin.
+- Admin API auth: по умолчанию **выключен** (`AF_AUTH_MIDDLEWARE_MODE=disabled`); для проверки Basic auth — `optional` или `required` + `INITIAL_ADMIN_*`.
+- Миграция: `database/migrations/007_identity_foundation.sql`.
+- **P9.2 (2026-05-19):** enforcement middleware — режимы `disabled` / `optional` / `required`; `GET /api/auth/me`; защита Admin API в `required`. См. [security/auth_modes.md](security/auth_modes.md).
+- Направление: local auth first; Keycloak/OAuth — P9.7; multi-tenant — P9.6.
+- В схеме БД есть `app_users`, но не подключён к retrieval policy и Admin API.
+
+---
+
 ## Честная оценка зрелости
 
-Проект демонстрирует архитектуру и эксплуатацию AI-сервисов, но **не** сертифицирован как готовое мультиарендное или compliance-ready решение. Деградация и восстановление — best-effort в коде, не регламентированный SLA.
+Проект демонстрирует архитектуру и эксплуатацию AI-сервисов, но **не** сертифицирован как готовое мультиарендное или compliance-ready решение. Data-path security (P8) и control-plane security (P9) — разные этапы зрелости. Деградация и восстановление — best-effort в коде, не регламентированный SLA.

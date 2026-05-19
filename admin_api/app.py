@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from admin_api.routes.auth import router as auth_router
 from admin_api.routes.evaluation import router as evaluation_router
 from admin_api.routes.assets import router as assets_router
 from admin_api.routes.documents import router as documents_router
@@ -39,12 +41,30 @@ def _cors_origins() -> list[str]:
     return merged
 
 
+@asynccontextmanager
+async def _admin_api_lifespan(application: FastAPI):
+    try:
+        from services.security.identity_service import run_identity_bootstrap
+
+        run_identity_bootstrap()
+    except Exception as exc:
+        logger.warning("Identity bootstrap on startup: %s", exc)
+    yield
+
+
 def create_admin_api_app() -> FastAPI:
     application = FastAPI(
         title="Assistant Flow Admin API",
         description="JSON API for future React admin UI. Streamlit admin_ui unchanged.",
         version="0.1.0",
+        lifespan=_admin_api_lifespan,
     )
+    try:
+        from services.security.auth_middleware import IdentityAuthMiddleware
+
+        application.add_middleware(IdentityAuthMiddleware)
+    except Exception as exc:
+        logger.warning("IdentityAuthMiddleware not loaded: %s", exc)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -54,6 +74,7 @@ def create_admin_api_app() -> FastAPI:
     )
 
     application.include_router(health_router)
+    application.include_router(auth_router)
     application.include_router(overview_router)
     application.include_router(retrieval_router)
     application.include_router(summary_router)

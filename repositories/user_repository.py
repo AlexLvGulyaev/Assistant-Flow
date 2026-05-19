@@ -9,29 +9,56 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 
+_USER_SELECT = """
+    SELECT id, telegram_user_id, telegram_chat_id, username, first_name, last_name,
+           role, is_active, created_at, updated_at,
+           email, password_hash, display_name, status, platform_role, retrieval_role,
+           last_login_at
+    FROM app_users
+"""
+
+
 class UserRepository:
     """PostgreSQL persistence for app_users."""
 
     def __init__(self, connection_factory: Any = None) -> None:
         self._connection_factory = connection_factory
 
+    def get_by_id(self, conn: Connection, user_id: uuid.UUID) -> dict[str, Any] | None:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(f"{_USER_SELECT} WHERE id = %s LIMIT 1", (user_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_by_email(self, conn: Connection, email: str) -> dict[str, Any] | None:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"{_USER_SELECT} WHERE LOWER(email) = LOWER(%s) LIMIT 1",
+                (email.strip(),),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def get_by_telegram_user_id(
         self, conn: Connection, telegram_user_id: int
     ) -> dict[str, Any] | None:
-        """Load a row by telegram_user_id (id as UUID)."""
+        """Load a row by telegram_user_id (legacy column; P9.1 also uses channel identities)."""
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
-                SELECT id, telegram_user_id, telegram_chat_id, username, first_name, last_name,
-                       role, is_active, created_at, updated_at
-                FROM app_users
-                WHERE telegram_user_id = %s
-                LIMIT 1
-                """,
+                f"{_USER_SELECT} WHERE telegram_user_id = %s LIMIT 1",
                 (telegram_user_id,),
             )
             row = cur.fetchone()
         return dict(row) if row else None
+
+    def count_by_platform_role(self, conn: Connection, platform_role: str) -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM app_users WHERE platform_role = %s AND status = 'active'",
+                (platform_role,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
 
     def insert(
         self,
@@ -51,9 +78,9 @@ class UserRepository:
                 """
                 INSERT INTO app_users (
                     telegram_user_id, telegram_chat_id, username, first_name, last_name,
-                    role, is_active
+                    role, is_active, platform_role, retrieval_role
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -64,6 +91,8 @@ class UserRepository:
                     last_name,
                     role,
                     is_active,
+                    "admin" if role == "admin" else "end_user",
+                    "admin" if role == "admin" else "employee",
                 ),
             )
             row = cur.fetchone()
@@ -111,4 +140,51 @@ class UserRepository:
             cur.execute(
                 f"UPDATE app_users SET {', '.join(sets)}, updated_at = NOW() WHERE id = %s",
                 vals,
+            )
+
+    def insert_platform_user(
+        self,
+        conn: Connection,
+        *,
+        email: str,
+        password_hash: str,
+        display_name: str | None = None,
+        platform_role: str = "admin",
+        retrieval_role: str = "admin",
+        status: str = "active",
+        telegram_user_id: int | None = None,
+        legacy_role: str = "admin",
+    ) -> uuid.UUID:
+        """Создать platform user (email/password); telegram_user_id опционален."""
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO app_users (
+                    email, password_hash, display_name, platform_role, retrieval_role,
+                    status, role, is_active, telegram_user_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s)
+                RETURNING id
+                """,
+                (
+                    email.strip().lower(),
+                    password_hash,
+                    display_name,
+                    platform_role,
+                    retrieval_role,
+                    status,
+                    legacy_role,
+                    telegram_user_id,
+                ),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise RuntimeError("insert_platform_user: no id returned")
+        return row[0]
+
+    def update_last_login(self, conn: Connection, user_id: uuid.UUID) -> None:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE app_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = %s",
+                (user_id,),
             )

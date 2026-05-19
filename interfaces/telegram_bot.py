@@ -32,7 +32,7 @@ from services.asset_repository_factory import create_asset_repository
 from services.rag_chroma_store import count_chroma_chunks
 from services.rag_query_service import RagQueryService
 from services.retrieval_security.context import ROLE_ADMIN
-from services.retrieval_security.policy_resolver import resolve_telegram_retrieval_security
+from services.retrieval_security.principal_bridge import resolve_retrieval_security_for_telegram
 from services.security.log_sanitizer import sanitize_log_details
 from services.rag_types import RagQueryResult
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
@@ -1849,7 +1849,13 @@ def create_bot() -> telebot.TeleBot:
                             )
                     else:
                         bot.send_message(message.chat.id, "Ищу в базе знаний… ⏳")
-                        security_ctx = resolve_telegram_retrieval_security(uid)
+                        security_ctx = resolve_retrieval_security_for_telegram(
+                            uid,
+                            telegram_chat_id=message.chat.id,
+                            username=getattr(message.from_user, "username", None),
+                            first_name=getattr(message.from_user, "first_name", None),
+                            last_name=getattr(message.from_user, "last_name", None),
+                        )
                         print(
                             "[assistant-flow] rag before rag_service.answer "
                             f"role={security_ctx.role} scope={security_ctx.retrieval_scope}",

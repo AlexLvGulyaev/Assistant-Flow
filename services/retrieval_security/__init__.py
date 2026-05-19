@@ -20,6 +20,10 @@ from services.retrieval_security.policy_resolver import (
     resolve_role_for_telegram_user,
     resolve_telegram_retrieval_security,
 )
+from services.retrieval_security.principal_bridge import (
+    resolve_retrieval_security_for_telegram,
+    retrieval_security_from_principal,
+)
 
 __all__ = [
     "ROLE_ADMIN",
@@ -34,4 +38,6 @@ __all__ = [
     "mask_phone",
     "resolve_role_for_telegram_user",
     "resolve_telegram_retrieval_security",
+    "resolve_retrieval_security_for_telegram",
+    "retrieval_security_from_principal",
 ]

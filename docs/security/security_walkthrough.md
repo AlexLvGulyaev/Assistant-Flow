@@ -5,7 +5,9 @@
 
 Связанные материалы:
 
-- Design: [architecture/security_rbac_design.md](../architecture/security_rbac_design.md)
+- Design (RAG/retrieval): [architecture/security_rbac_design.md](../architecture/security_rbac_design.md)
+- Design (identity/control plane, P9): [architecture/identity_and_security_architecture.md](../architecture/identity_and_security_architecture.md)
+- Auth modes (P9.2): [auth_modes.md](auth_modes.md)
 - Ограничения: [SECURITY_NOTES.md](../SECURITY_NOTES.md)
 - ДЗ (краткий отчёт): [homework/module5_lesson9_security_rag_report.md](../homework/module5_lesson9_security_rag_report.md)
 - Session logs: `docs/cursor_sessions/2026-05-19_p8-*.md`

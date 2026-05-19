@@ -1,3 +1,5 @@
+import { authAwareFetch } from "../auth/api";
+
 const DEFAULT_BASE = "http://localhost:8600";
 
 export function getApiBaseUrl(): string {
@@ -21,7 +23,7 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/health`);
+  const res = await authAwareFetch(`/api/health`);
   if (!res.ok) {
     throw new Error(`Health: ${res.status} ${res.statusText}`);
   }
@@ -29,7 +31,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
 }
 
 export async function fetchOverview(): Promise<OverviewResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/overview`);
+  const res = await authAwareFetch(`/api/overview`);
   if (!res.ok) {
     throw new Error(`Overview: ${res.status} ${res.statusText}`);
   }
@@ -38,7 +40,7 @@ export async function fetchOverview(): Promise<OverviewResponse> {
 
 export async function fetchSummary(hours = 24): Promise<SummaryResponse> {
   const q = new URLSearchParams({ hours: String(hours) });
-  const res = await fetch(`${getApiBaseUrl()}/api/summary?${q.toString()}`);
+  const res = await authAwareFetch(`/api/summary?${q.toString()}`);
   if (!res.ok) {
     throw new Error(`Summary: ${res.status} ${res.statusText}`);
   }
@@ -59,8 +61,7 @@ export async function fetchRecentLogs(
   if (opts.sinceHours != null) {
     q.set("since_hours", String(opts.sinceHours));
   }
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/logs/recent?${q.toString()}`
+  const res = await authAwareFetch(`/api/logs/recent?${q.toString()}`
   );
   if (!res.ok) {
     throw new Error(`Logs: ${res.status} ${res.statusText}`);
@@ -70,7 +71,7 @@ export async function fetchRecentLogs(
 
 export async function fetchDocuments(limit = 200): Promise<DocumentsResponse> {
   const q = new URLSearchParams({ limit: String(limit) });
-  const res = await fetch(`${getApiBaseUrl()}/api/documents?${q.toString()}`);
+  const res = await authAwareFetch(`/api/documents?${q.toString()}`);
   if (!res.ok) {
     throw new Error(`Documents: ${res.status} ${res.statusText}`);
   }
@@ -98,8 +99,7 @@ export async function fetchDocumentDetail(
     q.set("full_preprocessing_raw", "true");
   }
   const suffix = q.toString() ? `?${q.toString()}` : "";
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/documents/${encodeURIComponent(documentId)}/detail${suffix}`
+  const res = await authAwareFetch(`/api/documents/${encodeURIComponent(documentId)}/detail${suffix}`
   );
   if (!res.ok) {
     const t = await res.text().catch(() => "");
@@ -119,7 +119,7 @@ export async function uploadDocument(
   const fd = new FormData();
   fd.append("file", file);
   fd.append("visibility", visibility);
-  const res = await fetch(`${getApiBaseUrl()}/api/documents/upload`, {
+  const res = await authAwareFetch(`/api/documents/upload`, {
     method: "POST",
     body: fd,
   });
@@ -153,8 +153,7 @@ export async function postDocumentTextEdit(
   documentId: string,
   body: DocumentTextEditBody
 ): Promise<DocumentTextEditResponse> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/documents/${encodeURIComponent(documentId)}/edit-text`,
+  const res = await authAwareFetch(`/api/documents/${encodeURIComponent(documentId)}/edit-text`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -175,7 +174,7 @@ export async function postDocumentTextEdit(
 export async function postDocumentsReindex(
   body: ReindexRequestBody
 ): Promise<ReindexResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/documents/reindex`, {
+  const res = await authAwareFetch(`/api/documents/reindex`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -191,7 +190,7 @@ export async function postDocumentsReindex(
 }
 
 export async function fetchRetrievalOverview(): Promise<RetrievalOverviewResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/overview`);
+  const res = await authAwareFetch(`/api/retrieval/overview`);
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     throw new Error(`Retrieval overview: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
@@ -222,7 +221,7 @@ export interface RetrievalTuningResponse {
 }
 
 export async function fetchRetrievalTuning(): Promise<RetrievalTuningResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`);
+  const res = await authAwareFetch(`/api/retrieval/tuning`);
   if (!res.ok) {
     throw new Error(await parseFastApiError(res, `Retrieval tuning: ${res.status}`));
   }
@@ -232,7 +231,7 @@ export async function fetchRetrievalTuning(): Promise<RetrievalTuningResponse> {
 export async function putRetrievalTuning(
   patch: Record<string, number | boolean>
 ): Promise<RetrievalTuningResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`, {
+  const res = await authAwareFetch(`/api/retrieval/tuning`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -244,7 +243,7 @@ export async function putRetrievalTuning(
 }
 
 export async function deleteRetrievalTuning(): Promise<RetrievalTuningResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/tuning`, { method: "DELETE" });
+  const res = await authAwareFetch(`/api/retrieval/tuning`, { method: "DELETE" });
   if (!res.ok) {
     throw new Error(await parseFastApiError(res, `Retrieval tuning clear: ${res.status}`));
   }
@@ -254,7 +253,7 @@ export async function deleteRetrievalTuning(): Promise<RetrievalTuningResponse> 
 export async function setActiveRetrievalBackend(
   backend: string
 ): Promise<SetActiveRetrievalBackendResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/retrieval/active-backend`, {
+  const res = await authAwareFetch(`/api/retrieval/active-backend`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ backend: backend.trim() }),
@@ -651,8 +650,7 @@ export async function fetchMemoryObservabilitySummary(
   hours = 24
 ): Promise<MemoryObservabilitySummary> {
   const q = new URLSearchParams({ hours: String(hours) });
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/memory/observability/summary?${q.toString()}`
+  const res = await authAwareFetch(`/api/memory/observability/summary?${q.toString()}`
   );
   if (!res.ok) {
     throw new Error(`Memory summary: ${res.status} ${res.statusText}`);
@@ -670,8 +668,7 @@ export async function fetchMemorySessionsList(opts?: {
   if (opts?.limit != null) q.set("limit", String(opts.limit));
   if (opts?.offset != null) q.set("offset", String(opts.offset));
   const suffix = q.toString() ? `?${q.toString()}` : "";
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/memory/sessions${suffix}`
+  const res = await authAwareFetch(`/api/memory/sessions${suffix}`
   );
   if (!res.ok) {
     throw new Error(`Memory sessions: ${res.status} ${res.statusText}`);
@@ -682,8 +679,7 @@ export async function fetchMemorySessionsList(opts?: {
 export async function fetchMemorySessionDetail(
   sessionId: string
 ): Promise<MemorySessionDetailResponse> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/memory/sessions/${encodeURIComponent(sessionId)}`
+  const res = await authAwareFetch(`/api/memory/sessions/${encodeURIComponent(sessionId)}`
   );
   if (!res.ok) {
     const t = await res.text().catch(() => "");
@@ -790,8 +786,7 @@ export async function fetchEvaluationRagTurns(opts?: {
     q.set("has_ragas_metrics", String(opts.hasRagasMetrics));
   }
   if (opts?.search?.trim()) q.set("search", opts.search.trim());
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/evaluation/rag-turns?${q.toString()}`
+  const res = await authAwareFetch(`/api/evaluation/rag-turns?${q.toString()}`
   );
   if (!res.ok) {
     throw new Error(`Evaluation RAG turns: ${res.status} ${res.statusText}`);
@@ -802,8 +797,7 @@ export async function fetchEvaluationRagTurns(opts?: {
 export async function fetchEvaluationRagTurnDetail(
   executionId: string
 ): Promise<RagTurnDetailResponse> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/evaluation/rag-turns/${encodeURIComponent(executionId)}`
+  const res = await authAwareFetch(`/api/evaluation/rag-turns/${encodeURIComponent(executionId)}`
   );
   if (!res.ok) {
     throw new Error(`RAG turn detail: ${res.status} ${res.statusText}`);
@@ -816,7 +810,7 @@ export async function postEvaluationImport(body: {
   dataset?: string;
   run_name?: string;
 }): Promise<{ run_id: string; imported_count: number }> {
-  const res = await fetch(`${getApiBaseUrl()}/api/evaluation/import`, {
+  const res = await authAwareFetch(`/api/evaluation/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -831,7 +825,7 @@ export async function postEvaluationImport(body: {
 export async function postEvaluationRagasRun(
   runId: string
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`${getApiBaseUrl()}/api/evaluation/ragas/run`, {
+  const res = await authAwareFetch(`/api/evaluation/ragas/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_id: runId }),
@@ -849,8 +843,7 @@ export async function fetchEvaluationRuns(opts?: {
 }): Promise<EvaluationRunsListResponse> {
   const q = new URLSearchParams({ limit: String(opts?.limit ?? 50) });
   if (opts?.offset != null) q.set("offset", String(opts.offset));
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/evaluation/runs?${q.toString()}`
+  const res = await authAwareFetch(`/api/evaluation/runs?${q.toString()}`
   );
   if (!res.ok) {
     throw new Error(`Evaluation runs: ${res.status} ${res.statusText}`);
@@ -861,8 +854,7 @@ export async function fetchEvaluationRuns(opts?: {
 export async function fetchEvaluationRunDetail(
   runId: string
 ): Promise<EvaluationRunDetailResponse> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/evaluation/runs/${encodeURIComponent(runId)}`
+  const res = await authAwareFetch(`/api/evaluation/runs/${encodeURIComponent(runId)}`
   );
   if (!res.ok) {
     throw new Error(`Evaluation run: ${res.status} ${res.statusText}`);
@@ -874,8 +866,7 @@ export async function patchEvaluationItem(
   itemId: string,
   body: { ground_truth?: string; notes?: string; manual_score?: number }
 ): Promise<{ item?: EvaluationRunItem; run_id?: string }> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/evaluation/items/${encodeURIComponent(itemId)}`,
+  const res = await authAwareFetch(`/api/evaluation/items/${encodeURIComponent(itemId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

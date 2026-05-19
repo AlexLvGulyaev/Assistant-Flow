@@ -23,7 +23,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS app_users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    telegram_user_id BIGINT UNIQUE NOT NULL,
+    telegram_user_id BIGINT UNIQUE,
     telegram_chat_id BIGINT,
     username TEXT,
     first_name TEXT,
@@ -32,17 +32,67 @@ CREATE TABLE IF NOT EXISTS app_users (
     role TEXT NOT NULL DEFAULT 'user'
         CHECK (role IN ('user', 'admin')),
 
+    email TEXT,
+    password_hash TEXT,
+    display_name TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'suspended', 'deleted')),
+    platform_role TEXT NOT NULL DEFAULT 'end_user'
+        CHECK (platform_role IN (
+            'end_user', 'employee', 'operator', 'admin', 'auditor', 'superadmin'
+        )),
+    retrieval_role TEXT NOT NULL DEFAULT 'employee'
+        CHECK (retrieval_role IN ('guest', 'employee', 'admin')),
+
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at TIMESTAMPTZ,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_app_users_email
+    ON app_users (LOWER(email))
+    WHERE email IS NOT NULL AND email <> '';
 
 CREATE INDEX IF NOT EXISTS idx_app_users_telegram_user_id
     ON app_users (telegram_user_id);
 
 CREATE INDEX IF NOT EXISTS idx_app_users_role
     ON app_users (role);
+
+CREATE INDEX IF NOT EXISTS idx_app_users_platform_role
+    ON app_users (platform_role);
+
+CREATE TABLE IF NOT EXISTS user_channel_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    external_user_id TEXT NOT NULL,
+    external_chat_id TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (channel, external_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_channel_identities_user_id
+    ON user_channel_identities (user_id);
+
+CREATE TABLE IF NOT EXISTS auth_login_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL,
+    auth_source TEXT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+    actor_role TEXT,
+    ip_hash TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_login_events_created_at
+    ON auth_login_events (created_at DESC);
 
 
 -- ----------------------------

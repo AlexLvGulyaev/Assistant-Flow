@@ -3320,3 +3320,125 @@ Bounded verification P8.1–P8.3 без нового security subsystem; фин�
 | ``scripts/test_p8_4_security_verification_smoke.py`` | Агрегированная верификация P8.1–P8.3 |
 
 Runtime-код не менялся.
+
+---
+
+## 62. P9.0 Identity & Security Architecture (append-only)
+
+### 62.1 Назначение
+
+Platform-level planning: identity lifecycle, trust boundaries, auth direction (local first), platform RBAC, audit model, multi-tenant implications, roadmap P9.1–P9.7. **Без runtime implementation.**
+
+### 62.2 Артефакты
+
+- ``docs/architecture/identity_and_security_architecture.md`` — основной документ.
+- Session log: ``docs/cursor_sessions/2026-05-19_p9-0-identity-and-security-architecture.md``.
+- Обновлены: ``SECURITY_NOTES.md``, ``security_rbac_design.md`` (roadmap), ``security_walkthrough.md`` (ссылка).
+
+### 62.3 Ключевые решения
+
+| Тема | Решение |
+|------|---------|
+| Auth | Local auth + JWT/session first; Keycloak — P9.7 |
+| Identity | ``PlatformUser`` (эволюция ``app_users``) + ``ChannelIdentity`` для Telegram |
+| RBAC | Platform permissions отдельно от retrieval policy (P8) |
+| Audit | ``audit_events`` / ``auth_events`` append-only; ``processing_logs`` остаётся ops telemetry |
+| Multi-tenant | Design-only; ``tenant_id`` — P9.6 |
+
+### 62.4 Runtime
+
+Не изменялся. Admin API без auth до P9.2+.
+
+---
+
+## 63. P9.1 Identity foundation implementation (append-only)
+
+### 63.1 Назначение
+
+Первый bounded implementation control plane: platform users, channel identities, password hashing, ``PrincipalContext``, auth middleware foundation, retrieval bridge, bootstrap admin.
+
+### 63.2 Реализовано
+
+- Migration ``database/migrations/007_identity_foundation.sql``.
+- ``services/security/identity_service.py``, ``principal.py``, ``password.py``, ``auth_middleware.py``.
+- ``repositories/channel_identity_repository.py``; расширен ``user_repository.py``.
+- ``services/retrieval_security/principal_bridge.py``; Telegram → ``resolve_retrieval_security_for_telegram``.
+- Admin API: lifespan bootstrap + ``IdentityAuthMiddleware`` (mode ``disabled`` by default).
+- Smoke: ``scripts/test_p9_1_identity_foundation_smoke.py``.
+- ``bcrypt`` в ``requirements.txt`` (password hashing).
+
+### 63.3 Env
+
+- ``INITIAL_ADMIN_EMAIL``, ``INITIAL_ADMIN_PASSWORD`` — bootstrap admin (idempotent).
+- ``AF_AUTH_MIDDLEWARE_MODE`` — ``disabled`` \| ``optional`` \| ``required``.
+- ``AF_IDENTITY_DEV_HEADERS`` — dev-only ``X-AF-Principal-*`` headers.
+
+### 63.4 Backward compatibility
+
+- ``AF_AUTH_MIDDLEWARE_MODE=disabled`` (default) — Admin API как до P9.1.
+- Telegram RAG: env fallback если БД недоступна; channel identity при наличии PG.
+- Legacy ``app_users.role`` и ``telegram_user_id`` сохранены.
+
+### 63.5 Out of scope (P9.2+)
+
+JWT, refresh tokens, Admin UI login, OAuth, full RBAC enforcement on routes, audit subsystem beyond ``auth_login_events``.
+
+---
+
+## 64. P9.2 Auth middleware hardening (append-only)
+
+### 64.1 Назначение
+
+Первый enforcement control-plane: защита Admin API в режиме ``required``, ``/api/auth/me``, политика маршрутов, audit ``access.denied``.
+
+### 64.2 Реализовано
+
+- ``admin_api/security/auth_policy.py`` — public/protected paths.
+- ``admin_api/security/deps.py`` — ``require_authenticated_principal``, ``require_platform_roles``.
+- ``services/security/auth_middleware.py`` — enforcement + ``WWW-Authenticate``.
+- ``admin_api/routes/auth.py`` — ``GET /api/auth/me``.
+- ``IdentityService.record_access_denied``, ``record_bootstrap_event``.
+- ``docs/security/auth_modes.md``; smoke ``scripts/test_p9_2_auth_middleware_smoke.py``.
+
+### 64.3 Default
+
+``AF_AUTH_MIDDLEWARE_MODE=disabled`` — поведение как до P9.2.
+
+### 64.4 Protected (required)
+
+Все ``/api/*`` кроме ``/api/health``, ``/api/auth/me`` (+ optional read-only GET allowlist).
+
+### 64.5 Operator check
+
+```bash
+# required + bootstrap credentials:
+curl -u "$INITIAL_ADMIN_EMAIL:$INITIAL_ADMIN_PASSWORD" http://localhost:8600/api/logs/recent?limit=1
+```
+
+---
+
+## 65. P9.3 Admin UI login & session flow (append-only)
+
+### 65.1 Назначение
+
+Первый operator-facing auth UX: login/logout, Bearer session token, protected React routes, ``/api/auth/me`` как source of truth для UI.
+
+### 65.2 Backend
+
+- ``POST /api/auth/login``, ``POST /api/auth/logout``
+- ``services/security/session_token.py`` — HMAC-signed token (``AF_SESSION_SECRET``, ``AF_SESSION_TTL_SECONDS``)
+- Middleware: ``Authorization: Bearer`` + Basic
+- Public: ``/api/auth/login``, ``/api/auth/logout`` в режиме ``required``
+
+### 65.3 Frontend
+
+- ``frontend/admin-ui/src/auth/*`` — AuthProvider, token в ``sessionStorage``
+- ``LoginPage``, ``ProtectedRoute``, ``authAwareFetch`` (401 → clear token)
+- Режимы UI: ``disabled`` / ``optional`` / ``required``
+
+### 65.4 Operator check
+
+```bash
+docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_3_admin_login_smoke.py
+cd frontend/admin-ui && npm run build
+```
