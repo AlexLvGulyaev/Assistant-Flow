@@ -42,65 +42,115 @@ Assistant Flow — мультимодальная AI-платформа:
 
 ## 4. Сценарии (схемы)
 
-Упрощённые потоки для пользователя и оператора (не полная архитектура системы).
+Операционные потоки: стадии соответствуют `processing_logs` и карточкам в Admin UI (разделы **Текст**, **RAG**, **Логи**). Это не полная архитектурная схема — внутренние вызовы сервисов свёрнуты.
+
+*Этапы pipeline отражаются в `processing_logs` и доступны в Admin UI.*
 
 ### Текст
 
 ```mermaid
 flowchart LR
-    U[Пользователь] --> TG[Telegram-бот]
-    TG --> ORCH[Оркестратор]
-    ORCH --> LLM[AI-провайдер]
-    LLM --> TG
-    TG --> U
+    U[Пользователь] --> TG[Telegram]
+    TG --> S1[Запрос получен]
+    S1 --> S2[Маршрут: текстовый ответ]
+    S2 --> S3[Подготовка prompt]
+    S3 --> S4[Запрос к AI-провайдеру]
+    S4 --> S5[Ответ сформирован]
+    S5 --> S6[Завершение обработки]
+    S6 --> A[Ответ пользователю]
 ```
+
+*Стадии в логах:* `intake_received` → `route_selected` → `processing_done` → `text_answer_done`.
 
 ### RAG
 
 ```mermaid
 flowchart LR
-    U[Вопрос по документам] --> TG[Telegram-бот]
-    TG --> RAG[RAG-сервис]
-    RAG --> RET[Поиск по базе знаний]
-    RET --> RAG
-    RAG --> LLM[AI-провайдер]
-    LLM --> TG
-    TG --> U[Ответ и источники]
+    U[Вопрос по документам] --> TG[Telegram]
+    TG --> S1[Запрос получен]
+    S1 --> S2[Маршрут: RAG]
+    S2 --> C{Кэш retrieval}
+
+    C -->|HIT| C1[Контекст из кэша]
+    C -->|MISS| R1[Поиск в векторной базе]
+    R1 --> R2[Чанки и ранжирование]
+    R2 --> R3[Запись в кэш]
+    R3 --> C1
+
+    C1 --> L1[Сборка RAG prompt]
+    L1 --> L2[Запрос к AI-провайдеру]
+    L2 --> S3[Ответ RAG зафиксирован]
+    S3 --> S4[Завершение обработки]
+    S4 --> A[Ответ и источники]
 ```
 
-### OCR
+*Стадии в логах:* `intake_received` → `route_selected` → `rag_answer_done` (в `details`: cache HIT/MISS, latency retrieval, чанки) → `processing_done`. При включённой памяти возможны `memory_load_started` / `memory_load_done`.
+
+### OCR (OpenAI Vision)
 
 ```mermaid
 flowchart LR
-    U[Фото с текстом] --> TG[Telegram-бот]
-    TG --> OCR[Vision OCR]
-    OCR --> V[OpenAI Vision]
-    V --> OCR
-    OCR --> TG
-    TG --> U[Распознанный текст]
+    U[Фото] --> TG[Telegram]
+    TG --> S1[Запрос получен]
+    S1 --> S2[Изображение принято]
+    S2 --> S3[Старт OCR / Vision]
+    S3 --> S4[Запрос к OpenAI Vision]
+    S4 --> S5[Текст извлечён]
+    S5 --> S6[Ответ отправлен]
+    S6 --> S7[Завершение обработки]
+    S7 --> A[Распознанный текст]
 ```
+
+*Стадии в логах:* `intake_received` → `image_received` → `ocr_started` → `ocr_done` → `ocr_response_sent` → `processing_done`. Локальный OCR не используется.
+
+### Голос (STT → текст → опционально TTS)
+
+```mermaid
+flowchart LR
+    U[Голосовое] --> TG[Telegram]
+    TG --> S1[Запрос получен]
+    S1 --> S2[Распознавание речи STT]
+    S2 --> S3[Маршрут выбран]
+    S3 --> S4[Текстовый ответ AI]
+    S4 --> T{TTS включён?}
+    T -->|да| S5[Синтез речи TTS]
+    T -->|нет| S6[Голосовая сессия завершена]
+    S5 --> S6
+    S6 --> A[Ответ в чат]
+```
+
+*Стадии в логах:* `intake_received` → `stt_started` → `stt_completed` → `route_selected` → `text_answer_done` → `tts_started` / `tts_skipped` / `tts_completed` → `voice_processing_done`.
 
 ### Индексация документов (оператор)
 
 ```mermaid
 flowchart LR
     OP[Оператор] --> UI[Admin UI: Документы]
-    UI --> IDX[Индексация]
-    IDX --> CH[Чанки]
-    CH --> VDB[Векторное хранилище]
-    IDX --> PG[(PostgreSQL: метаданные)]
+    UI --> S1[Загрузка файла]
+    S1 --> S2[Предобработка текста]
+    S2 --> S3[Артефакт сохранён]
+    S3 --> S4[Копия для RAG-каталога]
+    S4 --> S5[Индексация: чанки]
+    S5 --> S6[Эмбеддинги в vector backend]
+    S5 --> PG[(Метаданные PostgreSQL)]
+    S6 --> S7[Пайплайн загрузки завершён]
 ```
 
-### Кэш retrieval
+*Стадии в логах:* `admin_document_uploaded_raw` → `document_preprocessing_started` → `document_preprocessing_done` → `document_processed_artifact_saved` → `document_compatibility_file_written` → `document_indexing_started` → `document_indexing_done` → `document_upload_pipeline_done`.
+
+### Кэш retrieval (внутри RAG)
 
 ```mermaid
 flowchart LR
-    Q[RAG-запрос] --> C[Retrieval Cache]
-    C -->|HIT| CTX[Контекст из кэша]
-    C -->|MISS| RET[Поиск в векторной базе]
-    RET --> CTX
-    RET --> C
+    Q[RAG-запрос] --> C{Кэш retrieval}
+    C -->|HIT| H[Повторное использование чанков]
+    C -->|MISS| R[Поиск в vector backend]
+    R --> W[Сохранение в кэш]
+    W --> H
+    H --> L[Дальше: RAG prompt и LLM]
 ```
+
+*В UI:* OFF / MISS / HIT и `retrieval_latency_ms` в карточке RAG; в логах — поля `retrieval_cache_hit` / `retrieval_cache_miss` внутри `rag_answer_done`.
 
 ---
 
