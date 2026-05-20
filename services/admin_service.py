@@ -1571,6 +1571,18 @@ class AdminService:
         except Exception:
             return []
 
+    def get_document_visibility(self, document_id: uuid.UUID) -> str:
+        """Visibility первого чанка активной версии (for retrieval policy on detail)."""
+        if not (self._config.database_url or "").strip():
+            return "unspecified"
+        try:
+            with get_connection() as conn:
+                vis = self._doc_repo.get_active_version_visibility(conn, document_id)
+                conn.commit()
+            return (vis or "unspecified").strip().lower() or "unspecified"
+        except Exception:
+            return "unspecified"
+
     def get_document_versions(self, document_id: uuid.UUID) -> list[dict[str, Any]]:
         """All document_versions rows for one document."""
         if not (self._config.database_url or "").strip():

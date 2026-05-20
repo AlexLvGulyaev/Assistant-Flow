@@ -33,6 +33,7 @@ type Props = {
   cache: CacheSnapshot;
   databaseConfigured: boolean;
   cacheBusy: boolean;
+  canRetrievalAdmin: boolean;
   onSetRetrievalCache: (enabled: boolean) => void;
 };
 
@@ -40,6 +41,7 @@ export function RetrievalCacheSettingsPanel({
   cache,
   databaseConfigured,
   cacheBusy,
+  canRetrievalAdmin,
   onSetRetrievalCache,
 }: Props) {
   const enabled =
@@ -70,7 +72,8 @@ export function RetrievalCacheSettingsPanel({
             <button
               type="button"
               className={`retrieval-cache-panel__toggle-btn${!enabled ? " retrieval-cache-panel__toggle-btn--active" : ""}`}
-              disabled={!databaseConfigured || cacheBusy || !enabled}
+              disabled={!databaseConfigured || cacheBusy || !enabled || !canRetrievalAdmin}
+              title={!canRetrievalAdmin ? "Нет прав retrieval:admin" : undefined}
               onClick={() => void onSetRetrievalCache(false)}
             >
               OFF
@@ -78,7 +81,8 @@ export function RetrievalCacheSettingsPanel({
             <button
               type="button"
               className={`retrieval-cache-panel__toggle-btn${enabled ? " retrieval-cache-panel__toggle-btn--active" : ""}`}
-              disabled={!databaseConfigured || cacheBusy || enabled}
+              disabled={!databaseConfigured || cacheBusy || enabled || !canRetrievalAdmin}
+              title={!canRetrievalAdmin ? "Нет прав retrieval:admin" : undefined}
               onClick={() => void onSetRetrievalCache(true)}
             >
               ON

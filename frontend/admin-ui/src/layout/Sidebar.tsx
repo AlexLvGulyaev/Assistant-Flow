@@ -1,7 +1,20 @@
 import { Link, NavLink } from "react-router-dom";
-import { NAV_ITEMS } from "../navigation/routes";
+import { useAuth } from "../auth/AuthContext";
+import { navItemsForPermissions } from "../navigation/routes";
 
 export function Sidebar() {
+  const {
+    hasPermission,
+    authenticated,
+    email,
+    platformRole,
+    authMode,
+    loginAvailable,
+    needsLogin,
+    logout,
+  } = useAuth();
+  const items = navItemsForPermissions(hasPermission);
+
   return (
     <aside className="admin-shell__sidebar" aria-label="Основная навигация">
       <div className="admin-shell__brand">
@@ -9,7 +22,7 @@ export function Sidebar() {
         <span className="admin-shell__brand-sub">Операции</span>
       </div>
       <nav className="admin-shell__nav admin-shell__nav--main">
-        {NAV_ITEMS.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
@@ -27,11 +40,38 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="admin-shell__sidebar-footer">
-        <Link to="/exit" className="admin-shell__exit-link">
-          Выход
-        </Link>
-      </div>
+      {loginAvailable && !needsLogin ? (
+        <div className="admin-shell__sidebar-footer">
+          <div className="admin-shell__sidebar-session" aria-label="Сессия Assistant Flow">
+            {authenticated && email ? (
+              <>
+                <span className="admin-shell__sidebar-user-email" title={email}>
+                  {email}
+                </span>
+                {platformRole ? (
+                  <span className="admin-shell__sidebar-user-role muted">{platformRole}</span>
+                ) : null}
+              </>
+            ) : (
+              <span className="admin-shell__sidebar-user-email muted">без сессии</span>
+            )}
+            {authenticated && authMode !== "disabled" ? (
+              <button
+                type="button"
+                className="admin-shell__sidebar-logout"
+                onClick={() => void logout()}
+              >
+                Выйти
+              </button>
+            ) : null}
+            {!authenticated && authMode !== "disabled" ? (
+              <Link to="/login" className="admin-shell__sidebar-login-link">
+                Войти
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

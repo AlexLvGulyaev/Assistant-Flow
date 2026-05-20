@@ -23,7 +23,19 @@ def retrieval_security_from_principal(
     role = (principal.retrieval_role or "").strip().lower()
     if not role:
         return None
-    return build_retrieval_security_context_for_role(role)
+    base = build_retrieval_security_context_for_role(role)
+    return RetrievalSecurityContext(
+        role=base.role,
+        allowed_sources=base.allowed_sources,
+        retrieval_scope=base.retrieval_scope,
+        metadata_filters=base.metadata_filters,
+        required_tags=base.required_tags,
+        allowed_visibility=base.allowed_visibility,
+        audit_user_id=principal.user_id,
+        audit_email=principal.email,
+        audit_platform_role=principal.platform_role,
+        audit_execution_id=None,
+    )
 
 
 def resolve_retrieval_security_for_telegram(

@@ -119,6 +119,7 @@ function severityFor(item: AuditEventItem): SecuritySeverity {
   if (et === "auth.login.failure") return "warning";
   if (et === "security.access.denied") return "warning";
   if (et === "security.permission.denied") return "error";
+  if (et.startsWith("retrieval.") || et === "security.visibility.denied") return "warning";
   if (st === "failure") return "warning";
   if (et.startsWith("privileged.") && st === "success") return "info";
   return "info";
@@ -140,6 +141,9 @@ function titleFor(item: AuditEventItem): string {
     "auth.logout": "Выход из сессии",
     "security.access.denied": "Доступ без аутентификации",
     "security.permission.denied": "Недостаточно прав (RBAC)",
+    "retrieval.scope.denied": "Retrieval scope denied",
+    "retrieval.protected_chunk.denied": "Protected chunk denied",
+    "security.visibility.denied": "Visibility denied",
     "privileged.documents.upload": "Загрузка документа",
     "privileged.documents.reindex": "Переиндексация документа",
     "privileged.documents.edit_text": "Редактирование текста документа",
@@ -175,6 +179,12 @@ function shortExplanationFor(item: AuditEventItem, perm: string | null): string 
   }
   if (et === "security.permission.denied" && perm) {
     return `Маршрут требует permission «${perm}», у principal его нет.`;
+  }
+  if (et === "retrieval.scope.denied" || et === "retrieval.protected_chunk.denied") {
+    return "Retrieval отфильтровал чанки по visibility/scope для роли.";
+  }
+  if (et === "security.visibility.denied") {
+    return "Доступ к visibility-ограниченным данным отклонён политикой retrieval.";
   }
   if (et.startsWith("privileged.retrieval.")) {
     return item.status === "success"
@@ -534,6 +544,9 @@ export function listResultCompact(item: AuditEventItem, scenario: SecurityScenar
   if (et === "auth.logout") return "Logout";
   if (et === "security.access.denied") return "Доступ без аутентификации";
   if (et === "security.permission.denied") return "RBAC deny";
+  if (et === "retrieval.protected_chunk.denied") return "Protected chunk";
+  if (et === "retrieval.scope.denied") return "Scope denied";
+  if (et === "security.visibility.denied") return "Visibility deny";
   if (item.status === "failure") return "Ошибка";
   if (scenario.resultLabel.includes("запрещ")) return "Access denied";
   return scenario.resultLabel;
@@ -559,6 +572,12 @@ export function listIntentTitle(
     intent = perm
       ? `попытка операции, требующей ${perm}`
       : "попытка привилегированной операции";
+  } else if (
+    et === "retrieval.protected_chunk.denied" ||
+    et === "retrieval.scope.denied" ||
+    et === "security.visibility.denied"
+  ) {
+    intent = "retrieval query с ограниченной visibility";
   } else if (et.startsWith("privileged.retrieval.")) {
     intent = "попытка изменения retrieval settings";
   } else if (et.includes("audit") || (item.request_path || "").includes("/audit")) {

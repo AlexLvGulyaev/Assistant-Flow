@@ -1,16 +1,7 @@
-import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 export function Topbar() {
-  const {
-    authenticated,
-    email,
-    platformRole,
-    authMode,
-    loginAvailable,
-    needsLogin,
-    logout,
-  } = useAuth();
+  const { authMode } = useAuth();
 
   return (
     <header className="admin-shell__topbar">
@@ -21,32 +12,6 @@ export function Topbar() {
         </span>
       </div>
       <div className="admin-shell__topbar-right-col">
-        {loginAvailable && !needsLogin ? (
-          <div className="admin-shell__auth-meta">
-            {authenticated && email ? (
-              <span className="admin-shell__auth-user" title={platformRole ?? ""}>
-                {email}
-                {platformRole ? ` · ${platformRole}` : ""}
-              </span>
-            ) : (
-              <span className="muted">без сессии</span>
-            )}
-            {authenticated && authMode !== "disabled" ? (
-              <button
-                type="button"
-                className="admin-shell__auth-logout"
-                onClick={() => void logout()}
-              >
-                Выйти
-              </button>
-            ) : null}
-            {!authenticated && authMode !== "disabled" ? (
-              <Link to="/login" className="admin-shell__auth-login-link">
-                Войти
-              </Link>
-            ) : null}
-          </div>
-        ) : null}
         <span className="admin-shell__topbar-zerocoder" title="Zerocoder">
           Zerocoder
         </span>

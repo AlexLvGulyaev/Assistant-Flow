@@ -28,6 +28,8 @@ import { OperationalRetrievalChunksSection } from "../components/OperationalRetr
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { EvaluationCachePolicyPanel } from "../components/EvaluationCachePolicyPanel";
 import { StatusBadge } from "../components/StatusBadge";
+import { useAuth } from "../auth/AuthContext";
+import { PERM } from "../auth/permissions";
 import { formatRetrievalBackendTitle, formatTimestampMsk } from "../utils/operationalLabels";
 import { chunkFromEvalDiagnostic } from "../utils/retrievalChunks";
 
@@ -118,12 +120,14 @@ function RagTurnRow({
   row,
   selected,
   checked,
+  showImportCheckbox,
   onSelect,
   onToggle,
 }: {
   row: RagTurnListItem;
   selected: boolean;
   checked: boolean;
+  showImportCheckbox: boolean;
   onSelect: () => void;
   onToggle: () => void;
 }) {
@@ -134,15 +138,17 @@ function RagTurnRow({
       data-eval-turn-id={row.execution_id}
       onClick={onSelect}
     >
-      <span className="eval-row-check" onClick={(e) => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          className="eval-checkbox"
-          checked={checked}
-          onChange={onToggle}
-          aria-label="Выбрать сессию"
-        />
-      </span>
+      {showImportCheckbox ? (
+        <span className="eval-row-check" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="eval-checkbox"
+            checked={checked}
+            onChange={onToggle}
+            aria-label="Выбрать сессию"
+          />
+        </span>
+      ) : null}
       <span className="logs-item__row logs-item__row--tight">
         <span className="mono logs-item__ts">{formatTimestampMsk(row.created_at)}</span>
         <OperationalModalityBadge modality="rag" />
@@ -409,9 +415,11 @@ function RunItemNavRow({
 
 function SelectedItemForensicPanel({
   item,
+  canEvalWrite,
   onSaved,
 }: {
   item: EvaluationRunItem;
+  canEvalWrite: boolean;
   onSaved: () => void;
 }) {
   const [gt, setGt] = useState(item.ground_truth ?? "");
@@ -435,6 +443,7 @@ function SelectedItemForensicPanel({
   }, [item.id, item.ground_truth, item.metrics]);
 
   const save = async () => {
+    if (!canEvalWrite) return;
     setSaving(true);
     setErr(null);
     try {
@@ -512,6 +521,7 @@ function SelectedItemForensicPanel({
             rows={4}
             value={gt}
             onChange={(e) => setGt(e.target.value)}
+            readOnly={!canEvalWrite}
             placeholder="Эталонный ответ"
           />
           <div className="eval-item-edit__row">
@@ -519,22 +529,26 @@ function SelectedItemForensicPanel({
               className="logs-search eval-item-edit__input"
               value={score}
               onChange={(e) => setScore(e.target.value)}
+              readOnly={!canEvalWrite}
               placeholder="ручная 0 / 0.5 / 1"
             />
             <input
               className="logs-search eval-item-edit__input eval-item-edit__input--wide"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
+              readOnly={!canEvalWrite}
               placeholder="заметки"
             />
-            <button
-              type="button"
-              className="logs-page-btn"
-              disabled={saving}
-              onClick={save}
-            >
-              {saving ? "…" : "Сохранить"}
-            </button>
+            {canEvalWrite ? (
+              <button
+                type="button"
+                className="logs-page-btn"
+                disabled={saving}
+                onClick={save}
+              >
+                {saving ? "…" : "Сохранить"}
+              </button>
+            ) : null}
           </div>
           {err ? <p className="panel panel--error eval-item-edit__err">{err}</p> : null}
         </section>
@@ -593,12 +607,14 @@ function SelectedItemForensicPanel({
 
 function RunDetailPanel({
   run,
+  canEvalWrite,
   ragasBusy,
   ragasResult,
   onRunRagas,
   onRefreshRun,
 }: {
   run: EvaluationRunDetailResponse;
+  canEvalWrite: boolean;
   ragasBusy: boolean;
   ragasResult: Record<string, unknown> | null;
   onRunRagas: () => void;
@@ -638,14 +654,16 @@ function RunDetailPanel({
           </p>
         </div>
         <div className="eval-run-head__actions">
-          <button
-            type="button"
-            className="logs-page-btn"
-            disabled={ragasBusy || run.status !== "completed"}
-            onClick={onRunRagas}
-          >
-            {ragasBusy ? "RAGAS…" : "Запустить RAGAS"}
-          </button>
+          {canEvalWrite ? (
+            <button
+              type="button"
+              className="logs-page-btn"
+              disabled={ragasBusy || run.status !== "completed"}
+              onClick={onRunRagas}
+            >
+              {ragasBusy ? "RAGAS…" : "Запустить RAGAS"}
+            </button>
+          ) : null}
           <OperationalRefreshButton loading={ragasBusy} onClick={onRefreshRun} />
           <StatusBadge status={run.status || "—"} />
         </div>
@@ -713,7 +731,11 @@ function RunDetailPanel({
 
         <section className="eval-item-forensic-zone">
           {selectedItem ? (
-            <SelectedItemForensicPanel item={selectedItem} onSaved={onRefreshRun} />
+            <SelectedItemForensicPanel
+              item={selectedItem}
+              canEvalWrite={canEvalWrite}
+              onSaved={onRefreshRun}
+            />
           ) : (
             <EmptyState
               title="Нет RAG-сессии для анализа"
@@ -727,6 +749,8 @@ function RunDetailPanel({
 }
 
 export function EvaluationPage() {
+  const { hasPermission } = useAuth();
+  const canEvalWrite = hasPermission(PERM.settingsWrite);
   const [tab, setTab] = useState<TabId>("turns");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [windowLabel, setWindowLabel] = useState<WindowLabel>("24h");
@@ -883,7 +907,7 @@ export function EvaluationPage() {
   };
 
   const doImport = async (ids: string[]) => {
-    if (!ids.length) return;
+    if (!canEvalWrite || !ids.length) return;
     setImportBusy(true);
     setImportMsg(null);
     try {
@@ -908,7 +932,7 @@ export function EvaluationPage() {
     doImport(turns.slice(0, n).map((t) => t.execution_id));
 
   const runRagas = async () => {
-    if (!selectedRunId) return;
+    if (!canEvalWrite || !selectedRunId) return;
     setRagasBusy(true);
     setError(null);
     try {
@@ -932,6 +956,7 @@ export function EvaluationPage() {
             row={turn}
             selected={selectedTurnId === turn.execution_id}
             checked={checkedTurns.has(turn.execution_id)}
+            showImportCheckbox={canEvalWrite}
             onSelect={() => setSelectedTurnId(turn.execution_id)}
             onToggle={() => toggleTurn(turn.execution_id)}
           />
@@ -949,7 +974,7 @@ export function EvaluationPage() {
         />
       );
     });
-  }, [tab, pageItems, selectedTurnId, selectedRunId, checkedTurns]);
+  }, [tab, pageItems, selectedTurnId, selectedRunId, checkedTurns, canEvalWrite]);
 
   const rowCount = tab === "turns" ? turns.length : runs.length;
   const selectedCount = tab === "turns" ? checkedTurns.size : selectedRunId ? 1 : 0;
@@ -990,6 +1015,7 @@ export function EvaluationPage() {
       return (
         <RunDetailPanel
           run={runDetail}
+          canEvalWrite={canEvalWrite}
           ragasBusy={ragasBusy}
           ragasResult={ragasResult}
           onRunRagas={runRagas}
@@ -1006,6 +1032,13 @@ export function EvaluationPage() {
       <p className="page__lead muted">
         Операционная диагностика retrieval и качества ответов
       </p>
+
+      {!canEvalWrite ? (
+        <p className="eval-banner muted" role="status">
+          Режим просмотра: импорт, RAGAS и правка эталонов доступны только с правом{" "}
+          <code>settings:write</code>.
+        </p>
+      ) : null}
 
       <div className="logs-quick-row eval-console-tabs">
         <button
@@ -1077,30 +1110,34 @@ export function EvaluationPage() {
                   placeholder="Поиск: вопрос, ответ, execution_id…"
                 />
                 <div className="logs-quick-row eval-actions-row">
-                  <input
-                    className="logs-search eval-run-name-input"
-                    type="text"
-                    value={runNameInput}
-                    onChange={(e) => setRunNameInput(e.target.value)}
-                    placeholder="Имя набора анализа (например: Weaviate c1000 k5 baseline)"
-                    aria-label="Имя набора анализа"
-                  />
-                  <button
-                    type="button"
-                    className="logs-page-btn"
-                    disabled={importBusy || checkedTurns.size === 0}
-                    onClick={importSelected}
-                  >
-                    Импорт выбранных ({checkedTurns.size})
-                  </button>
-                  <button
-                    type="button"
-                    className="logs-page-btn logs-page-btn--muted"
-                    disabled={importBusy || turns.length === 0}
-                    onClick={() => importLastN(5)}
-                  >
-                    Импорт последних 5
-                  </button>
+                  {canEvalWrite ? (
+                    <>
+                      <input
+                        className="logs-search eval-run-name-input"
+                        type="text"
+                        value={runNameInput}
+                        onChange={(e) => setRunNameInput(e.target.value)}
+                        placeholder="Имя набора анализа (например: Weaviate c1000 k5 baseline)"
+                        aria-label="Имя набора анализа"
+                      />
+                      <button
+                        type="button"
+                        className="logs-page-btn"
+                        disabled={importBusy || checkedTurns.size === 0}
+                        onClick={importSelected}
+                      >
+                        Импорт выбранных ({checkedTurns.size})
+                      </button>
+                      <button
+                        type="button"
+                        className="logs-page-btn logs-page-btn--muted"
+                        disabled={importBusy || turns.length === 0}
+                        onClick={() => importLastN(5)}
+                      >
+                        Импорт последних 5
+                      </button>
+                    </>
+                  ) : null}
                   <OperationalRefreshButton loading={loading} onClick={refresh} />
                 </div>
               </>
@@ -1118,7 +1155,7 @@ export function EvaluationPage() {
               onNext={goNextPage}
               disabled={loading}
             />
-            {tab === "turns" ? (
+            {tab === "turns" && canEvalWrite ? (
               <div className="logs-filter-meta muted eval-list-extra-meta">
                 <span>выбрано для импорта: {selectedCount}</span>
               </div>

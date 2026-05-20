@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field
 
 from admin_api.deps import get_admin_service, log_row_to_entry
 from admin_api.security.deps import require_permission
+from services.retrieval_security.principal_bridge import retrieval_security_from_principal
+from services.retrieval_security.visibility import (
+    document_visible_to_context,
+    filter_documents_by_retrieval_context,
+)
 from services.security.audit_service import get_audit_service
 from services.security.principal import PrincipalContext
 from services.security.rbac import (
@@ -60,11 +65,14 @@ def _preprocessing_public_from_upload(details: dict[str, Any]) -> dict[str, Any]
 @router.get("/documents")
 def api_documents(
     limit: int = Query(default=200, ge=1, le=_DOCS_CAP),
-    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_READ)),
 ) -> dict[str, Any]:
     svc = get_admin_service()
     docs_raw = svc.get_documents_with_versions()
     docs_limited = docs_raw[: min(limit, _DOCS_CAP)]
+    sec_ctx = retrieval_security_from_principal(principal)
+    if sec_ctx is not None and not sec_ctx.is_fully_unrestricted():
+        docs_limited = filter_documents_by_retrieval_context(docs_limited, sec_ctx)
 
     # lightweight observability from capped recent logs only
     logs = svc.get_recent_logs(limit=_LOGS_CAP)
@@ -299,17 +307,33 @@ def api_documents_reindex(
 
 @router.get("/documents/{document_id}/detail")
 def api_document_detail(
+    request: Request,
     document_id: str,
     version_number: int | None = Query(default=None, ge=1),
     full_canonical_text: bool = Query(default=False),
     full_preprocessing_raw: bool = Query(default=False),
-    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_READ)),
 ) -> dict[str, Any]:
     try:
         uid = uuid.UUID(document_id.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid document_id") from exc
     svc = get_admin_service()
+    sec_ctx = retrieval_security_from_principal(principal)
+    if sec_ctx is not None and not sec_ctx.is_fully_unrestricted():
+        doc_vis = svc.get_document_visibility(uid)
+        meta = {"visibility": doc_vis, "document_visibility": doc_vis}
+        if not document_visible_to_context(meta, sec_ctx):
+            get_audit_service().log_document_detail_visibility_denied(
+                principal=principal,
+                request=request,
+                document_id=str(uid),
+                document_visibility=doc_vis,
+                retrieval_role=sec_ctx.role,
+                retrieval_scope=sec_ctx.retrieval_scope,
+            )
+            # 404: не раскрываем факт существования restricted doc (как в list filter)
+            raise HTTPException(status_code=404, detail="document not found")
     bundle = svc.get_document_detail_bundle(
         uid,
         version_number=version_number,

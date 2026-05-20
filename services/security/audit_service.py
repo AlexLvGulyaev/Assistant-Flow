@@ -248,6 +248,89 @@ class AuditService:
             details={"path": path, "method": method.upper()},
         )
 
+    def log_retrieval_policy_denied(
+        self,
+        *,
+        event_type: str,
+        action: str,
+        retrieval_role: str,
+        retrieval_scope: str,
+        dropped_total: int = 0,
+        restricted_dropped: int = 0,
+        denied_source: int = 0,
+        kept: int = 0,
+        audit_user_id: uuid.UUID | None = None,
+        audit_email: str | None = None,
+        audit_platform_role: str | None = None,
+        execution_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """P9.6: retrieval visibility / scope deny → admin_audit_log."""
+        if dropped_total <= 0 and restricted_dropped <= 0 and denied_source <= 0:
+            return
+        details: dict[str, Any] = {
+            "retrieval_role": retrieval_role,
+            "retrieval_scope": retrieval_scope,
+            "dropped_total": dropped_total,
+            "restricted_dropped": restricted_dropped,
+            "denied_source": denied_source,
+            "kept": kept,
+        }
+        if extra:
+            details.update(extra)
+        principal = None
+        if audit_user_id or audit_email:
+            principal = PrincipalContext(
+                user_id=audit_user_id,
+                email=audit_email,
+                platform_role=audit_platform_role or "end_user",
+                retrieval_role=retrieval_role,
+                permissions=frozenset(),
+                is_authenticated=bool(audit_user_id or audit_email),
+                auth_source="retrieval",
+            )
+        self.log_event(
+            event_type=event_type,
+            action=action,
+            principal=principal,
+            status="failure",
+            reason="retrieval_visibility_restricted",
+            execution_id=execution_id,
+            details=details,
+        )
+
+    def log_document_detail_visibility_denied(
+        self,
+        *,
+        principal: PrincipalContext,
+        request: Request | None,
+        document_id: str,
+        document_visibility: str,
+        retrieval_role: str,
+        retrieval_scope: str,
+    ) -> None:
+        """P9.6c: denied GET /api/documents/{id}/detail (deduped)."""
+        key = f"detail:{principal.user_id}:{document_id}:{document_visibility}"
+        now = time.time()
+        last = _recent_denials.get(key, 0)
+        if now - last < _DENY_DEDUP_SECONDS:
+            return
+        _recent_denials[key] = now
+        self.log_event(
+            event_type="security.visibility.denied",
+            action="documents.detail.visibility",
+            principal=principal,
+            request=request,
+            status="failure",
+            reason="document_detail_visibility_restricted",
+            details={
+                "document_id": document_id,
+                "document_visibility": document_visibility,
+                "retrieval_role": retrieval_role,
+                "retrieval_scope": retrieval_scope,
+            },
+        )
+
     def get_recent(
         self,
         *,

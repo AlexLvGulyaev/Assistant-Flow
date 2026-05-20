@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 # Идентификаторы ролей для политик и телеметрии (не production RBAC).
 ROLE_GUEST = "guest"
@@ -35,6 +36,11 @@ class RetrievalSecurityContext:
     required_tags: frozenset[str] = frozenset()
     #: Допустимые значения ``visibility`` / ``document_visibility``; ``None`` — без фильтра.
     allowed_visibility: frozenset[str] | None = None
+    #: P9.6: optional audit bridge (set from PrincipalContext in principal_bridge).
+    audit_user_id: UUID | None = None
+    audit_email: str | None = None
+    audit_platform_role: str | None = None
+    audit_execution_id: str | None = None
 
     @classmethod
     def permissive_default(cls) -> RetrievalSecurityContext:

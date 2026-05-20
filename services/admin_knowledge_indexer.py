@@ -534,6 +534,10 @@ class AdminKnowledgeIndexer:
         pg_version_number: int = 0
         pg_hash_changed: bool = True
 
+        vis_to_stamp = self._resolve_document_visibility_for_file(
+            abs_path, document_visibility
+        )
+
         if pg_enabled:
             try:
                 (
@@ -567,9 +571,6 @@ class AdminKnowledgeIndexer:
                 with conn.transaction():
                     self._doc_repo.delete_document_chunks_for_version(conn, ver_id)
 
-        vis_to_stamp = self._resolve_document_visibility_for_file(
-            abs_path, document_visibility
-        )
         if vis_to_stamp is not None:
             raw_chunks = stamp_chunks_visibility(raw_chunks, vis_to_stamp)
             print(

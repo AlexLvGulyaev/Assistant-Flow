@@ -132,4 +132,71 @@ def filter_search_results_by_security(
             retrieval_scope=ctx.retrieval_scope,
             count=restricted_filtered,
         )
+    _maybe_audit_retrieval_drops(
+        ctx,
+        dropped=dropped,
+        restricted_filtered=restricted_filtered,
+        denied_source=denied_source,
+        kept=len(kept),
+    )
     return kept
+
+
+def _maybe_audit_retrieval_drops(
+    ctx: RetrievalSecurityContext,
+    *,
+    dropped: int,
+    restricted_filtered: int,
+    denied_source: int,
+    kept: int,
+) -> None:
+    if dropped <= 0 and restricted_filtered <= 0 and denied_source <= 0:
+        return
+    try:
+        from services.security.audit_service import get_audit_service
+
+        audit = get_audit_service()
+        if restricted_filtered > 0:
+            audit.log_retrieval_policy_denied(
+                event_type="retrieval.protected_chunk.denied",
+                action="retrieval.filter.protected",
+                retrieval_role=ctx.role,
+                retrieval_scope=ctx.retrieval_scope,
+                dropped_total=dropped,
+                restricted_dropped=restricted_filtered,
+                denied_source=denied_source,
+                kept=kept,
+                audit_user_id=ctx.audit_user_id,
+                audit_email=ctx.audit_email,
+                audit_platform_role=ctx.audit_platform_role,
+                execution_id=ctx.audit_execution_id,
+            )
+        elif denied_source > 0:
+            audit.log_retrieval_policy_denied(
+                event_type="retrieval.scope.denied",
+                action="retrieval.filter.source",
+                retrieval_role=ctx.role,
+                retrieval_scope=ctx.retrieval_scope,
+                dropped_total=dropped,
+                denied_source=denied_source,
+                kept=kept,
+                audit_user_id=ctx.audit_user_id,
+                audit_email=ctx.audit_email,
+                audit_platform_role=ctx.audit_platform_role,
+                execution_id=ctx.audit_execution_id,
+            )
+        elif dropped > 0:
+            audit.log_retrieval_policy_denied(
+                event_type="security.visibility.denied",
+                action="retrieval.filter.visibility",
+                retrieval_role=ctx.role,
+                retrieval_scope=ctx.retrieval_scope,
+                dropped_total=dropped,
+                kept=kept,
+                audit_user_id=ctx.audit_user_id,
+                audit_email=ctx.audit_email,
+                audit_platform_role=ctx.audit_platform_role,
+                execution_id=ctx.audit_execution_id,
+            )
+    except Exception:
+        pass

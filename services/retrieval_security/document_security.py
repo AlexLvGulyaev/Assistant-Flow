@@ -17,6 +17,7 @@ from services.retrieval_security.visibility import (
     VISIBILITY_RESTRICTED,
     VISIBILITY_UNSPECIFIED,
     effective_visibility,
+    visibility_to_scope_label,
 )
 
 # Новые загрузки: не public по умолчанию (guest не увидит без явного выбора).
@@ -57,6 +58,7 @@ def stamp_chunks_visibility(
         meta = dict(d.metadata or {})
         meta["visibility"] = vis
         meta["document_visibility"] = vis
+        meta["visibility_scope"] = visibility_to_scope_label(vis)
         out.append(Document(page_content=d.page_content, metadata=meta))
     return out
 

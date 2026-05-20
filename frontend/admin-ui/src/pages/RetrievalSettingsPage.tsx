@@ -233,7 +233,7 @@ export function RetrievalSettingsPage() {
   };
 
   const onSetRetrievalCache = async (enabled: boolean) => {
-    if (!data?.database_configured || cacheBusy) return;
+    if (!canRetrievalAdmin || !data?.database_configured || cacheBusy) return;
     setCacheBusy(true);
     setTuningSaveError(null);
     try {
@@ -251,7 +251,7 @@ export function RetrievalSettingsPage() {
   };
 
   const onClearTuning = async () => {
-    if (!data?.database_configured || tuningBusy) return;
+    if (!canRetrievalAdmin || !data?.database_configured || tuningBusy) return;
     setTuningBusy(true);
     setTuningSaveError(null);
     try {
@@ -305,6 +305,13 @@ export function RetrievalSettingsPage() {
   return (
     <div className="retrieval-settings page">
       {head}
+
+      {!canRetrievalAdmin ? (
+        <div className="retrieval-settings__alert retrieval-settings__alert--info" role="status">
+          <strong>Режим просмотра:</strong> изменение retrieval-настроек недоступно для текущей
+          роли (<code>retrieval:admin</code> требуется для switch/tuning/cache).
+        </div>
+      ) : null}
 
       {data?.degraded ? (
         <div className="retrieval-settings__alert retrieval-settings__alert--warn" role="status">
@@ -539,7 +546,7 @@ export function RetrievalSettingsPage() {
                   label={k.toUpperCase()}
                   source={rtSources[k] ?? (k in (tuning?.db_overrides ?? {}) ? "db" : "env")}
                   value={tuning ? tuningDraft[k] : fmt(rt[k])}
-                  disabled={!tuning || tuningBusy || !data?.database_configured}
+                  disabled={!canRetrievalAdmin || !tuning || tuningBusy || !data?.database_configured}
                   onChange={(v) => setTuningDraft((d) => ({ ...d, [k]: v }))}
                 />
               ))}
@@ -556,7 +563,7 @@ export function RetrievalSettingsPage() {
               <button
                 type="button"
                 className="retrieval-settings__btn-quiet"
-                disabled={!data?.database_configured || tuningBusy || !tuning}
+                disabled={!canRetrievalAdmin || !data?.database_configured || tuningBusy || !tuning}
                 onClick={() => void onClearTuning()}
               >
                 Clear DB overrides
@@ -591,7 +598,7 @@ export function RetrievalSettingsPage() {
                   label={k.toUpperCase()}
                   source={itSources[k] ?? (k in (tuning?.db_overrides ?? {}) ? "db" : "env")}
                   value={tuning ? tuningDraft[k] : fmt(it[k])}
-                  disabled={!tuning || tuningBusy || !data?.database_configured}
+                  disabled={!canRetrievalAdmin || !tuning || tuningBusy || !data?.database_configured}
                   onChange={(v) => setTuningDraft((d) => ({ ...d, [k]: v }))}
                 />
               ))}
@@ -608,7 +615,7 @@ export function RetrievalSettingsPage() {
               <button
                 type="button"
                 className="retrieval-settings__btn-quiet"
-                disabled={!data?.database_configured || tuningBusy || !tuning}
+                disabled={!canRetrievalAdmin || !data?.database_configured || tuningBusy || !tuning}
                 onClick={() => void onClearTuning()}
               >
                 Clear DB overrides
@@ -626,6 +633,7 @@ export function RetrievalSettingsPage() {
           cache={cache}
           databaseConfigured={Boolean(data?.database_configured)}
           cacheBusy={cacheBusy}
+          canRetrievalAdmin={canRetrievalAdmin}
           onSetRetrievalCache={(v) => void onSetRetrievalCache(v)}
         />
       </SectionCard>
