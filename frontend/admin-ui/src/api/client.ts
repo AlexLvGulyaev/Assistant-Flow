@@ -879,3 +879,74 @@ export async function patchEvaluationItem(
   }
   return parseJson<{ item?: EvaluationRunItem; run_id?: string }>(res);
 }
+
+export interface AuditEventItem {
+  id: string;
+  principal_id: string | null;
+  principal_email: string | null;
+  platform_role: string | null;
+  event_type: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  status: string;
+  reason: string | null;
+  request_path: string | null;
+  request_method: string | null;
+  execution_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface AuditRecentResponse {
+  limit: number;
+  offset: number;
+  count: number;
+  items: AuditEventItem[];
+}
+
+export interface AuditSummaryResponse {
+  since_hours: number;
+  total: number;
+  failures: number;
+  auth_events: number;
+  security_events: number;
+  by_event_type: Array<{ event_type: string; count: number }>;
+}
+
+export async function fetchAuditRecent(opts?: {
+  limit?: number;
+  offset?: number;
+  event_type?: string;
+  status?: string;
+  principal_email?: string;
+  since_hours?: number;
+}): Promise<AuditRecentResponse> {
+  const q = new URLSearchParams();
+  q.set("limit", String(opts?.limit ?? 50));
+  q.set("offset", String(opts?.offset ?? 0));
+  if (opts?.event_type) q.set("event_type", opts.event_type);
+  if (opts?.status) q.set("status", opts.status);
+  if (opts?.principal_email) q.set("principal_email", opts.principal_email);
+  if (opts?.since_hours != null) q.set("since_hours", String(opts.since_hours));
+  const res = await authAwareFetch(`/api/security/audit/recent?${q.toString()}`);
+  if (res.status === 403) {
+    throw new Error("Недостаточно прав (audit:read)");
+  }
+  if (!res.ok) {
+    throw new Error(`Audit: ${res.status}`);
+  }
+  return parseJson<AuditRecentResponse>(res);
+}
+
+export async function fetchAuditSummary(
+  sinceHours = 24
+): Promise<AuditSummaryResponse> {
+  const res = await authAwareFetch(
+    `/api/security/audit/summary?since_hours=${sinceHours}`
+  );
+  if (!res.ok) {
+    throw new Error(`Audit summary: ${res.status}`);
+  }
+  return parseJson<AuditSummaryResponse>(res);
+}

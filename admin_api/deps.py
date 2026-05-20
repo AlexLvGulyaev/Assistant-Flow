@@ -194,11 +194,15 @@ _PRESERVED_DETAIL_KEYS: frozenset[str] = frozenset(
 )
 
 
-def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
+def _slim_details_for_payload(
+    details: dict[str, Any],
+    *,
+    allow_forensic: bool = False,
+) -> dict[str, Any]:
     """Shrink heavy RAG fields while keeping telemetry & summaries for the Admin UI."""
     from services.security.log_sanitizer import is_forensic_log_policy, sanitize_log_details
 
-    forensic = is_forensic_log_policy(details)
+    forensic = allow_forensic or is_forensic_log_policy(details)
     out: dict[str, Any] = {}
     for k in _PRESERVED_DETAIL_KEYS:
         if k in details:
@@ -269,7 +273,12 @@ def _slim_details_for_payload(details: dict[str, Any]) -> dict[str, Any]:
     return sanitize_log_details(out, forensic=forensic)
 
 
-def truncate_details(details: Any, *, max_len: int = 4000) -> Any:
+def truncate_details(
+    details: Any,
+    *,
+    max_len: int = 4000,
+    allow_forensic: bool = False,
+) -> Any:
     """
     Bound JSON size for /api/logs responses.
 
@@ -292,11 +301,10 @@ def truncate_details(details: Any, *, max_len: int = 4000) -> Any:
     if len(raw) <= max_len:
         from services.security.log_sanitizer import is_forensic_log_policy, sanitize_log_details
 
-        return sanitize_log_details(
-            details, forensic=is_forensic_log_policy(details)
-        )
+        forensic = allow_forensic or is_forensic_log_policy(details)
+        return sanitize_log_details(details, forensic=forensic)
 
-    slim = _slim_details_for_payload(details)
+    slim = _slim_details_for_payload(details, allow_forensic=allow_forensic)
     try:
         raw_slim = json.dumps(slim, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
@@ -414,7 +422,11 @@ def infer_modality(details: Any, *, stage: str | None = None) -> str | None:
     return mr
 
 
-def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
+def log_row_to_entry(
+    row: dict[str, Any],
+    *,
+    allow_forensic: bool = False,
+) -> dict[str, Any]:
     details = row.get("details")
     dd: dict[str, Any] = details if isinstance(details, dict) else {}
     route = str(dd.get("route") or "").strip() or None
@@ -441,6 +453,8 @@ def log_row_to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "mode": mode,
         "modality": modality,
         "modality_route": modality_route,
-        "details": truncate_details(details, max_len=trunc_cap),
+        "details": truncate_details(
+            details, max_len=trunc_cap, allow_forensic=allow_forensic
+        ),
         "error_text": err_out,
     }

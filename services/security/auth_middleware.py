@@ -115,6 +115,14 @@ class IdentityAuthMiddleware(BaseHTTPMiddleware):
 
         if requires_authentication(path, method, mode) and not principal.is_authenticated:
             try:
+                from services.security.audit_service import get_audit_service
+
+                get_audit_service().log_access_denied(
+                    path=path,
+                    method=method,
+                    request=request,
+                    reason="unauthenticated",
+                )
                 get_identity_service().record_access_denied(
                     path=path,
                     method=method,

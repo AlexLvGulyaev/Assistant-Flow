@@ -2186,6 +2186,42 @@ code {
   color: var(--text);
 }
 
+/* P9.5e: restore RAG operational density (scoped to RAG page — not Security/Text) */
+.rag-page .rag-chunks-primary {
+  gap: 0.62rem;
+}
+
+.rag-page .rag-chunk-card {
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.rag-page .rag-chunk-card__header {
+  padding: 0.38rem 0.55rem 0.34rem;
+}
+
+.rag-page .rag-chunk-card__body {
+  padding: 0.5rem 0.55rem 0.48rem;
+}
+
+.rag-page .rag-chunk-card__preview {
+  font-size: 0.84rem;
+  line-height: 1.62;
+}
+
+.rag-page .rag-chunk-card__meta-row {
+  font-size: 0.74rem;
+  gap: 0.28rem 0.45rem;
+}
+
+.rag-page .modality-ops-panels--rag-split .modality-ops-panel {
+  padding: 0.42rem 0.48rem 0.46rem;
+}
+
+.rag-page .modality-ops-panels--rag-split {
+  gap: 0.55rem;
+}
+
 .telemetry-gap {
   font-style: italic;
 }
@@ -5892,4 +5928,338 @@ code {
 
 .admin-shell__auth-login-link:hover {
   text-decoration: underline;
+}
+
+/* ---- P9.5 Audit page ---- */
+.audit-page {
+  padding: 0 0 1.5rem;
+  max-width: 1200px;
+}
+
+.audit-page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.audit-page__summary {
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.audit-page__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.audit-page__input {
+  display: block;
+  margin-top: 0.25rem;
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.audit-page__error {
+  color: var(--error);
+}
+
+.audit-page__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.audit-page__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.audit-page__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.65rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.audit-page__row:hover,
+.audit-page__row--active {
+  background: var(--bg-hover);
+}
+
+.audit-page__time {
+  font-size: 0.72rem;
+  grid-column: 1 / -1;
+}
+
+.audit-page__actor {
+  font-size: 0.8rem;
+}
+
+.audit-page__etype {
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+
+.audit-page__detail {
+  padding: 0.85rem;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.audit-page__dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.audit-page__json {
+  margin-top: 0.75rem;
+  font-size: 0.72rem;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+}
+
+/* ---- P9.5b Security console ---- */
+.security-console-page {
+  max-width: none;
+}
+
+.security-console-page__lead {
+  margin-bottom: 0.65rem;
+}
+
+.security-console-summary {
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 0.65rem;
+  font-size: 0.85rem;
+}
+
+.logs-filter-row--security {
+  grid-template-columns: 64px repeat(3, minmax(0, 1fr));
+}
+
+.security-console-page .logs-console {
+  max-width: none;
+}
+
+.security-severity {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.12rem 0.35rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.security-severity--info {
+  color: #6eb5ff;
+  border-color: #3a5f8a;
+  background: rgba(110, 181, 255, 0.08);
+}
+
+.security-severity--warning {
+  color: #e6c84a;
+  border-color: #7a6a2a;
+  background: rgba(230, 200, 74, 0.1);
+}
+
+.security-severity--error {
+  color: #f08080;
+  border-color: #8a4040;
+  background: rgba(240, 128, 128, 0.1);
+}
+
+.security-severity--critical {
+  color: #ff9f6e;
+  border-color: #9a5030;
+  background: rgba(255, 159, 110, 0.12);
+}
+
+.security-detail.logs-detail {
+  padding-bottom: 0.35rem;
+}
+
+.security-detail__head-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.security-detail .security-ops-summary {
+  margin-top: 0.35rem;
+}
+
+.security-detail .security-ops-summary.modality-ops-panels--rag-split {
+  align-items: stretch;
+}
+
+.security-detail .security-ops-summary .modality-ops-panels__rag-col--session {
+  display: flex;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel {
+  flex: 1 1 100%;
+  width: 100%;
+  padding: 0.34rem 0.4rem 0.38rem;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel__kv {
+  margin: 0;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel__kv dt,
+.security-detail .security-ops-summary .modality-ops-panel__kv dd {
+  line-height: 1.35;
+  align-self: baseline;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel__kv dt {
+  font-size: 0.66rem;
+  padding-top: 0.02rem;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel__kv dd {
+  font-size: 0.74rem;
+  min-height: 1.35em;
+}
+
+.security-detail .security-io-grid,
+.security-detail .rag-io-grid {
+  margin-top: 0.45rem;
+}
+
+.security-detail .session-json-snapshot {
+  margin-top: 0.55rem;
+}
+
+/* Timeline: Text/Logs rhythm + status badge baseline */
+.security-detail .logs-timeline {
+  gap: 0.22rem;
+}
+
+.security-detail .logs-stage--compact {
+  padding: 0.24rem 0.34rem;
+}
+
+.security-detail .logs-stage__top {
+  align-items: center;
+  min-height: 1.35rem;
+}
+
+.security-detail .logs-stage__top .status-badge {
+  flex-shrink: 0;
+  margin-left: auto;
+  align-self: center;
+}
+
+.security-detail .logs-stage__details {
+  margin: 0.18rem 0 0;
+  padding-left: 0.1rem;
+}
+
+/* List: sec badge + white session-title */
+.security-console-page .mini-badge--af-sec {
+  border-color: rgba(200, 140, 90, 0.45);
+  color: #e8c9a8;
+}
+
+.security-console-page .security-list-head {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.security-console-page .security-list-short-result {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.security-console-page .logs-item__preview.security-list-intent {
+  font-size: 0.82rem;
+  font-weight: 560;
+  line-height: 1.32;
+  color: var(--text);
+  max-height: 2.6em;
+  overflow: hidden;
+}
+
+.security-console-page .security-list-meta {
+  font-size: 0.68rem;
+  line-height: 1.32;
+}
+
+/* Detail: equal panel grid rhythm */
+.security-detail .security-ops-summary .modality-ops-panel__name {
+  margin-bottom: 0.3rem;
+}
+
+.security-detail .security-ops-summary .modality-ops-panel__kv {
+  row-gap: 0.22rem;
+  column-gap: 0.42rem;
+}
+
+.security-detail .logs-detail-block .logs-pre--compact {
+  min-height: 72px;
+  max-height: 132px;
+}
+
+.security-detail-empty {
+  margin: 0.65rem;
+  padding: 0.75rem;
+  font-size: 0.82rem;
+}
+
+.security-detail__raw-toggle {
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.security-detail__json {
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  max-height: 180px;
+  overflow: auto;
+  background: var(--bg);
+  padding: 0.45rem;
+  border-radius: 4px;
 }

@@ -704,6 +704,16 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
     target_id UUID,
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
 
+    event_type TEXT,
+    principal_email TEXT,
+    platform_role TEXT,
+    status TEXT,
+    reason TEXT,
+    request_path TEXT,
+    request_method TEXT,
+    ip_hash TEXT,
+    user_agent TEXT,
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

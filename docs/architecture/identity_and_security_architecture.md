@@ -322,7 +322,9 @@ Retrieval policy  — какие чанки попадают в RAG (P8, уже 
 | `audit:read` | — | — | — | ✓ | ✓ |
 | `evaluation:run` | — | — | ✓ | ✓ | — |
 
-Реализация P9.4: `Permission` enum + `require_permission("documents:write")` FastAPI dependency.
+**Реализовано (P9.4):** `services/security/rbac.py` + `require_permission(...)` в Admin API; матрица — [security/rbac_permissions.md](../security/rbac_permissions.md).
+
+**Реализовано (P9.5):** `admin_audit_log` + `AuditService` + `/api/security/audit/*` — [security/audit_and_observability.md](../security/audit_and_observability.md).
 
 ### 6.4 Policy resolution flow
 

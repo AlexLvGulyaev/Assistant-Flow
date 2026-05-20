@@ -19,7 +19,8 @@ from repositories.channel_identity_repository import (
 )
 from repositories.connection import get_connection
 from repositories.user_repository import UserRepository
-from services.retrieval_security.context import ROLE_EMPLOYEE
+from services.retrieval_security.context import ROLE_ADMIN, ROLE_EMPLOYEE
+from services.security.rbac import retrieval_role_for_platform
 from services.retrieval_security.policy_resolver import resolve_role_for_telegram_user
 from services.security.password import create_password_hash, verify_password
 from services.security.principal import (
@@ -54,13 +55,16 @@ class IdentityService:
         password: str,
         display_name: str | None = None,
         platform_role: str = PLATFORM_END_USER,
-        retrieval_role: str = ROLE_EMPLOYEE,
+        retrieval_role: str | None = None,
     ) -> uuid.UUID:
         email_norm = email.strip().lower()
         if not email_norm:
             raise ValueError("email required")
         pwd_hash = create_password_hash(password)
         legacy_role = "admin" if platform_role in (PLATFORM_ADMIN, "superadmin") else "user"
+        eff_retrieval = (retrieval_role or "").strip() or retrieval_role_for_platform(
+            platform_role
+        )
         with get_connection() as conn:
             existing = self._users.get_by_email(conn, email_norm)
             if existing:
@@ -71,7 +75,7 @@ class IdentityService:
                 password_hash=pwd_hash,
                 display_name=display_name or email_norm,
                 platform_role=platform_role,
-                retrieval_role=retrieval_role,
+                retrieval_role=eff_retrieval,
                 legacy_role=legacy_role,
             )
             conn.commit()
@@ -300,7 +304,7 @@ class IdentityService:
                 password=password,
                 display_name="Bootstrap Admin",
                 platform_role=PLATFORM_ADMIN,
-                retrieval_role="admin",
+                retrieval_role=ROLE_ADMIN,
             )
             logger.info(
                 "[assistant-flow] identity bootstrap: created platform admin user_id=%s "

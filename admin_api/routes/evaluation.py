@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from admin_api.security.deps import require_permission
+from services.security.audit_service import get_audit_service
+from services.security.principal import PrincipalContext
+from services.security.rbac import PERM_LOGS_READ, PERM_SETTINGS_WRITE
 
 from admin_api.schemas.evaluation import (
     EvaluationImportBody,
@@ -32,6 +37,7 @@ def api_evaluation_rag_turns(
     fallback: str | None = Query(default=None),
     has_ragas_metrics: bool | None = Query(default=None),
     search: str | None = Query(default=None),
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
 ) -> dict:
     return list_rag_turns(
         limit=limit,
@@ -43,7 +49,10 @@ def api_evaluation_rag_turns(
 
 
 @router.get("/rag-turns/{execution_id}")
-def api_evaluation_rag_turn_detail(execution_id: str) -> dict:
+def api_evaluation_rag_turn_detail(
+    execution_id: str,
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
+) -> dict:
     detail = get_rag_turn_detail(execution_id=execution_id.strip())
     if detail is None:
         raise HTTPException(status_code=404, detail="rag_turn_not_found")
@@ -51,39 +60,66 @@ def api_evaluation_rag_turn_detail(execution_id: str) -> dict:
 
 
 @router.post("/import")
-def api_evaluation_import(body: EvaluationImportBody) -> dict:
+def api_evaluation_import(
+    request: Request,
+    body: EvaluationImportBody,
+    principal: PrincipalContext = Depends(require_permission(PERM_SETTINGS_WRITE)),
+) -> dict:
     try:
-        return import_turns(
+        out = import_turns(
             execution_ids=body.execution_ids,
             dataset=body.dataset,
             run_name=body.run_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="settings.evaluation.import",
+        principal=principal,
+        request=request,
+        details={"count": len(body.execution_ids), "run_name": body.run_name},
+    )
+    return out
 
 
 @router.post("/ragas/run")
-def api_evaluation_ragas_run(body: EvaluationRagasRunBody) -> dict:
+def api_evaluation_ragas_run(
+    request: Request,
+    body: EvaluationRagasRunBody,
+    principal: PrincipalContext = Depends(require_permission(PERM_SETTINGS_WRITE)),
+) -> dict:
     try:
         rid = uuid.UUID(body.run_id.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid_run_id") from exc
     try:
-        return run_ragas(run_id=rid)
+        out = run_ragas(run_id=rid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="settings.evaluation.ragas_run",
+        principal=principal,
+        request=request,
+        target_type="evaluation_run",
+        target_id=str(rid),
+    )
+    return out
 
 
 @router.get("/runs")
 def api_evaluation_runs(
     limit: int = Query(default=50, ge=1, le=_CAP),
     offset: int = Query(default=0, ge=0),
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
 ) -> dict:
     return list_runs(limit=limit, offset=offset)
 
 
 @router.get("/runs/{run_id}")
-def api_evaluation_run_detail(run_id: str) -> dict:
+def api_evaluation_run_detail(
+    run_id: str,
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
+) -> dict:
     try:
         rid = uuid.UUID(run_id.strip())
     except ValueError as exc:
@@ -95,7 +131,10 @@ def api_evaluation_run_detail(run_id: str) -> dict:
 
 
 @router.get("/runs/{run_id}/metrics")
-def api_evaluation_run_metrics(run_id: str) -> dict:
+def api_evaluation_run_metrics(
+    run_id: str,
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
+) -> dict:
     try:
         rid = uuid.UUID(run_id.strip())
     except ValueError as exc:
@@ -108,7 +147,10 @@ def api_evaluation_run_metrics(run_id: str) -> dict:
 
 @router.patch("/items/{item_id}")
 def api_evaluation_item_patch(
-    item_id: str, body: EvaluationItemPatchBody
+    request: Request,
+    item_id: str,
+    body: EvaluationItemPatchBody,
+    principal: PrincipalContext = Depends(require_permission(PERM_SETTINGS_WRITE)),
 ) -> dict:
     try:
         iid = uuid.UUID(item_id.strip())
@@ -122,4 +164,11 @@ def api_evaluation_item_patch(
     )
     if result.get("error") == "item_not_found":
         raise HTTPException(status_code=404, detail="item_not_found")
+    get_audit_service().log_privileged_action(
+        action="settings.evaluation.item_patch",
+        principal=principal,
+        request=request,
+        target_type="evaluation_item",
+        target_id=item_id,
+    )
     return result

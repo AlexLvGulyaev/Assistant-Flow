@@ -21,4 +21,5 @@ export const NAV_ITEMS: NavItem[] = [
   { path: "/logs", label: "Логи" },
   { path: "/memory", label: "Memory" },
   { path: "/evaluation", label: "Анализ RAG" },
+  { path: "/audit", label: "Безопасность" },
 ];

@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.security.auth_middleware import get_request_principal, hash_client_ip
+from services.security.rbac import expand_permissions_for_response
 from services.security.auth_policy import get_auth_mode, is_public_path, requires_authentication
 from services.security.identity_service import get_identity_service
 from services.security.principal import AUTH_SOURCE_BEARER
+from services.security.audit_service import get_audit_service
 from services.security.session_token import issue_session_token, revoke_session_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -34,7 +36,11 @@ def _me_payload(request: Request) -> dict[str, object]:
         "email": principal.email,
         "platform_role": principal.platform_role if principal.is_authenticated else None,
         "retrieval_role": principal.retrieval_role if principal.is_authenticated else None,
-        "permissions": sorted(principal.permissions) if principal.is_authenticated else [],
+        "permissions": (
+            expand_permissions_for_response(principal.permissions)
+            if principal.is_authenticated
+            else []
+        ),
         "auth_source": principal.auth_source if principal.is_authenticated else None,
     }
     if principal.is_authenticated:
@@ -74,7 +80,12 @@ def api_auth_login(body: LoginBody, request: Request) -> dict[str, object]:
         ip_hash=ip_hash,
     )
     if principal is None:
+        get_audit_service().log_auth_login_failure(
+            email=body.email,
+            request=request,
+        )
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
+    get_audit_service().log_auth_login_success(principal, request=request)
     token, expires_in, _jti = issue_session_token(principal)
     return {
         "access_token": token,
@@ -95,8 +106,10 @@ def _bearer_from_request(request: Request) -> str | None:
 
 @router.post("/logout")
 def api_auth_logout(request: Request) -> dict[str, object]:
+    principal = get_request_principal(request)
     tok = _bearer_from_request(request)
     if tok:
         revoke_session_token(tok)
+    get_audit_service().log_auth_logout(principal if principal.is_authenticated else None, request)
     return {"ok": True}
 

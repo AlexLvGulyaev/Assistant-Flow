@@ -87,8 +87,18 @@ curl -sS http://localhost:8600/api/auth/me
 
 `AF_IDENTITY_DEV_HEADERS=true` — заголовки `X-AF-Principal-Email` / `X-AF-Principal-Password` (не для production).
 
+## RBAC (P9.4)
+
+В режимах `optional` (authenticated) и `required` маршруты Admin API проверяют **permissions**, не только login.
+
+- **401** — нет сессии.
+- **403** — сессия есть, permission нет.
+
+Матрица: [rbac_permissions.md](rbac_permissions.md).
+
 ## Связанные документы
 
 - [identity_and_security_architecture.md](../architecture/identity_and_security_architecture.md)
+- [rbac_permissions.md](rbac_permissions.md)
 - [security_walkthrough.md](security_walkthrough.md)
 - [SECURITY_NOTES.md](../SECURITY_NOTES.md)

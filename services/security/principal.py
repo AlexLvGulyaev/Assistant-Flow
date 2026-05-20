@@ -1,4 +1,4 @@
-"""Runtime principal (P9.1) — foundation для RBAC, auth, audit, retrieval."""
+"""Runtime principal (P9.1–P9.4) — RBAC, auth, audit, retrieval."""
 
 from __future__ import annotations
 
@@ -7,6 +7,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.retrieval_security.context import ROLE_EMPLOYEE
+from services.security.rbac import (
+    PLATFORM_ADMIN,
+    PLATFORM_AUDITOR,
+    PLATFORM_EMPLOYEE,
+    PLATFORM_END_USER,
+    PLATFORM_OPERATOR,
+    PLATFORM_SUPERADMIN,
+    resolve_permissions,
+    retrieval_role_for_platform,
+)
 
 AUTH_SOURCE_ANONYMOUS = "anonymous"
 AUTH_SOURCE_BASIC = "basic"
@@ -14,42 +24,21 @@ AUTH_SOURCE_BEARER = "bearer"
 AUTH_SOURCE_TELEGRAM = "telegram"
 AUTH_SOURCE_DEV_HEADER = "dev_header"
 
-# Platform roles (control plane)
-PLATFORM_END_USER = "end_user"
-PLATFORM_EMPLOYEE = "employee"
-PLATFORM_OPERATOR = "operator"
-PLATFORM_ADMIN = "admin"
-PLATFORM_AUDITOR = "auditor"
-PLATFORM_SUPERADMIN = "superadmin"
-
-# Permission foundation (P9.4 расширит)
-_PERMISSIONS_BY_PLATFORM_ROLE: dict[str, frozenset[str]] = {
-    PLATFORM_ADMIN: frozenset(
-        {
-            "documents:read",
-            "documents:write",
-            "logs:read",
-            "logs:forensic",
-            "settings:read",
-            "settings:write",
-            "users:manage",
-            "audit:read",
-        }
-    ),
-    PLATFORM_SUPERADMIN: frozenset({"*"}),
-    PLATFORM_OPERATOR: frozenset(
-        {
-            "documents:read",
-            "documents:write",
-            "logs:read",
-            "settings:read",
-            "evaluation:run",
-        }
-    ),
-    PLATFORM_AUDITOR: frozenset({"logs:read", "audit:read", "logs:forensic"}),
-    PLATFORM_EMPLOYEE: frozenset({"documents:read"}),
-    PLATFORM_END_USER: frozenset(),
-}
+# Re-export platform roles for backward compatibility
+__all__ = [
+    "AUTH_SOURCE_ANONYMOUS",
+    "AUTH_SOURCE_BASIC",
+    "AUTH_SOURCE_BEARER",
+    "AUTH_SOURCE_DEV_HEADER",
+    "AUTH_SOURCE_TELEGRAM",
+    "PLATFORM_ADMIN",
+    "PLATFORM_AUDITOR",
+    "PLATFORM_EMPLOYEE",
+    "PLATFORM_END_USER",
+    "PLATFORM_OPERATOR",
+    "PLATFORM_SUPERADMIN",
+    "PrincipalContext",
+]
 
 
 @dataclass(frozen=True)
@@ -68,7 +57,7 @@ class PrincipalContext:
     is_authenticated: bool = False
     email: str | None = None
     display_name: str | None = None
-    actor_id: str | None = None  # string for audit logs
+    actor_id: str | None = None
 
     @classmethod
     def anonymous(cls) -> PrincipalContext:
@@ -89,10 +78,10 @@ class PrincipalContext:
         auth_source: str = AUTH_SOURCE_BASIC,
     ) -> PrincipalContext:
         platform_role = str(row.get("platform_role") or PLATFORM_END_USER).strip()
-        retrieval_role = str(row.get("retrieval_role") or ROLE_EMPLOYEE).strip()
-        perms = _PERMISSIONS_BY_PLATFORM_ROLE.get(platform_role, frozenset())
-        if "*" in perms:
-            perms = frozenset(_PERMISSIONS_BY_PLATFORM_ROLE[PLATFORM_ADMIN])
+        retrieval_role = str(row.get("retrieval_role") or "").strip()
+        if not retrieval_role:
+            retrieval_role = retrieval_role_for_platform(platform_role)
+        perms = resolve_permissions(platform_role)
         uid = row.get("id")
         user_uuid = uid if isinstance(uid, uuid.UUID) else uuid.UUID(str(uid))
         return cls(
@@ -107,7 +96,16 @@ class PrincipalContext:
             actor_id=str(user_uuid),
         )
 
+    @property
+    def require_authenticated(self) -> bool:
+        return self.is_authenticated
+
     def has_permission(self, permission: str) -> bool:
         if "*" in self.permissions:
             return True
         return permission in self.permissions
+
+    def has_any_permission(self, *permissions: str) -> bool:
+        if "*" in self.permissions:
+            return True
+        return any(p in self.permissions for p in permissions)

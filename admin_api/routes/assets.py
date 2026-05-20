@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from admin_api.deps import get_admin_service
+from admin_api.security.deps import require_permission
+from services.security.rbac import PERM_DOCUMENTS_READ
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 _PREVIEW_ALLOWED_PREFIXES = ("image/", "audio/")
@@ -12,6 +14,7 @@ _PREVIEW_ALLOWED_PREFIXES = ("image/", "audio/")
 @router.get("/preview")
 def api_asset_preview(
     asset_ref: str = Query(..., min_length=4, description="Asset relative ref"),
+    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
 ) -> FileResponse:
     svc = get_admin_service()
     try:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from admin_api.deps import (
     config_readiness_summary,
@@ -9,6 +9,8 @@ from admin_api.deps import (
     snapshot_to_public_dict,
 )
 from admin_api.schemas.common import OverviewResponse
+from admin_api.security.deps import require_permission
+from services.security.rbac import PERM_DOCUMENTS_READ
 from utils.config import load_config
 
 router = APIRouter(prefix="/api", tags=["overview"])
@@ -17,7 +19,9 @@ _SUPPORTED_MODALITIES = ["text", "rag", "image", "audio", "documents"]
 
 
 @router.get("/overview", response_model=OverviewResponse)
-def api_overview() -> OverviewResponse:
+def api_overview(
+    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
+) -> OverviewResponse:
     cfg = load_config()
     svc = get_admin_service()
     _, rep = run_health_report()

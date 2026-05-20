@@ -15,6 +15,8 @@ import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { SectionCard } from "../components/SectionCard";
 import { RetrievalCacheSettingsPanel } from "../components/RetrievalCacheSettingsPanel";
+import { useAuth } from "../auth/AuthContext";
+import { PERM } from "../auth/permissions";
 
 function Badge({
   text,
@@ -105,6 +107,8 @@ function SourceChip({ source }: { source?: string }) {
 }
 
 export function RetrievalSettingsPage() {
+  const { hasPermission } = useAuth();
+  const canRetrievalAdmin = hasPermission(PERM.retrievalAdmin);
   const [data, setData] = useState<RetrievalOverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -203,10 +207,12 @@ export function RetrievalSettingsPage() {
   }, [tuning, tuningDraft]);
 
   const tuningSaveDisabled = useMemo(() => {
-    if (!data?.database_configured || !tuning || tuningBusy) return true;
+    if (!canRetrievalAdmin || !data?.database_configured || !tuning || tuningBusy) {
+      return true;
+    }
     if (draftParseError(tuningDraft)) return true;
     return Object.keys(buildTuningPatch(tuningDraft, tuning)).length === 0;
-  }, [data?.database_configured, tuning, tuningBusy, tuningDraft]);
+  }, [canRetrievalAdmin, data?.database_configured, tuning, tuningBusy, tuningDraft]);
 
   const onSaveTuning = async () => {
     if (!tuning || tuningSaveDisabled) return;
@@ -411,7 +417,7 @@ export function RetrievalSettingsPage() {
                 className="retrieval-settings__select"
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
-                disabled={switching || !data?.database_configured}
+                disabled={switching || !data?.database_configured || !canRetrievalAdmin}
               >
                 {(data?.allowed_backends ?? [...BACKEND_ORDER]).map((b) => (
                   <option key={b} value={b}>
@@ -425,10 +431,12 @@ export function RetrievalSettingsPage() {
                 onClick={() => void onApply()}
                 disabled={
                   switching ||
+                  !canRetrievalAdmin ||
                   !data?.database_configured ||
                   !selected ||
                   selected === data?.effective_backend
                 }
+                title={!canRetrievalAdmin ? "Нет прав retrieval:admin" : undefined}
               >
                 {switching ? "Applying…" : "Apply switch"}
               </button>

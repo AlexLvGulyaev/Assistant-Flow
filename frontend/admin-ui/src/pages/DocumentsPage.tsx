@@ -7,6 +7,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { useAuth } from "../auth/AuthContext";
+import { PERM } from "../auth/permissions";
 import {
   fetchDocumentDetail,
   fetchDocuments,
@@ -97,6 +99,10 @@ function extraLongMetadataIdRows(
 }
 
 export function DocumentsPage() {
+  const { hasPermission } = useAuth();
+  const canUpload = hasPermission(PERM.documentsWrite);
+  const canReindex = hasPermission(PERM.documentsReindex);
+  const canWriteText = hasPermission(PERM.documentsWrite);
   const [data, setData] = useState<DocumentsResponse | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -255,11 +261,12 @@ export function DocumentsPage() {
   }, [detail?.timeline]);
 
   const canEditIndexedText = useMemo(() => {
+    if (!canWriteText) return false;
     if (!detail?.preview_available || !detail.text_preview) return false;
     const av = detail.active_version?.version_number;
     const sv = detail.selected_version?.version_number;
     return av != null && sv != null && av === sv;
-  }, [detail]);
+  }, [detail, canWriteText]);
 
   const hasIndexedPreview = useMemo(
     () => !!(detail?.preview_available && detail.text_preview),
@@ -698,7 +705,8 @@ export function DocumentsPage() {
             type="button"
             className="docs-action-btn docs-action-btn--primary"
             onClick={onPickUpload}
-            disabled={uploadBusy}
+            disabled={uploadBusy || !canUpload}
+            title={!canUpload ? "Нет прав documents:write" : undefined}
           >
             {uploadBusy ? "⏳ Загрузка…" : "⬆ Загрузить файл"}
           </button>
@@ -706,7 +714,8 @@ export function DocumentsPage() {
             type="button"
             className="docs-action-btn docs-action-btn--secondary"
             onClick={onReindexDocument}
-            disabled={!selectedId || reindexDocBusy || reindexAllBusy}
+            disabled={!selectedId || reindexDocBusy || reindexAllBusy || !canReindex}
+            title={!canReindex ? "Нет прав documents:reindex" : undefined}
           >
             {reindexDocBusy ? "⏳ Переиндексация…" : "↻ Переиндексировать документ"}
           </button>
@@ -714,7 +723,8 @@ export function DocumentsPage() {
             type="button"
             className="docs-action-btn docs-action-btn--caution"
             onClick={onReindexAll}
-            disabled={reindexAllBusy || reindexDocBusy}
+            disabled={reindexAllBusy || reindexDocBusy || !canReindex}
+            title={!canReindex ? "Нет прав documents:reindex" : undefined}
           >
             {reindexAllBusy ? "⏳ Переиндексация…" : "⚠ Переиндексировать всё"}
           </button>

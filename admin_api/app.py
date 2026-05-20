@@ -17,6 +17,7 @@ from admin_api.routes.logs import router as logs_router
 from admin_api.routes.overview import router as overview_router
 from admin_api.routes.retrieval import router as retrieval_router
 from admin_api.routes.sessions import router as memory_router
+from admin_api.routes.security_audit import router as security_audit_router
 from admin_api.routes.summary import router as summary_router
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ def create_admin_api_app() -> FastAPI:
     application.include_router(assets_router)
     application.include_router(documents_router)
     application.include_router(evaluation_router)
+    application.include_router(security_audit_router)
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(

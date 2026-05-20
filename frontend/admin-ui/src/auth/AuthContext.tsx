@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { fetchAuthMe, postLogin, postLogout } from "./api";
+import { hasPermission as checkPerm } from "./permissions";
 import { setUnauthorizedHandler } from "./token";
 import type { AuthMeResponse, AuthMode } from "./types";
 
@@ -27,13 +28,14 @@ export interface AuthState {
   refresh: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  hasPermission: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 function deriveFromMe(me: AuthMeResponse): Omit<
   AuthState,
-  "loading" | "refresh" | "login" | "logout"
+  "loading" | "refresh" | "login" | "logout" | "hasPermission"
 > {
   const authMode = me.auth_mode;
   const authenticated =
@@ -113,6 +115,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refresh();
   }, [refresh]);
 
+  const hasPermission = useCallback(
+    (permission: string) =>
+      checkPerm(
+        core.permissions,
+        permission,
+        core.authMode,
+        core.authenticated
+      ),
+    [core.permissions, core.authMode, core.authenticated]
+  );
+
   const value = useMemo<AuthState>(
     () => ({
       loading,
@@ -120,8 +133,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refresh,
       login,
       logout,
+      hasPermission,
     }),
-    [loading, core, refresh, login, logout]
+    [loading, core, refresh, login, logout, hasPermission]
   );
 
   return (

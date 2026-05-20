@@ -118,12 +118,8 @@ def revoke_session_token(token: str) -> bool:
 
 
 def principal_from_token_payload(payload: dict[str, Any]) -> PrincipalContext | None:
-    from services.security.principal import (
-        AUTH_SOURCE_BEARER,
-        _PERMISSIONS_BY_PLATFORM_ROLE,
-        PLATFORM_ADMIN,
-        PLATFORM_END_USER,
-    )
+    from services.security.principal import AUTH_SOURCE_BEARER, PLATFORM_END_USER
+    from services.security.rbac import resolve_permissions, retrieval_role_for_platform
 
     sub = str(payload.get("sub") or "").strip()
     if not sub:
@@ -133,10 +129,10 @@ def principal_from_token_payload(payload: dict[str, Any]) -> PrincipalContext | 
     except ValueError:
         return None
     platform_role = str(payload.get("platform_role") or PLATFORM_END_USER).strip()
-    retrieval_role = str(payload.get("retrieval_role") or "employee").strip()
-    perms = _PERMISSIONS_BY_PLATFORM_ROLE.get(platform_role, frozenset())
-    if "*" in perms:
-        perms = _PERMISSIONS_BY_PLATFORM_ROLE.get(PLATFORM_ADMIN, frozenset())
+    retrieval_role = str(payload.get("retrieval_role") or "").strip()
+    if not retrieval_role:
+        retrieval_role = retrieval_role_for_platform(platform_role)
+    perms = resolve_permissions(platform_role)
     return PrincipalContext(
         user_id=uid,
         platform_role=platform_role,

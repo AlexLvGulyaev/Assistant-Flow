@@ -701,6 +701,16 @@ COMPOSE_BAKE=false docker compose -f docker-compose.assistant.yml up -d --build
 Important:
 Do NOT use `docker compose down -v` unless full Chroma reset intended.
 
+### Границы PROJECT_STATE vs session logs / docs (append-only)
+
+`PROJECT_STATE.md` хранит **долговременное** состояние проекта: архитектурные решения, устойчивые operational rules, platform-level incidents, текущий статус крупных подсистем и **ссылки** на профильные документы.
+
+`PROJECT_STATE.md` **не** должен содержать: полные session logs, полные task prompts, пошаговые walkthrough конкретных спринтов, копии специализированных docs.
+
+- Подробная история задач: `docs/cursor_sessions/`.
+- Security walkthrough / RBAC / audit: `docs/security/`, `docs/architecture/identity_and_security_architecture.md`.
+- Security **ledger** P8/P9 в §56.5–§71 — краткие записи этапов, не дубли session logs.
+
 ### Portfolio stack + Cursor documentation (append-only)
 
 - **Канонический operational contour** для `docker-compose.portfolio.yml`: только project name **`portfolio-test`** (префикс контейнеров `portfolio-test-*`). Полная политика команд, риск параллельного контура `assistant-flow-*`, остановка ошибочных контейнеров и проверка активного стека — **§54**.
@@ -3179,11 +3189,26 @@ portfolio-test-
 - Admin API ``/api/*`` без auth; demo-порты Postgres/Chroma/Weaviate на хосте.
 - P6.7 (``services/retrieval_security/``) — готовый задел; masking **не** подключён к runtime.
 
-### 56.4 Следующий bounded pass (P8.1, не в этой сессии)
+### 56.4 Следующие этапы (выполнено в §57–§61)
 
-- Policy resolver + ``security_context`` в ``telegram_bot.py``.
-- Pre-LLM masking для ``requires_masking``.
-- Log sanitization tier; metadata на upload — без JWT/OAuth/RLS.
+Runtime P8.1–P8.5 закрыты в §57–§61; control-plane P9 — в §62–§70.
+
+---
+
+## 56.5 Security engineering ledger — P8 vs P9 (append-only)
+
+Два **разных** слоя security-направления (не смешивать в один абзац):
+
+| Слой | Разделы | Суть |
+|------|---------|------|
+| **P8** — RAG / LLM / retrieval governance | §57–§61 | visibility, role-aware retrieval, pre-LLM masking, log sanitization, bounded forensic diagnostics, ``docs/security/security_walkthrough.md`` |
+| **P9** — identity / auth / RBAC / audit / console | §62–§70 | users/principals, session, route permissions, ``admin_audit_log``, Security console (`/audit`) |
+
+Задел P6.7 (§36) — контракты retrieval security; P8 подключает их к Telegram RAG и ingestion; P9 — platform control plane отдельно от retrieval policy.
+
+Профильные docs (не копировать сюда целиком): ``docs/security/*``, ``docs/architecture/identity_and_security_architecture.md``, ``docs/homework/module5_lesson9_security_rag_report.md``.
+
+Сводные smoke-команды: **§71**.
 
 ---
 
@@ -3307,9 +3332,8 @@ Bounded verification P8.1–P8.3 без нового security subsystem; фин�
 
 ### 61.2 Реализовано
 
-- Session logs ``docs/cursor_sessions/2026-05-19_p8-{1,2,3,4}-*.md`` — встроен полный текст task prompt (без единственной ссылки на ``cursor_tasks_local/``).
-- ``docs/security/security_walkthrough.md`` — до/после P8, E2E сценарии, known limitations, demo commands.
-- Session log: ``docs/cursor_sessions/2026-05-19_p8-5-security-case-packaging.md``.
+- Self-contained session logs: ``docs/cursor_sessions/2026-05-19_p8-{1,2,3,4,5}-*.md``.
+- ``docs/security/security_walkthrough.md`` — portfolio demo / урок 9 (E2E, limitations).
 
 ### 61.3 Артефакты для демонстрации
 
@@ -3410,10 +3434,7 @@ JWT, refresh tokens, Admin UI login, OAuth, full RBAC enforcement on routes, aud
 
 ### 64.5 Operator check
 
-```bash
-# required + bootstrap credentials:
-curl -u "$INITIAL_ADMIN_EMAIL:$INITIAL_ADMIN_PASSWORD" http://localhost:8600/api/logs/recent?limit=1
-```
+См. **§71** (P9.2 curl).
 
 ---
 
@@ -3438,7 +3459,138 @@ curl -u "$INITIAL_ADMIN_EMAIL:$INITIAL_ADMIN_PASSWORD" http://localhost:8600/api
 
 ### 65.4 Operator check
 
-```bash
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_3_admin_login_smoke.py
-cd frontend/admin-ui && npm run build
+См. **§71** (P9.3, Admin UI build).
+
+---
+
+## 66. P9.3a Auth validation post-fix (append-only)
+
+### 66.1 Итог
+
+P9.3 login/session flow прошёл **runtime validation** в portfolio с ``AF_AUTH_MIDDLEWARE_MODE=required``.
+
+### 66.2 Schema drift incident
+
+- Симптом: ``POST /api/auth/login`` → 500, ``column "email" does not exist``.
+- Причина: ``007_identity_foundation.sql`` не была применена к portfolio PostgreSQL.
+- Исправление: ручное применение миграции 007 + restart admin-api.
+
+### 66.3 Вывод для оператора
+
+Перед проверками auth/RBAC явно валидировать DB migrations (identity schema). Bootstrap admin и login требуют колонок ``email``, ``password_hash`` в ``app_users``.
+
+Session log: ``docs/cursor_sessions/2026-05-19_p9-3a-auth-validation-postfix.md``.
+
+---
+
+## 67. P9.4 Real RBAC (append-only)
+
+### 67.1 Назначение
+
+``Principal → role → permissions → route enforcement`` для Admin API и UI.
+
+### 67.2 Реализовано
+
+- ``services/security/rbac.py`` — permissions, role mapping, retrieval bridge.
+- ``admin_api/security/deps.py`` — ``require_permission``, ``require_any_permission``; 401/403.
+- Permission checks на documents, logs, retrieval, overview, evaluation, memory, assets.
+- ``/api/auth/me`` — фактические permissions.
+- Frontend: ``hasPermission``, Documents/Retrieval settings gating.
+- ``docs/security/rbac_permissions.md``; smoke ``scripts/test_p9_4_rbac_smoke.py``.
+
+### 67.3 Bootstrap
+
+``INITIAL_ADMIN_*`` → ``platform_role=admin`` (не superadmin).
+
+### 67.4 Operator check
+
+См. **§71** (P9.4).
+
+---
+
+## 68. P9.5 Audit trail & security observability (append-only)
+
+### 68.1 Назначение
+
+Operational audit: privileged actions, auth failures, 401/403 observability, bounded API/UI.
+
+### 68.2 Реализовано
+
+- ``services/security/audit_service.py``, ``repositories/audit_repository.py``
+- Migration ``008_admin_audit_extend.sql``
+- ``GET /api/security/audit/recent``, ``/summary`` (``audit:read``)
+- Audit hooks: auth, documents, retrieval, evaluation; middleware 401; deps 403
+- Admin UI ``/audit``; ``docs/security/audit_and_observability.md``
+- Smoke ``scripts/test_p9_5_audit_smoke.py``
+- ``SECURITY_NOTES`` — исправлен legacy-текст про app_users (P9.4 doc debt)
+
+### 68.3 Platform incidents (post-fix, кратко)
+
+- ``GET /api/security/audit/summary`` → 500: psycopg3 и ``LIKE 'auth.%'`` в SQL; fix: ``starts_with(event_type, 'auth.')`` (session: ``docs/cursor_sessions/2026-05-19_p9-5-audit-summary-sql-postfix.md``).
+- ``auth.login.success`` в ``admin_audit_log``: выровнены поля audit (`action=login`, ``target_type=auth``); session: ``docs/cursor_sessions/2026-05-19_p9-5-successful-login-audit-postfix.md``.
+
+### 68.4 Operator check
+
+См. **§71** (P9.5).
+
+---
+
+## 69. P9.5b Security console & scenarios (append-only)
+
+### 69.1 Назначение
+
+Operational security console в Admin UI: narrative scenarios, RBAC/retrieval walkthrough, bounded severity — не SIEM.
+
+### 69.2 Реализовано
+
+- ``frontend/admin-ui/src/pages/AuditPage.tsx`` — logs-console layout, список сценариев
+- ``utils/securityScenarios.ts`` — scenario model, severity
+- ``docs/security/security_console_walkthrough.md``
+- Smoke ``scripts/test_p9_5b_security_scenarios.py`` (narrative report)
+- UI pipeline A–E: **§70** (retrieval встроен в B/C, не отдельная панель)
+
+### 69.3 Operator check
+
+См. **§71**.
+
+---
+
+## 70. P9.5c Canonical security pipeline UI (append-only)
+
+### 70.1 Назначение
+
+Scenario-centric console: **Пользователь ↔ Система**; единая правая колонка:
+
+```text
+A. Пользователь → B. Система (интерпретация + retrieval policy) → C. Решение → D. Последствия → E. Timeline
 ```
+
+### 70.2 Реализовано
+
+- ``SecurityPipelineView`` + ``buildSecurityPipeline()`` в ``securityScenarios.ts``
+- ``SecurityScenarioDetail`` — секции A–E
+- CSS ``security-pipeline__*``
+
+### 70.3 Operator check
+
+См. **§71**.
+
+---
+
+## 71. Security ledger — сводные operator checks (append-only)
+
+Канонический contour: **§54**. Не дублировать эти команды в session logs — только ссылка на §71.
+
+| Этап | Команда |
+|------|---------|
+| P8.1 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_1_retrieval_security_wiring_smoke.py`` |
+| P8.2 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_2_security_aware_document_ingestion_smoke.py`` |
+| P8.3 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_3_logging_sanitization_smoke.py`` |
+| P8.4 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_4_security_verification_smoke.py`` |
+| P9.1 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_1_identity_foundation_smoke.py`` |
+| P9.2 | ``curl -u "$INITIAL_ADMIN_EMAIL:$INITIAL_ADMIN_PASSWORD" http://localhost:8600/api/logs/recent?limit=1`` (``AF_AUTH_MIDDLEWARE_MODE=required``) |
+| P9.3 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_3_admin_login_smoke.py`` |
+| P9.4 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_4_rbac_smoke.py`` |
+| P9.5 | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_5_audit_smoke.py`` |
+| P9.5b | ``docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_5b_security_scenarios.py`` |
+| Admin UI | ``cd frontend/admin-ui && npm run build`` |

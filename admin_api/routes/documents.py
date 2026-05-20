@@ -5,10 +5,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from admin_api.deps import get_admin_service, log_row_to_entry
+from admin_api.security.deps import require_permission
+from services.security.audit_service import get_audit_service
+from services.security.principal import PrincipalContext
+from services.security.rbac import (
+    PERM_DOCUMENTS_READ,
+    PERM_DOCUMENTS_REINDEX,
+    PERM_DOCUMENTS_WRITE,
+)
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -50,7 +58,10 @@ def _preprocessing_public_from_upload(details: dict[str, Any]) -> dict[str, Any]
 
 
 @router.get("/documents")
-def api_documents(limit: int = Query(default=200, ge=1, le=_DOCS_CAP)) -> dict[str, Any]:
+def api_documents(
+    limit: int = Query(default=200, ge=1, le=_DOCS_CAP),
+    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
+) -> dict[str, Any]:
     svc = get_admin_service()
     docs_raw = svc.get_documents_with_versions()
     docs_limited = docs_raw[: min(limit, _DOCS_CAP)]
@@ -213,8 +224,10 @@ class DocumentTextEditRequest(BaseModel):
 
 @router.post("/documents/upload")
 async def api_documents_upload(
+    request: Request,
     file: UploadFile = File(...),
     visibility: str = Form(default="internal"),
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_WRITE)),
 ) -> dict[str, Any]:
     svc = get_admin_service()
     raw = await file.read()
@@ -225,16 +238,28 @@ async def api_documents_upload(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="documents.upload",
+        principal=principal,
+        request=request,
+        target_type="document",
+        target_id=str(result.get("document_id") or ""),
+        details={"filename": name, "visibility": visibility},
+    )
     return result
 
 
 @router.post("/documents/reindex")
-def api_documents_reindex(body: ReindexRequest) -> dict[str, Any]:
+def api_documents_reindex(
+    request: Request,
+    body: ReindexRequest,
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_REINDEX)),
+) -> dict[str, Any]:
     svc = get_admin_service()
     scope = (body.scope or "document").strip().lower()
     if scope == "all":
         report = svc.run_reindex()
-        return {
+        result = {
             "scope": "all",
             "success": report.success,
             "error": report.error_message,
@@ -243,6 +268,14 @@ def api_documents_reindex(body: ReindexRequest) -> dict[str, Any]:
             "files_indexed_ok": report.files_indexed_ok,
             "files_found": report.files_found,
         }
+        get_audit_service().log_privileged_action(
+            action="documents.reindex",
+            principal=principal,
+            request=request,
+            target_type="corpus",
+            details={"scope": "all", "success": report.success},
+        )
+        return result
     if scope != "document":
         raise HTTPException(status_code=400, detail="scope must be 'all' or 'document'")
     did = (body.document_id or "").strip()
@@ -252,7 +285,16 @@ def api_documents_reindex(body: ReindexRequest) -> dict[str, Any]:
         uid = uuid.UUID(did)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid document_id") from exc
-    return svc.reindex_document_file(uid)
+    out = svc.reindex_document_file(uid)
+    get_audit_service().log_privileged_action(
+        action="documents.reindex",
+        principal=principal,
+        request=request,
+        target_type="document",
+        target_id=did,
+        details={"scope": "document"},
+    )
+    return out
 
 
 @router.get("/documents/{document_id}/detail")
@@ -261,6 +303,7 @@ def api_document_detail(
     version_number: int | None = Query(default=None, ge=1),
     full_canonical_text: bool = Query(default=False),
     full_preprocessing_raw: bool = Query(default=False),
+    _principal=Depends(require_permission(PERM_DOCUMENTS_READ)),
 ) -> dict[str, Any]:
     try:
         uid = uuid.UUID(document_id.strip())
@@ -293,8 +336,10 @@ def api_document_detail(
 
 @router.post("/documents/{document_id}/edit-text")
 def api_document_edit_text(
+    request: Request,
     document_id: str,
     body: DocumentTextEditRequest,
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_WRITE)),
 ) -> dict[str, Any]:
     try:
         uid = uuid.UUID(document_id.strip())
@@ -311,6 +356,17 @@ def api_document_edit_text(
             status_code=400,
             detail=str(result.get("error") or "edit failed"),
         )
+    get_audit_service().log_privileged_action(
+        action="documents.edit_text",
+        principal=principal,
+        request=request,
+        target_type="document",
+        target_id=document_id,
+        details={
+            "editor_source": body.editor_source,
+            "edited_characters": result.get("edited_characters"),
+        },
+    )
     return result
 
 

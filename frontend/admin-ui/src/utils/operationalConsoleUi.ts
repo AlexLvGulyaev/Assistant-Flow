@@ -114,6 +114,16 @@ export function detailsJsonPreview(d: unknown): string {
   }
 }
 
+export function formatDetailsJson(d: unknown): string {
+  if (d == null) return "null";
+  if (typeof d === "string") return d;
+  try {
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return String(d);
+  }
+}
+
 /**
  * Heuristic stage marker color from machine stage name (+ optional status).
  * Applies to pipeline timelines across modalities.

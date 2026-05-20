@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from admin_api.deps import get_admin_service
+from admin_api.security.deps import require_permission
+from services.security.audit_service import get_audit_service
+from services.security.principal import PrincipalContext
+from services.security.rbac import PERM_RETRIEVAL_ADMIN, PERM_RETRIEVAL_READ
 
 router = APIRouter(prefix="/api/retrieval", tags=["retrieval"])
 
@@ -46,27 +50,47 @@ def _tuning_put_patch_from_body(body: TuningPutBody) -> dict[str, Any]:
 
 
 @router.get("/overview")
-def api_retrieval_overview() -> dict[str, Any]:
+def api_retrieval_overview(
+    _principal=Depends(require_permission(PERM_RETRIEVAL_READ)),
+) -> dict[str, Any]:
     svc = get_admin_service()
     return svc.get_retrieval_overview()
 
 
 @router.put("/active-backend")
-def api_retrieval_active_backend(body: ActiveBackendBody) -> dict[str, Any]:
+def api_retrieval_active_backend(
+    request: Request,
+    body: ActiveBackendBody,
+    principal: PrincipalContext = Depends(require_permission(PERM_RETRIEVAL_ADMIN)),
+) -> dict[str, Any]:
     svc = get_admin_service()
     try:
-        return svc.set_active_retrieval_backend((body.backend or "").strip())
+        out = svc.set_active_retrieval_backend((body.backend or "").strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="retrieval.backend.switch",
+        principal=principal,
+        request=request,
+        target_type="retrieval_backend",
+        details={"backend": (body.backend or "").strip()},
+    )
+    return out
 
 
 @router.get("/tuning")
-def api_retrieval_tuning_get() -> dict[str, Any]:
+def api_retrieval_tuning_get(
+    _principal=Depends(require_permission(PERM_RETRIEVAL_READ)),
+) -> dict[str, Any]:
     return get_admin_service().get_retrieval_tuning()
 
 
 @router.put("/tuning")
-def api_retrieval_tuning_put(body: TuningPutBody) -> dict[str, Any]:
+def api_retrieval_tuning_put(
+    request: Request,
+    body: TuningPutBody,
+    principal: PrincipalContext = Depends(require_permission(PERM_RETRIEVAL_ADMIN)),
+) -> dict[str, Any]:
     patch = _tuning_put_patch_from_body(body)
     if not patch:
         raise HTTPException(
@@ -75,15 +99,33 @@ def api_retrieval_tuning_put(body: TuningPutBody) -> dict[str, Any]:
         )
     svc = get_admin_service()
     try:
-        return svc.put_retrieval_tuning(patch)
+        out = svc.put_retrieval_tuning(patch)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="retrieval.settings.update",
+        principal=principal,
+        request=request,
+        target_type="retrieval_tuning",
+        details={"patch_keys": sorted(patch.keys())},
+    )
+    return out
 
 
 @router.delete("/tuning")
-def api_retrieval_tuning_delete() -> dict[str, Any]:
+def api_retrieval_tuning_delete(
+    request: Request,
+    principal: PrincipalContext = Depends(require_permission(PERM_RETRIEVAL_ADMIN)),
+) -> dict[str, Any]:
     svc = get_admin_service()
     try:
-        return svc.delete_retrieval_tuning()
+        out = svc.delete_retrieval_tuning()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="retrieval.settings.delete",
+        principal=principal,
+        request=request,
+        target_type="retrieval_tuning",
+    )
+    return out

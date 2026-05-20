@@ -3,6 +3,7 @@ import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AdminLayout } from "./layout/AdminLayout";
+import { AuditPage } from "./pages/AuditPage";
 import { AudioPage } from "./pages/AudioPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ExitPage } from "./pages/ExitPage";
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="logs" element={<LogsPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="evaluation" element={<EvaluationPage />} />
+          <Route path="audit" element={<AuditPage />} />
         </Route>
       </Route>
     </Routes>

@@ -16,7 +16,8 @@
 ## Admin API и Admin UI
 
 - По умолчанию ``AF_AUTH_MIDDLEWARE_MODE=disabled`` — Admin API открыт; для staging задайте ``required`` и используйте login (P9.3) или Basic.
-- **P9.3:** ``POST /api/auth/login`` выдаёт Bearer token; задайте ``AF_SESSION_SECRET`` в production (не dev fallback).
+- **P9.3:** ``POST /api/auth/login`` выдаёт Bearer token; задайте ``AF_SESSION_SECRET`` в production (не dev fallback). Режим ``required`` validated после применения ``007_identity_foundation.sql`` (см. P9.3a).
+- **P9.3a:** при ``column "email" does not exist`` на login — schema drift: применить ``database/migrations/007_identity_foundation.sql`` к PostgreSQL, затем restart Admin API. Bootstrap admin невозможен без актуальной схемы ``app_users``.
 - Admin UI (**8080**) хранит token в ``sessionStorage``; не выставлять в открытый интернет без:
   - reverse proxy с TLS;
   - VPN, IP allowlist, OAuth2-proxy или аналога;
@@ -70,8 +71,13 @@
 - Admin API auth: по умолчанию **выключен** (`AF_AUTH_MIDDLEWARE_MODE=disabled`); для проверки Basic auth — `optional` или `required` + `INITIAL_ADMIN_*`.
 - Миграция: `database/migrations/007_identity_foundation.sql`.
 - **P9.2 (2026-05-19):** enforcement middleware — режимы `disabled` / `optional` / `required`; `GET /api/auth/me`; защита Admin API в `required`. См. [security/auth_modes.md](security/auth_modes.md).
+- **P9.3 (2026-05-19):** Admin UI login/session (Bearer); **P9.3a:** runtime validation выявила schema drift — перед login обязательна миграция 007.
+- **P9.4 (2026-05-19):** real RBAC — `services/security/rbac.py`, `require_permission` на Admin API routes, UI `hasPermission`. Bootstrap = `admin`. См. [security/rbac_permissions.md](security/rbac_permissions.md).
+- **P9.5 (2026-05-19):** security audit trail — `admin_audit_log`, `AuditService`, `GET /api/security/audit/*`. См. [security/audit_and_observability.md](security/audit_and_observability.md).
+- **P9.5b (2026-05-19):** Security console — narrative scenarios, severity, retrieval/RBAC visualization в Admin UI `/audit`. См. [security/security_console_walkthrough.md](security/security_console_walkthrough.md).
+- `app_users` / `PrincipalContext` / RBAC используются в Admin API; retrieval role bridge подключён (P9.1–P9.4).
+- Ограничения control-plane: нет user-management UI, нет multi-tenant isolation, нет external IAM/OAuth, retention audit — вручную оператором.
 - Направление: local auth first; Keycloak/OAuth — P9.7; multi-tenant — P9.6.
-- В схеме БД есть `app_users`, но не подключён к retrieval policy и Admin API.
 
 ---
 

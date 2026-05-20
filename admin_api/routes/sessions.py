@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from admin_api.deps import get_memory_observability_service
+from admin_api.security.deps import require_permission
+from services.security.rbac import PERM_LOGS_READ
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -12,6 +14,7 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 @router.get("/observability/summary")
 def api_memory_observability_summary(
     hours: int = Query(default=24, ge=1, le=24 * 90),
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
 ) -> dict:
     svc = get_memory_observability_service()
     return svc.get_summary(hours=hours)
@@ -22,13 +25,17 @@ def api_memory_sessions_list(
     active_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
 ) -> dict:
     svc = get_memory_observability_service()
     return svc.list_sessions(active_only=active_only, limit=limit, offset=offset)
 
 
 @router.get("/sessions/{session_id}")
-def api_memory_session_detail(session_id: str) -> dict:
+def api_memory_session_detail(
+    session_id: str,
+    _principal=Depends(require_permission(PERM_LOGS_READ)),
+) -> dict:
     svc = get_memory_observability_service()
     detail = svc.get_session_detail(session_id)
     if detail is None:
