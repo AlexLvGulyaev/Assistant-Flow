@@ -29,6 +29,87 @@ _DOCS_CAP = 400
 _LOGS_CAP = 500
 
 
+def _live_active_index_chunk_count(
+    kb: Any, retrieval_ops: dict[str, Any]
+) -> int | None:
+    """Same source as RS/RAG: active backend health collection_count."""
+    raw = retrieval_ops.get("active_collection_count")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(kb.collection_count)
+    except (TypeError, ValueError):
+        return None
+
+
+def _role_scope_documents_aggregates(
+    items: list[dict[str, Any]],
+    *,
+    role_scoped: bool,
+    kb: Any,
+    retrieval_ops: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """
+    Documents list aggregates aligned with Retrieval Settings / RAG.
+
+    Primary chunk total: live ``active_collection_count`` from the active vector
+    backend (Weaviate/Chroma/FAISS) — never a hardcoded or postgres-corpus sum.
+
+    Role-scoped principals: hide postgres corpus totals that can leak hidden
+    restricted documents; index count still comes from the active backend probe.
+    """
+    live_n = _live_active_index_chunk_count(kb, retrieval_ops)
+    backend = kb.active_retrieval_backend
+    index_scope = "active_backend"
+
+    visible_aggregate: dict[str, Any] = {
+        "documents_count": len(items),
+        "scope": "role_visible" if role_scoped else "corpus",
+    }
+
+    scoped_retrieval_ops = {
+        **retrieval_ops,
+        "active_collection_count": live_n,
+        "collection_count_scope": index_scope,
+    }
+
+    if not role_scoped:
+        pg_sum = kb.postgres_chunks_sum
+        vector_n = kb.collection_count
+        global_mismatch = (
+            kb.postgres_available
+            and pg_sum is not None
+            and live_n is not None
+            and pg_sum != live_n
+        )
+        global_index_sync = {
+            "chroma_collection_chunks": vector_n,
+            "vector_index_chunks": kb.vector_index_chunk_count or vector_n,
+            "active_retrieval_backend": backend,
+            "postgres_chunks_sum_active_versions": pg_sum,
+            "postgres_available": kb.postgres_available,
+            "global_chunks_mismatch": global_mismatch,
+            "collection_count_scope": index_scope,
+            "active_index_chunk_count": live_n,
+        }
+        return global_index_sync, scoped_retrieval_ops, visible_aggregate
+
+    global_index_sync = {
+        "chroma_collection_chunks": live_n,
+        "vector_index_chunks": live_n,
+        "active_retrieval_backend": backend,
+        "postgres_chunks_sum_active_versions": None,
+        "postgres_available": kb.postgres_available,
+        "global_chunks_mismatch": None,
+        "collection_count_scope": index_scope,
+        "active_index_chunk_count": live_n,
+    }
+    return global_index_sync, scoped_retrieval_ops, visible_aggregate
+
+
 def _preprocessing_public_from_upload(details: dict[str, Any]) -> dict[str, Any] | None:
     """Subset of upload log for Documents UI (no secrets)."""
     pre = details.get("preprocessing")
@@ -188,28 +269,22 @@ def api_documents(
         )
 
     kb = svc.get_knowledge_base_status()
-    pg_sum = kb.postgres_chunks_sum
-    vector_n = kb.collection_count
-    global_mismatch = (
-        kb.postgres_available
-        and pg_sum is not None
-        and pg_sum != vector_n
-    )
+    role_scoped = sec_ctx is not None and not sec_ctx.is_fully_unrestricted()
     retrieval_ops = svc.get_retrieval_platform_compact()
+    global_index_sync, retrieval_ops, visible_aggregate = _role_scope_documents_aggregates(
+        items,
+        role_scoped=role_scoped,
+        kb=kb,
+        retrieval_ops=retrieval_ops,
+    )
 
     return {
         "count": len(items),
         "limit": min(limit, _DOCS_CAP),
         "items": items,
         "embedding_model": getattr(svc.app_config, "openai_embedding_model", None),
-        "global_index_sync": {
-            "chroma_collection_chunks": vector_n,
-            "vector_index_chunks": kb.vector_index_chunk_count or vector_n,
-            "active_retrieval_backend": kb.active_retrieval_backend,
-            "postgres_chunks_sum_active_versions": pg_sum,
-            "postgres_available": kb.postgres_available,
-            "global_chunks_mismatch": global_mismatch,
-        },
+        "visible_aggregate": visible_aggregate,
+        "global_index_sync": global_index_sync,
         "retrieval_operational": retrieval_ops,
         "observability": {
             "reindex_available": True,

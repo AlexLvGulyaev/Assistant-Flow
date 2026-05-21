@@ -425,8 +425,7 @@ class FaissBackend:
 
         ntotal = int(self._index.ntotal)
         requested = int(top_k)
-        if not ctx.is_fully_unrestricted():
-            requested = min(ntotal, max(requested * 8, requested))
+        requested = min(ntotal, max(requested * 8, requested))
         k = min(requested, ntotal)
         if k <= 0:
             return []

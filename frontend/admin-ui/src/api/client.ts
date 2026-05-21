@@ -299,6 +299,7 @@ export interface RetrievalPlatformCompact {
   active_readiness?: string;
   active_ok?: boolean;
   active_collection_count?: number | null;
+  collection_count_scope?: "active_backend" | "corpus" | "role_visible";
   backends_compact?: Record<
     string,
     { ok?: boolean; count?: number | null; readiness?: string }
@@ -446,6 +447,13 @@ export interface DocumentsGlobalIndexSync {
   postgres_chunks_sum_active_versions?: number | null;
   postgres_available?: boolean;
   global_chunks_mismatch?: boolean;
+  collection_count_scope?: "active_backend" | "corpus" | "role_visible";
+  active_index_chunk_count?: number | null;
+}
+
+export interface DocumentsVisibleAggregate {
+  documents_count?: number;
+  scope?: "corpus" | "role_visible";
 }
 
 export interface DocumentsResponse {
@@ -453,6 +461,7 @@ export interface DocumentsResponse {
   count?: number;
   items?: DocumentItem[];
   embedding_model?: string | null;
+  visible_aggregate?: DocumentsVisibleAggregate;
   global_index_sync?: DocumentsGlobalIndexSync;
   observability?: DocumentsObservability;
   retrieval_operational?: RetrievalPlatformCompact;

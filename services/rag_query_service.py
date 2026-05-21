@@ -900,6 +900,12 @@ class RagQueryService:
             query=normalized,
         )
         if not raw:
+            empty_msg = (
+                "По запросу ничего не найдено."
+                if security_context is not None
+                and not security_context.is_fully_unrestricted()
+                else "В базе знаний нет информации по этому запросу."
+            )
             diagnostics = _build_diagnostics(
                 query=normalized,
                 top_k=k,
@@ -928,7 +934,7 @@ class RagQueryService:
             )
             diagnostics.emit_stdout()
             return RagQueryResult(
-                answer="В базе знаний нет информации по этому запросу.",
+                answer=empty_msg,
                 sources=(),
                 used_fallback_without_context=True,
                 diagnostics=diagnostics,

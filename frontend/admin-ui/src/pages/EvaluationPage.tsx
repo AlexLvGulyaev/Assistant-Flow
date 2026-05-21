@@ -522,6 +522,7 @@ function SelectedItemForensicPanel({
             value={gt}
             onChange={(e) => setGt(e.target.value)}
             readOnly={!canEvalWrite}
+            disabled={!canEvalWrite}
             placeholder="Эталонный ответ"
           />
           <div className="eval-item-edit__row">
@@ -530,6 +531,7 @@ function SelectedItemForensicPanel({
               value={score}
               onChange={(e) => setScore(e.target.value)}
               readOnly={!canEvalWrite}
+              disabled={!canEvalWrite}
               placeholder="ручная 0 / 0.5 / 1"
             />
             <input
@@ -537,6 +539,7 @@ function SelectedItemForensicPanel({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               readOnly={!canEvalWrite}
+              disabled={!canEvalWrite}
               placeholder="заметки"
             />
             {canEvalWrite ? (
@@ -1034,10 +1037,10 @@ export function EvaluationPage() {
       </p>
 
       {!canEvalWrite ? (
-        <p className="eval-banner muted" role="status">
-          Режим просмотра: импорт, RAGAS и правка эталонов доступны только с правом{" "}
-          <code>settings:write</code>.
-        </p>
+        <div className="evaluation-page__alert evaluation-page__alert--info" role="status">
+          <strong>Режим просмотра:</strong> импорт RAG-сессий, запуск RAGAS и правка эталонов
+          недоступны для текущей роли (<code>settings:write</code> требуется для изменений).
+        </div>
       ) : null}
 
       <div className="logs-quick-row eval-console-tabs">

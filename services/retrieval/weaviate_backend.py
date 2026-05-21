@@ -99,6 +99,7 @@ class WeaviateBackend:
         )
 
         if self._client.collections.exists(self._class_name):
+            self._ensure_visibility_property()
             return
         # weaviate-client 4.x: use hnsw()/flat(); VectorIndex.distance() removed.
         # weaviate-client 4.15+: VectorDistances.L2 renamed/removed — omit metric (server default).
@@ -114,8 +115,24 @@ class WeaviateBackend:
                 Property(name="source", data_type=DataType.TEXT),
                 Property(name="chunk_index", data_type=DataType.INT),
                 Property(name="total_chunks", data_type=DataType.INT),
+                Property(name="visibility", data_type=DataType.TEXT),
             ],
         )
+
+    def _ensure_visibility_property(self) -> None:
+        """Add visibility to existing class (idempotent) for post-filter / Weaviate where."""
+        from weaviate.classes.config import DataType, Property  # noqa: PLC0415
+
+        try:
+            coll = self._client.collections.get(self._class_name)
+            cfg = coll.config.get()
+            names = {p.name for p in (cfg.properties or [])}
+            if "visibility" not in names:
+                coll.config.add_property(
+                    Property(name="visibility", data_type=DataType.TEXT)
+                )
+        except Exception:
+            pass
 
     def _collection(self) -> Any:
         return self._client.collections.get(self._class_name)
@@ -179,6 +196,11 @@ class WeaviateBackend:
                 tchunks = int(total_chunks) if total_chunks is not None else -1
             except (TypeError, ValueError):
                 tchunks = -1
+            vis = str(
+                meta.get("visibility")
+                or meta.get("document_visibility")
+                or "unspecified"
+            ).strip().lower() or "unspecified"
             props = {
                 "text": text,
                 "chunk_id": cid,
@@ -187,6 +209,7 @@ class WeaviateBackend:
                 "source": str(meta.get("source") or ""),
                 "chunk_index": cidx,
                 "total_chunks": tchunks,
+                "visibility": vis,
             }
             props = {k: _flatten_prop_value(v) for k, v in props.items()}
             texts.append(text)
@@ -240,9 +263,9 @@ class WeaviateBackend:
         vec = self._embeddings.embed_query(q)
         coll = self._collection()
         n = self.collection_count()
+        # Oversample for post-security-filter headroom (admin skips filter but still needs recall).
         requested = int(top_k)
-        if not ctx.is_fully_unrestricted():
-            requested = min(n, max(requested * 8, requested)) if n > 0 else requested
+        requested = min(n, max(requested * 8, requested)) if n > 0 else requested
         lim = max(1, min(requested, n) if n > 0 else requested)
         resp = coll.query.near_vector(
             near_vector=vec,
@@ -254,12 +277,17 @@ class WeaviateBackend:
         for obj in resp.objects:
             props = obj.properties or {}
             page = str(props.get("text") or "")
+            vis_raw = props.get("visibility")
             meta = {
                 "source": props.get("source"),
                 "chunk_id": props.get("chunk_id"),
                 "document_id": props.get("document_id"),
                 "document_version_id": props.get("document_version_id"),
             }
+            if vis_raw is not None and str(vis_raw).strip():
+                v = str(vis_raw).strip().lower()
+                meta["visibility"] = v
+                meta["document_visibility"] = v
             ci = props.get("chunk_index")
             tc = props.get("total_chunks")
             if ci is not None:

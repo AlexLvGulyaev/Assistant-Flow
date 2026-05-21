@@ -23,14 +23,33 @@ SCOPE_ADMIN = "admin"
 
 
 def effective_visibility(meta: dict[str, Any]) -> str:
-    """Единое значение visibility для политик retrieval."""
-    for key in ("visibility_scope", "document_visibility", "visibility"):
+    """
+    Единое значение visibility для политик retrieval (public/internal/restricted/unspecified).
+
+    ``visibility_scope`` — scope label (employee/protected/…); не подменяет canonical
+    ``visibility`` после PG-enrich (P9.6g-postfix).
+    """
+    for key in ("visibility", "document_visibility"):
         raw = meta.get(key)
         if raw is None:
             continue
         s = str(raw).strip().lower()
         if s:
             return s
+    raw = meta.get("visibility_scope")
+    if raw is not None:
+        s = str(raw).strip().lower()
+        if s in (
+            VISIBILITY_PUBLIC,
+            VISIBILITY_INTERNAL,
+            VISIBILITY_RESTRICTED,
+            VISIBILITY_UNSPECIFIED,
+        ):
+            return s
+        if s == SCOPE_PROTECTED:
+            return VISIBILITY_RESTRICTED
+        if s == SCOPE_PUBLIC:
+            return VISIBILITY_PUBLIC
     return VISIBILITY_UNSPECIFIED
 
 

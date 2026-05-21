@@ -1,8 +1,9 @@
 """
 Сборка Chroma ``where`` до ``collection.query`` (P6.7).
 
-Теги и сложные предикаты — в post-filter (``result_filter``), чтобы не зависеть
-от версии операторов Chroma.
+Теги и ``allowed_visibility`` — только в post-filter (``result_filter`` + PG enrich),
+как Weaviate/FAISS: legacy Chroma metadata часто без ``visibility``, pre-filter давал
+пустой retrieval (P9.6g-postfix).
 """
 
 from __future__ import annotations
@@ -36,13 +37,6 @@ def build_chroma_where(ctx: RetrievalSecurityContext) -> dict[str, Any] | None:
             clauses.append({k: {"$in": list(val)}})
             continue
         clauses.append({k: val})
-
-    if ctx.allowed_visibility is not None and len(ctx.allowed_visibility) > 0:
-        vis_list = sorted(ctx.allowed_visibility)
-        if len(vis_list) == 1:
-            clauses.append({"visibility": vis_list[0]})
-        else:
-            clauses.append({"visibility": {"$in": vis_list}})
 
     if not clauses:
         return None

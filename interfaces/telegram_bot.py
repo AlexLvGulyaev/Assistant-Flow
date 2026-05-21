@@ -1856,9 +1856,34 @@ def create_bot() -> telebot.TeleBot:
                             first_name=getattr(message.from_user, "first_name", None),
                             last_name=getattr(message.from_user, "last_name", None),
                         )
+                        try:
+                            from dataclasses import replace
+
+                            from services.security.identity_service import (
+                                get_identity_service,
+                            )
+
+                            tg_principal = get_identity_service().resolve_principal_for_telegram(
+                                uid,
+                                telegram_chat_id=message.chat.id,
+                                username=getattr(message.from_user, "username", None),
+                                first_name=getattr(message.from_user, "first_name", None),
+                                last_name=getattr(message.from_user, "last_name", None),
+                            )
+                            if tg_principal is not None:
+                                security_ctx = replace(
+                                    security_ctx,
+                                    audit_execution_id=execution_id,
+                                    audit_user_id=tg_principal.user_id,
+                                    audit_email=tg_principal.email,
+                                    audit_platform_role=tg_principal.platform_role,
+                                )
+                        except Exception:
+                            pass
                         print(
                             "[assistant-flow] rag before rag_service.answer "
-                            f"role={security_ctx.role} scope={security_ctx.retrieval_scope}",
+                            f"role={security_ctx.role} scope={security_ctx.retrieval_scope} "
+                            f"audit_execution_id={security_ctx.audit_execution_id}",
                             flush=True,
                         )
                         result = rag_service.answer(

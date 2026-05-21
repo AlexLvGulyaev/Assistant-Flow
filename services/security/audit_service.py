@@ -280,10 +280,19 @@ class AuditService:
             details.update(extra)
         principal = None
         if audit_user_id or audit_email:
+            platform_for_audit = (audit_platform_role or "").strip()
+            if not platform_for_audit:
+                rr = (retrieval_role or "").strip().lower()
+                if rr == "admin":
+                    platform_for_audit = "admin"
+                elif rr == "employee":
+                    platform_for_audit = "employee"
+                else:
+                    platform_for_audit = "end_user"
             principal = PrincipalContext(
                 user_id=audit_user_id,
                 email=audit_email,
-                platform_role=audit_platform_role or "end_user",
+                platform_role=platform_for_audit,
                 retrieval_role=retrieval_role,
                 permissions=frozenset(),
                 is_authenticated=bool(audit_user_id or audit_email),

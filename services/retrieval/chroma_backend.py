@@ -78,8 +78,14 @@ class ChromaBackend:
                 retrieval_scope=ctx.retrieval_scope,
                 chroma_where=bool(chroma_where),
             )
+        n = int(self.collection_count())
+        requested = int(top_k)
+        requested = min(n, max(requested * 8, requested)) if n > 0 else requested
+        k = min(requested, n) if n > 0 else requested
+        if k <= 0:
+            return []
         raw: list[tuple[Any, float]] = self._store.native_similarity_search_with_score(
-            query, k=top_k, where=chroma_where
+            query, k=k, where=chroma_where
         )
         out: list[RetrievalSearchResult] = []
         for rank, (doc, score) in enumerate(raw):
@@ -99,7 +105,8 @@ class ChromaBackend:
                     score=float(score),
                 )
             )
-        return filter_search_results_by_security(out, ctx)
+        filtered = filter_search_results_by_security(out, ctx)
+        return filtered[: int(top_k)]
 
     def healthcheck(self) -> RetrievalHealth:
         """Пустая коллекция (count=0) — не ошибка: backend доступен, ретривал просто пуст."""

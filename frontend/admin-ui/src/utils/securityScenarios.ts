@@ -81,6 +81,26 @@ function retrievalRoleFromPlatform(platformRole: string | null): string {
   return "employee";
 }
 
+/** Prefer audit details.retrieval_role over platform_role (Telegram end_user rows). */
+export function platformRoleForRetrievalStory(
+  item: AuditEventItem
+): string | null {
+  const rr = item.details?.retrieval_role;
+  if (typeof rr === "string") {
+    const role = rr.trim().toLowerCase();
+    if (role === "admin") return "admin";
+    if (role === "employee") return "employee";
+    if (role === "guest") return "end_user";
+  }
+  return item.platform_role;
+}
+
+export function retrievalPolicyStoryForItem(
+  item: AuditEventItem
+): RetrievalSecurityStory {
+  return retrievalPolicyStory(platformRoleForRetrievalStory(item));
+}
+
 export function retrievalPolicyStory(
   platformRole: string | null
 ): RetrievalSecurityStory {
@@ -274,7 +294,7 @@ function buildSecurityPipeline(
       : "—";
   const actor = item.principal_email ?? "анонимный / неаутентифицированный";
   const role = roleLabelRu(item.platform_role);
-  const retrieval = retrievalPolicyStory(item.platform_role);
+  const retrieval = retrievalPolicyStoryForItem(item);
 
   const user: PipelineLine[] = [
     { label: "Актор", value: actor },
@@ -504,7 +524,7 @@ function buildTimelineStepPayload(
     };
   }
   if (s.includes("retrieval")) {
-    const story = retrievalPolicyStory(item.platform_role);
+    const story = retrievalPolicyStoryForItem(item);
     return {
       retrieval_role: story.retrievalRole,
       visibility: story.allowedVisibility,
@@ -585,7 +605,7 @@ export function listIntentTitle(
   } else if (et.startsWith("privileged.documents.")) {
     intent = "операция с корпусом документов";
   } else {
-    const scope = retrievalPolicyStory(item.platform_role).scope;
+    const scope = retrievalPolicyStoryForItem(item).scope;
     if (scope && scope !== "unrestricted" && scope !== "public_only") {
       intent = `запрос доступа к ${scope}`;
     } else {
@@ -718,7 +738,7 @@ export function auditEventToScenario(
   const perm = pickPermission(item.details || {});
   const et = item.event_type || item.action;
   const chainSteps = buildScenarioChain(item, allItems);
-  const retrievalStory = retrievalPolicyStory(item.platform_role);
+  const retrievalStory = retrievalPolicyStoryForItem(item);
 
   return {
     id: item.id,

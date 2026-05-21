@@ -116,14 +116,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const hasPermission = useCallback(
-    (permission: string) =>
-      checkPerm(
+    (permission: string) => {
+      if (loading) return false;
+      return checkPerm(
         core.permissions,
         permission,
         core.authMode,
         core.authenticated
-      ),
-    [core.permissions, core.authMode, core.authenticated]
+      );
+    },
+    [loading, core.permissions, core.authMode, core.authenticated]
   );
 
   const value = useMemo<AuthState>(

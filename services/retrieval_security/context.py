@@ -64,13 +64,12 @@ class RetrievalSecurityContext:
         )
 
     def restricts_vector_query(self) -> bool:
-        """Нужен ли непустой ``where`` в Chroma (источники с $in / простые metadata).
+        """Нужен ли непустой ``where`` в Chroma (источники с $in / явные metadata_filters).
 
+        ``allowed_visibility`` — только post-filter (см. ``chroma_where``).
         ``allowed_sources == frozenset()`` не требует where: недопустимый ``$in: []``.
         """
         if self.allowed_sources is not None and len(self.allowed_sources) > 0:
-            return True
-        if self.allowed_visibility is not None and len(self.allowed_visibility) > 0:
             return True
         return any(str(k).strip() for k, _ in self.metadata_filters)
 

@@ -168,6 +168,15 @@ export function DocumentsPage() {
   const items = data?.items ?? [];
   const gis = data?.global_index_sync;
   const rop = data?.retrieval_operational as RetrievalPlatformCompact | undefined;
+  const countsRoleScoped = data?.visible_aggregate?.scope === "role_visible";
+  const canSeeCorpusIndexStats = hasPermission(PERM.retrievalAdmin);
+  /** Live active-backend count — same field as RS/RAG retrieval_operational.active_collection_count */
+  const activeIndexChunkCount =
+    rop?.active_collection_count ??
+    gis?.active_index_chunk_count ??
+    gis?.vector_index_chunks ??
+    gis?.chroma_collection_chunks ??
+    null;
   const lastFullReindex = data?.observability?.last_reindex_event;
   const embeddingModel = (data?.embedding_model || "").trim() || null;
   const providerHint = embeddingModel ? `OpenAI · ${embeddingModel}` : null;
@@ -660,7 +669,8 @@ export function DocumentsPage() {
               status={retrievalReadinessForStatusBadge(rop.active_readiness, rop.active_ok)}
             />
             <span className="docs-retrieval-context__chunks muted mono">
-              Chunks: {rop.active_collection_count == null ? "—" : String(rop.active_collection_count)}
+              Chunks:{" "}
+              {activeIndexChunkCount == null ? "—" : String(activeIndexChunkCount)}
             </span>
           </div>
           <p className="docs-retrieval-context__hint muted">
@@ -765,8 +775,10 @@ export function DocumentsPage() {
                     <DocFieldRow label="Версий (сумма)">
                       <span className="mono">{summary.versions}</span>
                     </DocFieldRow>
-                    <DocFieldRow label="Чанков (сумма)">
-                      <span className="mono">{summary.chunks}</span>
+                    <DocFieldRow label="Чанков в активном индексе">
+                      <span className="mono">
+                        {activeIndexChunkCount == null ? "—" : String(activeIndexChunkCount)}
+                      </span>
                     </DocFieldRow>
                     <DocFieldRow label="Последняя индексация">
                       <span className="mono">{summary.lastIndexedLabel}</span>
@@ -790,10 +802,16 @@ export function DocumentsPage() {
                   Статус индекса
                 </button>
                 {indexPopOpen ? (
-                  <div className="docs-toolbar__pop" role="dialog" aria-label="Глобальный статус индекса">
-                    <DocFieldRow label="Векторов в индексе">
+                  <div className="docs-toolbar__pop" role="dialog" aria-label="Статус индекса">
+                    {countsRoleScoped ? (
+                      <p className="muted docs-toolbar__pop-note">
+                        Число чанков — live probe активного retrieval backend (как в Retrieval
+                        Settings / RAG). Postgres corpus totals скрыты для текущей роли.
+                      </p>
+                    ) : null}
+                    <DocFieldRow label="Чанков в активном индексе">
                       <span className="mono">
-                        {gis?.vector_index_chunks ?? gis?.chroma_collection_chunks ?? "—"}
+                        {activeIndexChunkCount == null ? "—" : String(activeIndexChunkCount)}
                       </span>
                     </DocFieldRow>
                     <DocFieldRow label="Активный backend">
@@ -801,18 +819,22 @@ export function DocumentsPage() {
                         {formatRetrievalBackendTitle(gis?.active_retrieval_backend ?? undefined)}
                       </span>
                     </DocFieldRow>
-                    <DocFieldRow label="Σ chunk_count (активные версии)">
-                      <span className="mono">
-                        {gis?.postgres_chunks_sum_active_versions ?? "—"}
-                      </span>
-                    </DocFieldRow>
-                    <DocFieldRow label="Согласованность">
-                      {gis?.global_chunks_mismatch ? (
-                        <span className="docs-warn">расхождение</span>
-                      ) : (
-                        <StatusBadge status="ok" />
-                      )}
-                    </DocFieldRow>
+                    {canSeeCorpusIndexStats && !countsRoleScoped ? (
+                      <>
+                        <DocFieldRow label="Σ chunk_count (активные версии, corpus)">
+                          <span className="mono">
+                            {gis?.postgres_chunks_sum_active_versions ?? "—"}
+                          </span>
+                        </DocFieldRow>
+                        <DocFieldRow label="Согласованность">
+                          {gis?.global_chunks_mismatch ? (
+                            <span className="docs-warn">расхождение</span>
+                          ) : (
+                            <StatusBadge status="ok" />
+                          )}
+                        </DocFieldRow>
+                      </>
+                    ) : null}
                     <DocFieldRow label="Полная переиндексация">
                       <span className="mono">
                         {lastFullReindex?.stage

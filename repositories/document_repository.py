@@ -307,6 +307,38 @@ class DocumentRepository:
             )
             return list(cur.fetchall())
 
+    def get_visibility_for_document_ids(
+        self, conn: Connection, document_ids: list[uuid.UUID]
+    ) -> dict[str, str]:
+        """Visibility per document_id from active version chunks (first chunk per doc)."""
+        if not document_ids:
+            return {}
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (dv.document_id)
+                    dv.document_id::text AS document_id,
+                    COALESCE(
+                        NULLIF(TRIM(dc.metadata->>'visibility'), ''),
+                        NULLIF(TRIM(dc.metadata->>'document_visibility'), ''),
+                        'unspecified'
+                    ) AS visibility
+                FROM document_versions dv
+                INNER JOIN document_chunks dc ON dc.document_version_id = dv.id
+                WHERE dv.document_id = ANY(%s::uuid[]) AND dv.is_active = true
+                ORDER BY dv.document_id, dc.chunk_index ASC
+                """,
+                (document_ids,),
+            )
+            rows = cur.fetchall()
+        out: dict[str, str] = {}
+        for row in rows:
+            doc_id = str(row.get("document_id") or "").strip()
+            vis = str(row.get("visibility") or "").strip().lower()
+            if doc_id and vis:
+                out[doc_id] = vis
+        return out
+
     def get_active_version_visibility(
         self, conn: Connection, document_id: uuid.UUID
     ) -> str | None:

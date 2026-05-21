@@ -5335,6 +5335,19 @@ code {
   font-size: 0.78rem;
 }
 
+.evaluation-page__alert {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.evaluation-page__alert--info {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+}
+
 .evaluation-page .evaluation-filter-row {
   grid-template-columns: 72px 1fr 1fr;
 }

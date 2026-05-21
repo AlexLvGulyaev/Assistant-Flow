@@ -10,6 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from services.retrieval.base import RetrievalSearchResult
+from services.retrieval_security.chunk_visibility_enrich import (
+    enrich_search_results_visibility_metadata,
+)
 from services.retrieval_security.context import RetrievalSecurityContext
 from services.retrieval_security.telemetry import emit_retrieval_security_event
 from services.retrieval_security.visibility import (
@@ -75,6 +78,8 @@ def filter_search_results_by_security(
     """
     if ctx.is_fully_unrestricted():
         return results
+
+    results = enrich_search_results_visibility_metadata(results, ctx)
 
     kept: list[RetrievalSearchResult] = []
     denied_source = 0

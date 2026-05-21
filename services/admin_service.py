@@ -1139,6 +1139,12 @@ class AdminService:
             eff = self._platform_repo.set_active_rag_backend(conn, name)
             conn.commit()
         self._invalidate_effective_rag_backend_cache()
+        try:
+            from services.cache.invalidate import invalidate_retrieval_cache
+
+            invalidate_retrieval_cache(f"active_retrieval_backend_set:{name}")
+        except Exception:
+            pass
         return {
             "effective_backend": eff,
             "warnings": warnings,
