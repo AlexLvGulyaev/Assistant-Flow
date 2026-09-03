@@ -1,4 +1,4 @@
-# Cache Observability Console Design (PEr07)
+# 🏗️ Cache Observability Console Design (PEr07)
 
 Статус: design/spec pass (без frontend/backend реализации).  
 Область: operator-facing cache observability в Admin UI Assistant Flow.

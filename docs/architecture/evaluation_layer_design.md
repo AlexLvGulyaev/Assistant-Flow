@@ -1,4 +1,4 @@
-# Evaluation Layer — architectural design (Assistant Flow)
+# 🏗️ Evaluation Layer — architectural design (Assistant Flow)
 
 **Path:** `docs/architecture/evaluation_layer_design.md`  
 **Status:** design stage · **Audience:** engineering / operations · **Scope:** foundation for retrieval evaluation, quality metrics, controlled experiments, future RAGAS integration, and operational AI diagnostics — **not** a general-purpose analytics platform.
@@ -230,7 +230,7 @@ Values stored as floats 0–1 plus optional `raw` JSON for debug. **Invocation:*
 - **Runbook:** failed or partial runs (empty index, backend fingerprint mismatch, timeout) must return **actionable** errors; operators correlate with `run_id` without ad-hoc SQL on production traffic tables only.
 - **Ownership & retention:** datasets and runs are **versioned artifacts**; TTL / archive policy should be explicit (align with `processing_logs` retention philosophy).
 - **Alerting (later phase):** optional regression signals when a scheduled run exceeds baseline `fallback_rate` or distance drift vs previous run on the same `dataset_version`.
-- **Access control:** evaluation write APIs must eventually sit behind the same **Admin API** protection model as the rest of the operational shell (see `PROJECT_STATE` §47.1).
+- **Access control:** evaluation write APIs must eventually sit behind the same **Admin API** protection model as the rest of the operational shell (see `task_history/engineering_log.md` §47.1).
 - **Cost visibility:** `run_summary` should carry **embedding / LLM usage totals** per run for capacity planning.
 
 ---
@@ -270,7 +270,7 @@ Values stored as floats 0–1 plus optional `raw` JSON for debug. **Invocation:*
 
 | Phase | Deliverable |
 |-------|-------------|
-| **P0 — Design lock-in** | This document + `PROJECT_STATE` pointer (§47.x backlog cross-link optional). |
+| **P0 — Design lock-in** | This document + `task_history/engineering_log.md` pointer (§47.x backlog cross-link optional). |
 | **P1 — Schema + migration** | Tables `evaluation_dataset`, `evaluation_run`, `evaluation_item`, `evaluation_metric_fact` (or merged variant); minimal seed dataset. |
 | **P2 — Worker API** | Internal endpoint or CLI: `POST /api/evaluation/runs` → enqueue job; worker writes rows; idempotent run slug. |
 | **P3 — Read API** | `GET` runs, items, summaries for Admin UI. |
@@ -305,4 +305,4 @@ Values stored as floats 0–1 plus optional `raw` JSON for debug. **Invocation:*
 - **Owner:** engineering (AF core).
 - **Next review:** after P1 schema draft or first pilot run.
 
-**Related backlog:** `PROJECT_STATE.md` §47.2–47.4 (retrieval quality, metrics, experiments).
+**Related backlog:** `task_history/engineering_log.md` §47.2–47.4 (retrieval quality, metrics, experiments).

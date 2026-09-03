@@ -1,4 +1,4 @@
-# Operational Console UI contract (Assistant Flow)
+# 🏗️ Operational Console UI contract (Assistant Flow)
 
 Session date (`date +%F`): **2026-05-14**
 

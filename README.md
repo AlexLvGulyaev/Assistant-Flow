@@ -1,4 +1,4 @@
-# Assistant Flow
+# 🏠 Assistant Flow
 
 Мультимодальная AI-платформа для работы с корпоративными знаниями, AI-ассистентами и эксплуатацией AI-сервисов.
 
@@ -278,6 +278,9 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 | Логи | `/logs` |
 | Memory | `/memory` |
 | Анализ RAG | `/evaluation` |
+| Аудит | `/audit` |
+
+Доступ к консоли: при заданных `AF_ADMIN_TOKEN` / `AF_ADMIN_DEMO_TOKEN` вход по Bearer-токену (экран `/login`), есть демо-вход read-only; без токенов консоль открыта (локальный режим). Журнал `/audit` фиксирует обращения к Admin API.
 
 📷 Скриншоты:
 
@@ -483,11 +486,11 @@ assistant-flow/
 
 ## Развертывание
 
-Каноническая команда для локального демо и GitHub (проект compose `portfolio-test`):
+Каноническая команда для локального демо и GitHub (имя compose-проекта берётся из имени каталога, по умолчанию `assistant-flow`):
 
 ```bash
 cp .env.example .env
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
 Поднимаются сервисы: `postgres`, `chroma`, `weaviate`, `assistant-flow` (Telegram), `admin-api`, `admin-ui`.
@@ -502,7 +505,9 @@ COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.
 | Chroma HTTP | 8001 → 8000 |
 | Weaviate HTTP | 8089 → 8080 |
 
-Volumes: `./data/documents`, `./storage`, `./outputs` → контейнеры `assistant-flow` и `admin-api`.
+Volumes: `./data/documents`, `./storage`, `./outputs` → контейнеры `assistant-flow` и `admin-api`. Данные PostgreSQL и векторных хранилищ живут в named volumes вида `assistant-flow_portfolio_*`.
+
+Backend-образы собираются multi-stage: сборочные зависимости остаются в builder-стадии, runtime содержит только venv + ffmpeg. Опциональные extras включаются build-args (`INSTALL_RAGAS`, `INSTALL_DASHBOARD`) — см. RUNBOOK §E.
 
 Проверка после запуска:
 
@@ -526,6 +531,8 @@ curl -sS http://localhost:8600/api/health
 | PostgreSQL | `DATABASE_URL` → `postgresql://assistant:assistant@postgres:5432/assistant_flow` (portfolio) |
 | Поиск / кэш | `RAG_BACKEND`, `CHROMA_*`, `FAISS_INDEX_DIR`, `WEAVIATE_*`, `RAG_DOCUMENTS_DIR`, `ENABLE_RETRIEVAL_CACHE` |
 | Аудио | `AUDIO_ENABLED`, `STT_PROVIDER`, `TTS_PROVIDER` (по умолчанию `disabled`) |
+| Доступ к консоли | `AF_ADMIN_TOKEN` (полный доступ), `AF_ADMIN_DEMO_TOKEN` (демо read-only, запечён в UI при сборке), `AF_AUTH_MIDDLEWARE_MODE` (legacy Basic-аутентификация) |
+| Лимиты | `ADMIN_UPLOAD_MAX_MB` (лимит размера документа, default 25) |
 | Admin UI | `ADMIN_API_CORS_ORIGINS` → `http://localhost:8080` |
 
 Полный перечень — `.env.example`, [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -537,13 +544,15 @@ curl -sS http://localhost:8600/api/health
 ### Стабильные подсистемы
 
 - текстовый AI-контур;
-- RAG-контур;
-- индексация документов;
-- диагностика поиска по базе знаний;
+- RAG-контур (Chroma / FAISS / Weaviate, backend переключается в Retrieval Settings);
+- индексация документов с heavy-RAG safeguard-ами (лимит размера upload, защита reindex);
+- диагностика поиска по базе знаний и полный текст чанка в консоли;
 - кэширование запросов к базе знаний;
-- техническое логирование;
+- техническое логирование и трассировка pipeline;
 - механизм памяти диалога;
-- операционная наблюдаемость.
+- авторизация консоли (Bearer-токен, демо-вход read-only) и журнал аудита обращений к Admin API;
+- операционная наблюдаемость;
+- multi-stage production-образы (без сборочных зависимостей и dev-пакетов в runtime).
 
 ---
 
@@ -551,18 +560,19 @@ curl -sS http://localhost:8600/api/health
 
 - React Admin UI;
 - оценка качества RAG (RAGAS, `ENABLE_RAGAS_EVALUATION`);
-- фильтрация поиска по источникам;
-- кэш готовых ответов (в основном пути не включён).
+- асинхронный слой фоновых задач (фундамент: таблица `async_jobs`, постановка reindex-задач; воркер — в разработке);
+- аудио-контур (STT/TTS) — остаток по P5.4;
+- фильтрация поиска по источникам.
 
 ---
 
 ## Roadmap
 
-- [RUNBOOK.md](RUNBOOK.md) — восстановление, reindex, диагностика кэша и хранилищ.
+- Воркер асинхронных задач (потребление `async_jobs`, фоновый reindex).
+- Завершение аудио-контура (P5.4 remainder).
 - Фильтрация поиска по источникам.
 - Резервная маршрутизация провайдеров (OpenAI / GigaChat / Proxy API).
 - Улучшение разбиения документов на чанки.
-- RAGAS и ручная оценка качества в консоли.
 
 ---
 
@@ -571,11 +581,15 @@ curl -sS http://localhost:8600/api/health
 | Документ | Назначение |
 |---|---|
 | [README.md](README.md) | Общее описание платформы (входная точка GitHub) |
-| [RUNBOOK.md](RUNBOOK.md) | Эксплуатация и диагностика (документ в разработке) |
-| [USER_GUIDE.md](USER_GUIDE.md) | Руководство пользователя (документ в разработке) |
+| [RUNBOOK.md](RUNBOOK.md) | Развёртывание, smoke-проверки, эксплуатация и диагностика |
+| [USER_GUIDE.md](USER_GUIDE.md) | Руководство пользователя и оператора |
+| [docs/SPEC.md](docs/SPEC.md) | Продуктовая спецификация |
+| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Технический план реализации |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура системы |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Compose, env, процедуры развёртывания |
-| [PROJECT_STATE.md](PROJECT_STATE.md) | Инженерное состояние и backlog |
+| [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) | Модель безопасности и авторизация |
+| [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Демо-чеклист |
+| [database/POSTGRES_SETUP.md](database/POSTGRES_SETUP.md) | PostgreSQL: схема и миграции |
 | [docs/architecture/](docs/architecture/) | Детальные проектные документы (кэш, оценка, UI contract) |
 
 ---

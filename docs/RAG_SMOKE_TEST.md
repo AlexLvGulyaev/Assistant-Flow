@@ -1,4 +1,4 @@
-# Smoke-тест RAG
+# 🧪 Smoke-тест RAG
 
 Проверка поиска по базе знаний после подъёма стека или изменений retrieval/кэша. Для полной индексации с Postgres см. [ADMIN_INDEXING.md](ADMIN_INDEXING.md).
 
@@ -8,7 +8,7 @@
 
 ```bash
 cp .env.example .env
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
 Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy). Telegram: свой бот через BotFather — [RUNBOOK.md](../RUNBOOK.md) §G (плейсхолдер-токен polling не запускает).

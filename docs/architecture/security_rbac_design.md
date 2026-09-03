@@ -1,4 +1,4 @@
-# Security & RBAC — архитектурный foundation (P8 groundwork)
+# 🏗️ Security & RBAC — архитектурный foundation (P8 groundwork)
 
 **Статус:** architectural audit + design only (без production IAM, без миграций, без runtime-реализации RBAC).  
 **Дата:** 2026-05-19  
@@ -255,7 +255,7 @@ Admin API (`admin_api/app.py`, порт **8600**) — **без аутентиф�
 | **P8.1** ✅ | Policy resolver, Telegram `security_context`, visibility filter, pre-LLM masking, log tier | JWT, UI login |
 | **P8.2** ✅ | Metadata на upload, Admin UI visibility, ingestion stamp, diagnostics | Postgres RLS |
 | **P8.3** ✅ | Central `log_sanitizer`, operational vs forensic tiers, lifecycle + API redaction | Admin API auth, Full IAM |
-| **P8.4** ✅ | Security verification smoke + homework report; known limitations review | Cache policy, NLP PII detector |
+| **P8.4** ✅ | Security verification smoke; known limitations review | Cache policy, NLP PII detector |
 | **P8.5** ✅ | Self-contained session logs; [security_walkthrough.md](../security/security_walkthrough.md) | Production IAM |
 | **P9.0** ✅ | [identity_and_security_architecture.md](identity_and_security_architecture.md) — platform identity, auth, RBAC, audit | Runtime auth |
 
@@ -264,8 +264,8 @@ Admin API (`admin_api/app.py`, порт **8600**) — **без аутентиф�
 ## 9. Связь с документацией
 
 - Операции и порты: [OPERATIONS.md](../OPERATIONS.md)
-- P6.7 код: `PROJECT_STATE.md` §36
-- Unified roadmap: `PROJECT_STATE.md` §38.5 (**P8 — Security / RBAC groundwork**)
+- P6.7 код: `task_history/engineering_log.md` §36
+- Unified roadmap: `task_history/engineering_log.md` §38.5 (**P8 — Security / RBAC groundwork**)
 - Session log P8.0: [docs/cursor_sessions/2026-05-19_security-rbac-architecture-audit.md](../cursor_sessions/2026-05-19_security-rbac-architecture-audit.md)
 - Session log P8.1: [docs/cursor_sessions/2026-05-19_p8-1-retrieval-security-wiring.md](../cursor_sessions/2026-05-19_p8-1-retrieval-security-wiring.md)
 - Platform identity & auth (P9): [identity_and_security_architecture.md](identity_and_security_architecture.md)

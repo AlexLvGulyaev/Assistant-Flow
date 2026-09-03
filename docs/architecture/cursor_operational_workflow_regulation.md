@@ -1,4 +1,4 @@
-# Cursor Operational Workflow Regulation
+# 🏗️ Cursor Operational Workflow Regulation
 ## Assistant Flow Engineering Process
 
 Status: active  

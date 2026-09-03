@@ -1,4 +1,4 @@
-# Security console — operational walkthrough (P9.5b)
+# 🛡️ Security console — operational walkthrough (P9.5b)
 
 Страница **Безопасность** (`/audit`) — operational console Assistant Flow, не SIEM.
 
@@ -77,6 +77,6 @@ A. Пользователь
 ## Operator
 
 ```bash
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_5b_security_scenarios.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p9_5b_security_scenarios.py
 cd frontend/admin-ui && npm run build
 ```

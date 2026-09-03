@@ -1,4 +1,4 @@
-# Assistant Flow — Operational Runbook
+# 🚀 Assistant Flow — Operational Runbook
 
 Как **поднять** portfolio-стек и **проверить**, что он работает. Как **пользоваться** ботом и консолью после запуска — [USER_GUIDE.md](USER_GUIDE.md). Справочник портов и топологии — [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
@@ -91,6 +91,17 @@ cp .env.example .env
 
 **Минимум для smoke:** `TELEGRAM_BOT_TOKEN` (свой), `OPENAI_API_KEY`, `GIGACHAT_AUTH_KEY`. `DATABASE_URL` для portfolio уже подходит.
 
+**Heavy RAG safeguard (опционально):** `ADMIN_UPLOAD_MAX_MB` (default 25) —
+лимит размера документа в МБ. Upload-роут отвечает `413` на файлы больше
+лимита; reindex пропускает такие файлы из `data/documents`.
+
+**Доступ к консоли (демо-стандарт APL):** задайте в `.env` `AF_ADMIN_TOKEN`
+(полный доступ) и `AF_ADMIN_DEMO_TOKEN` (демо-вход, read-only) — произвольные
+длинные случайные строки. Токены заданы → вход в UI по Bearer-токену; кнопка
+«Войти в демо-режиме» использует `AF_ADMIN_DEMO_TOKEN`, запечённый при сборке
+образа `admin-ui`. Токены не заданы → консоль открывается без авторизации
+(локальный режим). Смена `AF_ADMIN_DEMO_TOKEN` требует пересборки `admin-ui`.
+
 **Если не получилось:** нет `.env.example` — вы не в корне репозитория.
 
 ---
@@ -116,18 +127,18 @@ cp .env.example .env
 Общая команда compose (запомните префикс):
 
 ```bash
-export DC="docker compose -p portfolio-test -f docker-compose.portfolio.yml"
+export DC="docker compose -f docker-compose.portfolio.yml"
 ```
 
 ### Шаг 1 — Сборка и старт
 
 ```bash
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
-**Что делает команда:** собирает образы и поднимает 6 сервисов в фоне (`-d`). `-p portfolio-test` — имя проекта (отдельный стек). `COMPOSE_BAKE=false` — без лишнего bake в некоторых окружениях.
+**Что делает команда:** собирает образы и поднимает 6 сервисов в фоне (`-d`). Имя compose-проекта берётся из имени каталога (по умолчанию `assistant-flow`) — от него зависят имена контейнеров и volumes. `COMPOSE_BAKE=false` — без лишнего bake в некоторых окружениях.
 
-**Ожидаемый результат:** через 1–15 мин (первый раз) `docker compose ... ps` показывает контейнеры `Up`, postgres — `healthy`.
+**Ожидаемый результат:** через 1–15 мин (первый раз) `docker compose ... ps` показывает контейнеры `Up`; postgres — `healthy`, admin-api — `healthy` (встроенный Docker healthcheck бьёт `/api/health`; статус появляется через ~45–90 с после старта, до этого — `health: starting`).
 
 **Если не получилось:** «port already allocated» — заняты 8080/8600/5433/…; остановите другой compose или смените порты в compose (тогда обновите документацию).
 
@@ -162,7 +173,7 @@ curl -sS http://localhost:8600/api/health
 ### Шаг 4 — PostgreSQL
 
 ```bash
-docker compose -p portfolio-test -f docker-compose.portfolio.yml exec postgres \
+docker compose -f docker-compose.portfolio.yml exec postgres \
   psql -U assistant -d assistant_flow -c '\dt' | head -20
 ```
 
@@ -190,8 +201,8 @@ curl -sS http://localhost:8089/v1/.well-known/ready
 После **реального** токена в `.env`:
 
 ```bash
-docker compose -p portfolio-test -f docker-compose.portfolio.yml restart assistant-flow
-docker compose -p portfolio-test -f docker-compose.portfolio.yml logs -f assistant-flow
+docker compose -f docker-compose.portfolio.yml restart assistant-flow
+docker compose -f docker-compose.portfolio.yml logs -f assistant-flow
 ```
 
 **Ожидаемый результат:** `starting infinity_polling...`
@@ -204,16 +215,16 @@ docker compose -p portfolio-test -f docker-compose.portfolio.yml logs -f assista
 
 ## D. PostgreSQL при первом запуске
 
-**При первом** создании тома `portfolio_pg_data` Docker **сам** выполняет:
+**При первом** создании тома `assistant-flow_portfolio_pg_data` Docker **сам** выполняет:
 
-1. `database/schema.sql` (целевая схема, включая объекты миграций 005/006);
+1. `database/schema.sql` (целевая схема, включая объекты миграций 005–008);
 2. `database/migrations/004_async_jobs_foundation.sql` — таблица `async_jobs` (в schema её нет).
 
 **Проверка:** [§C.4](#шаг-4--postgresql).
 
-**Старый volume** (таблиц не хватает): ручной `psql` с 005/006 — одна строка в [docs/OPERATIONS.md](docs/OPERATIONS.md) § PostgreSQL; полная цепочка SQL — [database/POSTGRES_SETUP.md](database/POSTGRES_SETUP.md).
+**Старый volume** (таблиц не хватает): ручной `psql` с недостающими миграциями — одна строка в [docs/OPERATIONS.md](docs/OPERATIONS.md) § PostgreSQL; полная цепочка SQL — [database/POSTGRES_SETUP.md](database/POSTGRES_SETUP.md).
 
-**Пересоздать БД с нуля:** `docker compose ... down` → `docker volume rm portfolio-test_portfolio_pg_data` → снова §C.1 (**потеря данных**).
+**Пересоздать БД с нуля:** `docker compose ... down` → `docker volume rm assistant-flow_portfolio_pg_data` → снова §C.1 (**потеря данных**).
 
 ---
 
@@ -222,17 +233,24 @@ docker compose -p portfolio-test -f docker-compose.portfolio.yml logs -f assista
 | | |
 |---|---|
 | Compose-файл | `docker-compose.portfolio.yml` |
-| Имя проекта | `portfolio-test` (всегда `-p portfolio-test`) |
+| Имя проекта | из имени каталога (по умолчанию `assistant-flow`); флаг `-p` не используется |
 | Топология | [docs/OPERATIONS.md](docs/OPERATIONS.md) § Operational topology |
 
-Не запускайте второй `docker compose up` без `-p portfolio-test` на той же машине.
+Не запускайте второй `docker compose up` с этим файлом из каталога с другим именем на той же машине — получите отдельный стек с пустыми volumes.
+
+**Сборка (multi-stage):** backend-образ (`Dockerfile`) собирается в два этапа —
+build-зависимости остаются в builder-стадии; runtime содержит только venv + ffmpeg + curl.
+Опциональные extras включаются build-args: `INSTALL_RAGAS=true` (offline RAGAS
+evaluation; в portfolio compose уже включено для `admin-api`) и
+`INSTALL_DASHBOARD=true` (legacy Streamlit UI, включён для `assistant-admin` в
+`docker-compose.assistant.yml`). Streamlit не входит в runtime-образ по умолчанию.
 
 ---
 
 ## F. Проверка сервисов
 
 ```bash
-docker compose -p portfolio-test -f docker-compose.portfolio.yml ps
+docker compose -f docker-compose.portfolio.yml ps
 ```
 
 | Сервис | Как проверить с хоста |
@@ -248,7 +266,7 @@ docker compose -p portfolio-test -f docker-compose.portfolio.yml ps
 
 ## G. Telegram — smoke (развёртывание)
 
-1. Токен в `.env` + `restart assistant-flow` (§C.6).
+1. Токен в `.env` + `restart assistant-flow` (§L).
 2. В Telegram: `/start` → есть ответ.
 
 Дальше — только проверка. Команды `/mode`, OCR, RAG, примеры: **[USER_GUIDE.md](USER_GUIDE.md)**.
@@ -281,7 +299,7 @@ docker compose -p portfolio-test -f docker-compose.portfolio.yml ps
 ### Остановить стек
 
 ```bash
-docker compose -p portfolio-test -f docker-compose.portfolio.yml down
+docker compose -f docker-compose.portfolio.yml down
 ```
 
 **Что делает:** останавливает контейнеры; **volumes сохраняются** (БД и Chroma остаются).
@@ -289,8 +307,8 @@ docker compose -p portfolio-test -f docker-compose.portfolio.yml down
 ### Перезапустить после смены `.env`
 
 ```bash
-docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d
-docker compose -p portfolio-test -f docker-compose.portfolio.yml restart assistant-flow
+docker compose -f docker-compose.portfolio.yml up -d
+docker compose -f docker-compose.portfolio.yml restart assistant-flow
 ```
 
 **Когда нужно:** новый `TELEGRAM_BOT_TOKEN`, смена ключей API.
@@ -333,7 +351,7 @@ ssh -N \
 
 ## Server-контур (не portfolio)
 
-`docker-compose.assistant.yml` — отдельная топология; не смешивать с `portfolio-test` без необходимости. См. конец [docs/OPERATIONS.md](docs/OPERATIONS.md).
+`docker-compose.assistant.yml` — отдельная топология (server-контур); не смешивать с portfolio-стеком без необходимости. См. конец [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 

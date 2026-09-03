@@ -14,9 +14,9 @@
 | [RUNBOOK.md](../RUNBOOK.md) | Эксплуатация portfolio; server-контур вынесен в advanced |
 | [USER_GUIDE.md](../USER_GUIDE.md) | Пользовательские сценарии (draft допустим) |
 | [docs/ARCHITECTURE.md](ARCHITECTURE.md) | FastAPI + React Admin UI, без Streamlit как текущего UI |
-| [docs/OPERATIONS.md](OPERATIONS.md) | Каноническая команда `-p portfolio-test`, порты, Chroma/кэш |
+| [docs/OPERATIONS.md](OPERATIONS.md) | Каноническая команда запуска, порты, Chroma/кэш |
 | [docs/screenshots/](screenshots/) | Скриншоты для README (15 файлов, пути `docs/screenshots/*.png`) |
-| Внутренние логи | `docs/cursor_sessions/` **не** в публичной навигации README |
+| Внутренние логи | `docs/cursor_sessions/` не в git и **не** в публичной навигации README; инженерный журнал — `task_history/engineering_log.md` |
 
 ---
 
@@ -55,7 +55,7 @@
 
 ```bash
 cp .env.example .env
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 curl -sS http://localhost:8600/api/health
 ```
 
@@ -79,4 +79,4 @@ git rm -r --cached _test_chroma
 
 ## 7. [PROJECT_STATE.md](../PROJECT_STATE.md)
 
-Инженерный backlog для команды; не обязателен внешнему reviewer, но должен не противоречить README по статусу подсистем.
+Паспорт проекта (канон APL): состояние, решения, следующие шаги. Не обязателен внешнему reviewer, но должен не противоречить README по статусу подсистем. Инженерный журнал (append-only) вынесен в `task_history/engineering_log.md`.

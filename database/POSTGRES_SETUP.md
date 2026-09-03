@@ -1,4 +1,4 @@
-# PostgreSQL: применение схемы Assistant Flow
+# 🗄️ PostgreSQL: применение схемы Assistant Flow
 
 **SQL-level справочник.** Первый запуск в Docker, проверка таблиц и smoke — [RUNBOOK.md](../RUNBOOK.md) §D. Краткие факты compose — [docs/OPERATIONS.md](../docs/OPERATIONS.md) § PostgreSQL.
 
@@ -27,8 +27,8 @@ GRANT ALL ON SCHEMA public TO assistant_flow;
 
 ## 2. Применение миграций и schema.sql
 
-Файл **`database/schema.sql`** описывает **итоговую** схему БД (сейчас **v2**, в том числе изменения из `migrations/002_runtime_lifecycle.sql`).  
-Файлы в **`database/migrations/`** нужно применять **по порядку номеров** на уже существующей базе, если она была создана по более старой схеме.
+Файл **`database/schema.sql`** описывает **итоговую** схему БД (снимок включает объекты миграций `002`–`008`; `004_async_jobs_foundation.sql` в снимок не входит).  
+Файлы в **`database/migrations/`** (`002`, `003`, `004`, `005`, `006`, `007`, `008`) нужно применять **по порядку номеров** на уже существующей базе, если она была создана по более старой схеме.
 
 ### 2a. Новая БД (с нуля)
 
@@ -61,6 +61,8 @@ psql -U assistant_flow -d assistant_flow -h localhost -f database/schema.sql
 ```bash
 psql "$DATABASE_URL" -f database/migrations/002_runtime_lifecycle.sql
 ```
+
+Полная цепочка (по порядку): `002_runtime_lifecycle` → `003_document_versions_active` → `004_async_jobs_foundation` → `005_platform_settings` → `006_evaluation_p1_lite` → `007_identity_foundation` → `008_admin_audit_extend`.
 
 После успешного прогона миграций структура должна совпадать с актуальным **`database/schema.sql`** (сверка по `db_contract.md`).
 
@@ -96,9 +98,9 @@ python -c "from repositories.connection import check_connection; print(check_con
 Ключевые факты:
 
 - initdb: `schema.sql` + `004_async_jobs_foundation.sql`;
-- `schema.sql` — snapshot целевой схемы (вкл. объекты 005/006);
+- `schema.sql` — snapshot целевой схемы (вкл. объекты 005–008);
 - `async_jobs` — только из 004;
-- 005/006 — для ручного апгрейда старых БД (см. §2b ниже).
+- 005–008 — для ручного апгрейда старых БД (см. §2b ниже).
 
 `DATABASE_URL` в compose: `postgresql://assistant:assistant@postgres:5432/assistant_flow`.
 

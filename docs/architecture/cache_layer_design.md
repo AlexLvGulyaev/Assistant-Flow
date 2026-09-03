@@ -1,4 +1,4 @@
-# Cache Layer Design (PEr07) — Assistant Flow
+# 🏗️ Cache Layer Design (PEr07) — Assistant Flow
 
 Статус: architectural design / legacy audit / integration planning only.  
 Область: Retrieval Optimization в рамках существующей архитектуры Assistant Flow.

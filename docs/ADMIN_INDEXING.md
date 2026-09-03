@@ -1,4 +1,4 @@
-# Индексация базы знаний
+# ⚙️ Индексация базы знаний
 
 Пользователи **не** загружают документы через Telegram. Корпус пополняет **оператор** через Admin UI или CLI.
 
@@ -49,6 +49,29 @@ python scripts/admin_index_documents.py --reindex
 ### PostgreSQL
 
 При `DATABASE_URL` создаются/обновляются `documents`, `document_versions`, `indexing_jobs`. Ошибка после успешной записи векторов, но до финализации Postgres — индекс уже содержит чанки, метаданные БД проверить вручную.
+
+---
+
+## Гигиена и аудит индекса (02.09.2026, закрытие долга)
+
+| Скрипт | Назначение |
+|--------|-----------|
+| `scripts/index_consistency_check.py` | Read-only аудит консистентности: PG ↔ файлы `data/documents/` ↔ Chroma ↔ Weaviate (orphan-sources, расхождение счётчиков, активные версии). Падает с непустым списком проблем. |
+| `scripts/clean_demo_index.py` | Идемпотентная чистка демо-индекса от тест-фикстур (dirty_test_* и пр.; dry-run по умолчанию, `--apply`). |
+| `scripts/rag_smoke_test.py` | **Query-only по умолчанию** — ничего не пишет в индекс. Перезапись индекса только под явным `--index`. |
+
+Договорённости:
+
+- **Активный backend живёт в PG** (`platform_settings.active_rag_backend`, переключается через Retrieval Settings) и может отличаться от `RAG_BACKEND` в `.env` — проверять через `/retrieval`, а не только по env.
+- `ragas_facts_baseline.txt` («НоваТех») канонически лежит в `evaluation/datasets/` и **не** должен находиться в `data/documents/` — иначе файловые индексаторы тащат его в демо-индекс. Процедура RAGAS-оценки — в docstring `scripts/evaluation_seed_ragas_dataset.py`.
+
+Heavy RAG safeguard — лимит размера документа (`ADMIN_UPLOAD_MAX_MB`, default 25 МБ):
+
+- upload через Admin API: файл больше лимита отклоняется с `413` до чтения в память;
+- reindex (в т.ч. файлы, попавшие в `data/documents/` мимо upload-роута): файлы
+  больше лимита пропускаются с ошибкой «file too large» в отчёте;
+- `docker-compose.portfolio.yml`: admin-api имеет Docker healthcheck (бьёт
+  лёгкий `/api/health`, без LLM-вызовов) — деградация видна в `docker ps`.
 
 ---
 

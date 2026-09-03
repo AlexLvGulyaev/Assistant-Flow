@@ -1,4 +1,4 @@
-# Identity & Security Architecture — Assistant Flow (P9.0)
+# 🏗️ Identity & Security Architecture — Assistant Flow (P9.0)
 
 **Статус:** platform architecture (planning only, без runtime auth/IAM).  
 **Дата:** 2026-05-19  

@@ -1,4 +1,4 @@
-# Security walkthrough — Assistant Flow (P8)
+# 🛡️ Security walkthrough — Assistant Flow (P8)
 
 Демонстрационный обзор security-aware RAG increment после спринтов P8.0–P8.4.  
 Цель: показать **наблюдаемый** engineering increment, а не только design-документ.
@@ -9,7 +9,6 @@
 - Design (identity/control plane, P9): [architecture/identity_and_security_architecture.md](../architecture/identity_and_security_architecture.md)
 - Auth modes (P9.2): [auth_modes.md](auth_modes.md)
 - Ограничения: [SECURITY_NOTES.md](../SECURITY_NOTES.md)
-- ДЗ (краткий отчёт): [homework/module5_lesson9_security_rag_report.md](../homework/module5_lesson9_security_rag_report.md)
 - Session logs: `docs/cursor_sessions/2026-05-19_p8-*.md`
 
 ---
@@ -144,7 +143,7 @@ Fingerprint retrieval cache: `role|scope|vis=...` — guest и employee **не �
 ```bash
 cd /opt/assistant-flow
 
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build
 ```
 
 ### Health & API
@@ -160,10 +159,10 @@ curl -sS "http://localhost:8600/api/documents" | head -c 2000
 ### Smoke tests (в контейнере)
 
 ```bash
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_1_retrieval_security_wiring_smoke.py
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_2_security_aware_document_ingestion_smoke.py
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_3_logging_sanitization_smoke.py
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p8_4_security_verification_smoke.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p8_1_retrieval_security_wiring_smoke.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p8_2_security_aware_document_ingestion_smoke.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p8_3_logging_sanitization_smoke.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p8_4_security_verification_smoke.py
 ```
 
 Агрегированный прогон P8.4 включает регрессию P8.1–P8.3.
@@ -186,7 +185,7 @@ curl -sS -F "file=@./sample.txt" -F "visibility=internal" \
 # В .env контейнера assistant-flow:
 # TELEGRAM_GUEST_USER_IDS=<id>
 # TELEGRAM_ADMIN_USER_IDS=<id>
-# пересборка: COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build assistant-flow
+# пересборка: COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build assistant-flow
 ```
 
 ### Admin UI (без пересборки frontend)

@@ -1,4 +1,4 @@
-# Audit trail и security observability (P9.5)
+# 🛡️ Audit trail и security observability (P9.5)
 
 Bounded production-style audit foundation — **не** SIEM.
 
@@ -75,7 +75,7 @@ Audit logs **растут** без автоматической ротации. 
 ```bash
 # после миграции 008:
 cat database/migrations/008_admin_audit_extend.sql | \
-  docker exec -i portfolio-test-postgres-1 psql -U assistant -d assistant_flow
+  docker exec -i assistant-flow-postgres-1 psql -U assistant -d assistant_flow
 
-docker exec portfolio-test-assistant-flow-1 python scripts/test_p9_5_audit_smoke.py
+docker exec assistant-flow-assistant-flow-1 python scripts/test_p9_5_audit_smoke.py
 ```

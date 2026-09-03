@@ -1,4 +1,4 @@
-# RBAC permissions (P9.4)
+# 🛡️ RBAC permissions (P9.4)
 
 Bounded role → permission model для Admin API control plane.
 

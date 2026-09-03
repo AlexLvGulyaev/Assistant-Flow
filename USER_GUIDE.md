@@ -1,6 +1,6 @@
-# Assistant Flow User Guide v1
+# 📖 Assistant Flow User Guide
 
-Как **пользоваться** уже запущенной системой. Развёртывание и smoke — [RUNBOOK.md](RUNBOOK.md).
+Как **пользоваться** уже запущенной системой. Развёртывание и smoke — [🚀 RUNBOOK.md](RUNBOOK.md).
 
 ---
 
@@ -321,6 +321,15 @@ Admin UI → **Документы**: загрузка, индексация, rei
 
 ## 13. Административная консоль
 
+### Вход
+
+- Токены заданы в `.env` (`AF_ADMIN_TOKEN`, `AF_ADMIN_DEMO_TOKEN`) → при открытии консоли открывается экран входа: введите токен или нажмите **«Войти в демо-режиме»** (read-only, токен запечён в UI при сборке).
+- Токены не заданы → консоль открывается без авторизации (локальный режим).
+- Выход — кнопка **Выход** (экран `/exit`) сбрасывает сессию.
+- Подробности и legacy-режим Basic-аутентификации — [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) и [docs/security/auth_modes.md](docs/security/auth_modes.md).
+
+### Разделы
+
 | Раздел | Путь |
 |--------|------|
 | Обзор | `/` |
@@ -334,6 +343,11 @@ Admin UI → **Документы**: загрузка, индексация, rei
 | Логи | `/logs` |
 | Memory | `/memory` |
 | Анализ RAG | `/evaluation` |
+| Аудит | `/audit` |
+| Вход | `/login` |
+| Выход | `/exit` |
+
+Раздел **Аудит** показывает журнал обращений к Admin API (действие, ресурс, роль, IP). В демо-режиме запись недоступна для изменения — только просмотр.
 
 Кэш OFF/MISS/HIT — в карточках RAG.
 
@@ -383,6 +397,6 @@ Admin UI → **Документы**: загрузка, индексация, rei
 
 ## 14. См. также
 
-- [README.md](README.md)
-- [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство системы
+- [🏠 README.md](README.md)
+- [🎬 docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md)
+- [🏗️ docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство системы

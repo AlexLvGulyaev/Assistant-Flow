@@ -1,11 +1,11 @@
-# Демо-сценарии (GitHub v2.0)
+# 🎬 Демо-сценарии (GitHub v2.0)
 
 Проверки перед демонстрацией или review репозитория. Команды — из **корня** проекта; стек — portfolio ([OPERATIONS.md](OPERATIONS.md)).
 
 **Предусловия:** `.env` из `.env.example`, ключи LLM/embeddings; для Postgres-метаданных — `DATABASE_URL` и init-схема.
 
 ```bash
-COMPOSE_BAKE=false docker compose -p portfolio-test -f docker-compose.portfolio.yml up -d --build --remove-orphans
+COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
 ---

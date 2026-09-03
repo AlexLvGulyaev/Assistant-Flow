@@ -1,4 +1,4 @@
-# Заметки по безопасности
+# 🛡️ Заметки по безопасности
 
 Известные ограничения portfolio-прототипа. Не заменяет threat model и не претендует на полноту продакшен-чеклиста.
 
@@ -15,7 +15,8 @@
 
 ## Admin API и Admin UI
 
-- По умолчанию ``AF_AUTH_MIDDLEWARE_MODE=disabled`` — Admin API открыт; для staging задайте ``required`` и используйте login (P9.3) или Basic.
+- **Демо-стандарт APL (текущий):** задайте в `.env` `AF_ADMIN_TOKEN` (роль `admin`) и `AF_ADMIN_DEMO_TOKEN` (витринный «Войти в демо-режиме», роль `demo`, read-only). Токены заданы → enforcement автоматически `required`; `GET /api/auth/whoami` — авторитетная роль; входы пишутся в аудит (`console_login`). Демо-токен запекается в бандл `admin-ui` при сборке (`VITE_OPS_DEMO_TOKEN`) — смена требует пересборки UI.
+- **Легаси-режим P9.2:** `AF_AUTH_MIDDLEWARE_MODE` (`disabled` / `optional` / `required`) + Basic auth + `INITIAL_ADMIN_*` — [security/auth_modes.md](security/auth_modes.md). Без заданных токенов API остаётся открытым (локальный режим).
 - **P9.3:** ``POST /api/auth/login`` выдаёт Bearer token; задайте ``AF_SESSION_SECRET`` в production (не dev fallback). Режим ``required`` validated после применения ``007_identity_foundation.sql`` (см. P9.3a).
 - **P9.3a:** при ``column "email" does not exist`` на login — schema drift: применить ``database/migrations/007_identity_foundation.sql`` к PostgreSQL, затем restart Admin API. Bootstrap admin невозможен без актуальной схемы ``app_users``.
 - Admin UI (**8080**) хранит token в ``sessionStorage``; не выставлять в открытый интернет без:
@@ -45,7 +46,7 @@
 - Роли: **guest** → только `visibility=public`; **employee** → public + internal + legacy `unspecified`; **admin** → unrestricted.
 - Дефолтная роль Telegram: **employee** (совместимость с corpus без явной visibility).
 - **P8.2:** при upload через Admin API задаётся `visibility` (`public` | `internal` | `restricted`); default **internal**; metadata попадает в chunk/vector store. Legacy `unspecified` не меняется.
-- Admin API по-прежнему **без** auth.
+- Admin API закрыт авторизацией (демо-стандарт APL или легаси-режим P9.2); RBAC-права — P9.4 ([security/rbac_permissions.md](security/rbac_permissions.md)).
 - Design: [architecture/security_rbac_design.md](architecture/security_rbac_design.md).
 
 ---
@@ -56,10 +57,10 @@
 - Operational policy: redact `user_input`, `retrieval_ready_query`, `chunk_text_full`, `transcript`, `context`, `query`, `raw_payload`; PII masking + length caps; markers `sanitized`, `redacted_fields`, `truncated_fields`, `sanitization_policy`.
 - Forensic (role=admin / `forensic=True`): bounded поля с PII masking, не raw unlimited.
 - **P8.1:** pre-LLM masking перед LLM; retrieval cache изолирован по security fingerprint.
-- Admin API `/api/logs/recent` без auth — оператор видит записанное в БД (новые записи — sanitized; исторические строки — без ретро-очистки).
+- `/api/logs/recent` под авторизацией (read-право, P9.4) — оператор видит записанное в БД (новые записи — sanitized; исторические строки — без ретро-очистки).
 - STT: `transcript` redact в operational logs → `transcript_preview` + `transcript_chars` (через lifecycle sanitizer).
 - **Known limitations:** retrieval cache SQLite (полные тексты чанков для hit quality); `chat_messages` / memory subsystem; исторические `processing_logs` в PostgreSQL.
-- **P8.4:** верификация — `scripts/test_p8_4_security_verification_smoke.py`; отчёт для ДЗ — `docs/homework/module5_lesson9_security_rag_report.md`.
+- **P8.4:** верификация — `scripts/test_p8_4_security_verification_smoke.py`.
 - **P8.5:** demo walkthrough — [security/security_walkthrough.md](security/security_walkthrough.md); session logs P8.1–P8.4 приведены к self-contained формату (полные prompt'ы встроены).
 
 ---
