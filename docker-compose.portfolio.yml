@@ -113,21 +113,47 @@ services:
       - ./outputs:/app/outputs
       - ./storage:/app/storage
     command: ["python", "run_admin_api.py"]
+    # Heavy RAG safeguard: Docker видит деградацию admin-api (healthcheck бьёт
+    # лёгкий /api/health: PG + retrieval readiness, без LLM-вызовов).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8600/api/health', timeout=8)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
     restart: unless-stopped
 
   # React: production-сборка (Vite) внутри образа + nginx для статики.
-  # Сборочный аргумент VITE_ADMIN_API_BASE_URL задаёт URL API с точки зрения браузера на хосте.
+  # API — тот же origin: nginx контейнера проксирует /api/ в admin-api,
+  # VITE_ADMIN_API_BASE_URL пуст → UI ходит по относительным /api.
+  # Пустой build-arg обязателен для субдомена af-admin.alex-n8n.site
+  # (за traefik захардкоженный localhost:8600 из браузера недостижим).
   admin-ui:
     build:
       context: ./frontend/admin-ui
       dockerfile: Dockerfile
       args:
-        VITE_ADMIN_API_BASE_URL: http://localhost:8600
+        VITE_ADMIN_API_BASE_URL: ""
+        # Демо-стандарт APL: демо-токен запекается в бандл для кнопки
+        # «Войти в демо-режиме» (RF-схема VITE_OPS_DEMO_TOKEN).
+        VITE_OPS_DEMO_TOKEN: ${AF_ADMIN_DEMO_TOKEN:-}
     ports:
       - "8080:80"
     depends_on:
       - admin-api
     restart: unless-stopped
+    networks:
+      # На n8n_default нужен уникальный alias: у LQ-админки сервис тоже
+      # называется admin-ui, и без явного alias Docker DNS отвечает
+      # round-robin между двумя контейнерами (страницы консолей перемешиваются).
+      default: {}
+      n8n_default:
+        aliases:
+          - assistant-flow-admin-ui
+
+networks:
+  n8n_default:
+    external: true
 
 volumes:
   portfolio_pg_data:

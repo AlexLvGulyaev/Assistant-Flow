@@ -1,16 +1,19 @@
 import { FormEvent, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
+/** Канон логина админок APL (RF/AIC/LQ): токен + демо-вход + «К проекту». */
+const PROJECT_URL = "https://ai.alex-n8n.site/cases/assistant-flow.html";
+
 export function LoginPage() {
-  const { loading, needsLogin, login, authMode, hint } = useAuth();
+  const { loading, needsLogin, login, loginDemo, demoAvailable, authMode, hint } =
+    useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from =
     (location.state as { from?: string } | null)?.from ?? "/";
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,9 +24,26 @@ export function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!token.trim()) {
+      setError("Введите токен.");
+      return;
+    }
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      await login(token);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка входа");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function onDemo() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await loginDemo();
       navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка входа");
@@ -35,37 +55,30 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <header className="login-card__header">
-          <h1 className="login-card__title">Admin console</h1>
-          <p className="login-card__subtitle muted">
-            Операторский вход · режим {authMode}
-          </p>
-        </header>
+        <div className="login-card__icon" aria-hidden>
+          🤖
+        </div>
+        <h1 className="login-card__title">Assistant Flow Admin Console</h1>
+        <p className="login-card__subtitle">
+          Введите Bearer token для доступа к панели управления.
+        </p>
 
-        <form className="login-form" onSubmit={onSubmit}>
+        <form className="login-form" onSubmit={onSubmit} noValidate>
           <label className="login-form__field">
-            <span className="login-form__label">Email</span>
-            <input
-              type="email"
-              name="email"
-              autoComplete="username"
-              className="login-form__input"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={submitting || loading}
-            />
-          </label>
-          <label className="login-form__field">
-            <span className="login-form__label">Пароль</span>
+            <span
+              className="login-form__label"
+              title="Полный доступ к панели управления — по токену."
+            >
+              Bearer token
+            </span>
             <input
               type="password"
-              name="password"
+              name="token"
               autoComplete="current-password"
               className="login-form__input"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+              placeholder="Вставьте токен..."
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
               disabled={submitting || loading}
             />
           </label>
@@ -83,19 +96,32 @@ export function LoginPage() {
           >
             {submitting ? "Вход…" : "Войти"}
           </button>
+          {demoAvailable ? (
+            <button
+              type="button"
+              className="login-form__btn login-form__btn--outline"
+              title="Демо-режим: посмотрите консоль без прав изменения (read-only)."
+              onClick={() => void onDemo()}
+              disabled={submitting || loading}
+            >
+              Войти в демо-режим (только просмотр)
+            </button>
+          ) : null}
+          <a
+            className="login-form__btn login-form__btn--outline login-form__btn--home"
+            href={PROJECT_URL}
+            target="_blank"
+            rel="opener"
+            title="Вернуться на страницу проекта в витрине AIP."
+          >
+            К проекту
+          </a>
         </form>
 
         <footer className="login-card__footer muted">
           {hint ? <p className="login-card__hint">{hint}</p> : null}
-          <p>
-            Первый запуск: задайте{" "}
-            <code>INITIAL_ADMIN_EMAIL</code> и{" "}
-            <code>INITIAL_ADMIN_PASSWORD</code> в окружении API.
-          </p>
-          {authMode === "optional" ? (
-            <p>
-              <Link to="/">Продолжить без входа</Link> (режим optional)
-            </p>
+          {authMode === "disabled" ? (
+            <p>Авторизация выключена (локальный режим без токенов).</p>
           ) : null}
         </footer>
       </div>

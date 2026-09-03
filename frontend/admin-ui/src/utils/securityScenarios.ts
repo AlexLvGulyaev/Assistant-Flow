@@ -136,6 +136,7 @@ function severityFor(item: AuditEventItem): SecuritySeverity {
   const et = item.event_type || "";
   const st = item.status || "success";
   if (et === "auth.login.success" || et === "auth.logout") return "info";
+  if (et === "auth.console.login") return "info";
   if (et === "auth.login.failure") return "warning";
   if (et === "security.access.denied") return "warning";
   if (et === "security.permission.denied") return "error";
@@ -157,6 +158,7 @@ function titleFor(item: AuditEventItem): string {
   const et = item.event_type || item.action;
   const map: Record<string, string> = {
     "auth.login.success": "Успешный вход",
+    "auth.console.login": "Вход в консоль (токен)",
     "auth.login.failure": "Неудачная попытка входа",
     "auth.logout": "Выход из сессии",
     "security.access.denied": "Доступ без аутентификации",
@@ -183,6 +185,9 @@ function shortExplanationFor(item: AuditEventItem, perm: string | null): string 
   const et = item.event_type || "";
   if (et === "auth.login.success") {
     return "Пользователь успешно аутентифицирован, сессия выдана.";
+  }
+  if (et === "auth.console.login") {
+    return "Вход в консоль по Bearer-токену (демо-стандарт APL).";
   }
   if (et === "auth.login.failure") {
     return "Неверные учётные данные; доступ не выдан.";

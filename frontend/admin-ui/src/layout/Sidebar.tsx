@@ -7,12 +7,16 @@ export function Sidebar() {
     hasPermission,
     authenticated,
     email,
+    displayName,
     platformRole,
+    isDemo,
     authMode,
     loginAvailable,
     needsLogin,
     logout,
   } = useAuth();
+  // Демо-стандарт APL: роль demo помечается эмодзи-маской 🎭 (канон LQ/RF).
+  const sessionLabel = displayName ?? email;
   const items = navItemsForPermissions(hasPermission);
 
   return (
@@ -43,10 +47,10 @@ export function Sidebar() {
       {loginAvailable && !needsLogin ? (
         <div className="admin-shell__sidebar-footer">
           <div className="admin-shell__sidebar-session" aria-label="Сессия Assistant Flow">
-            {authenticated && email ? (
+            {authenticated && sessionLabel ? (
               <>
-                <span className="admin-shell__sidebar-user-email" title={email}>
-                  {email}
+                <span className="admin-shell__sidebar-user-email" title={sessionLabel}>
+                  {isDemo ? `🎭 ${sessionLabel}` : sessionLabel}
                 </span>
                 {platformRole ? (
                   <span className="admin-shell__sidebar-user-role muted">{platformRole}</span>

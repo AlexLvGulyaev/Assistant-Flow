@@ -729,6 +729,15 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action
 CREATE INDEX IF NOT EXISTS idx_admin_audit_log_created_at
     ON admin_audit_log(created_at);
 
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_event_type
+    ON admin_audit_log(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_status
+    ON admin_audit_log(status);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_platform_role
+    ON admin_audit_log(platform_role);
+
 
 -- ----------------------------
 -- Usage metrics

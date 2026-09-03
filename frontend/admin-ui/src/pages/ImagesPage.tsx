@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   fetchRecentLogs,
-  getAssetPreviewUrl,
   type LogItem,
 } from "../api/client";
+import { useAuthedAssetUrl } from "../hooks/useAuthedAssetUrl";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -24,6 +24,15 @@ import {
   stageToActionRu,
   statusLabelRu,
 } from "../utils/operationalLabels";
+
+/** Миниатюра превью: blob-фетч с Bearer (см. useAuthedAssetUrl). */
+function AssetThumb({ assetRef }: { assetRef: string }) {
+  const { url } = useAuthedAssetUrl(assetRef);
+  if (!url) {
+    return <span className="image-asset-switcher__thumb" aria-hidden="true" />;
+  }
+  return <img src={url} alt="" className="image-asset-switcher__thumb" />;
+}
 
 const PAGE_SIZE = 10;
 const LOG_LIMIT_BY_WINDOW: Record<string, number> = {
@@ -124,7 +133,6 @@ export function ImagesPage() {
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pendingListFocusRef = useRef(false);
-  const [imgFailed, setImgFailed] = useState(false);
   const [fullTextModal, setFullTextModal] = useState<{ title: string; body: string } | null>(null);
 
   const fetchLimit = LOG_LIMIT_BY_WINDOW[windowLabel] ?? LOG_LIMIT_BY_WINDOW["24h"];
@@ -253,17 +261,16 @@ export function ImagesPage() {
     setSelectedAssetIdx(0);
   }, [selectedId]);
 
-  useEffect(() => {
-    setImgFailed(false);
-  }, [selectedId, selectedAssetIdx]);
-
   const safeAssetIdx =
     selected && selected.assetRefs.length > 0
       ? Math.min(Math.max(0, selectedAssetIdx), selected.assetRefs.length - 1)
       : 0;
   const activeAssetRef =
     selected && selected.assetRefs.length > 0 ? selected.assetRefs[safeAssetIdx] ?? null : null;
-  const previewUrl = activeAssetRef ? getAssetPreviewUrl(activeAssetRef) : null;
+  // Превью грузим авторизованным blob-фетчем: <img src=...> не несёт Bearer,
+  // а 401 с WWW-Authenticate: Basic открывает нативный пароль-диалог.
+  const mainPreview = useAuthedAssetUrl(activeAssetRef);
+  const previewUrl = mainPreview.url;
 
   function resetPagination() {
     pendingListFocusRef.current = true;
@@ -797,12 +804,7 @@ export function ImagesPage() {
                             >
                               <span className="mono">#{idx + 1}</span>
                               <span className="image-asset-switcher__thumb-wrap">
-                                <img
-                                  src={getAssetPreviewUrl(ref)}
-                                  alt=""
-                                  className="image-asset-switcher__thumb"
-                                  loading="lazy"
-                                />
+                                <AssetThumb assetRef={ref} />
                               </span>
                             </button>
                           ))}
@@ -815,7 +817,7 @@ export function ImagesPage() {
                             Нет сохранённых изображений: в логах нет <span className="mono">asset_ref</span>
                             .
                           </div>
-                        ) : imgFailed ? (
+                        ) : mainPreview.failed ? (
                           <div className="panel panel--muted">Не удалось загрузить превью изображения.</div>
                         ) : (
                           <div className="image-preview-wrap image-preview-wrap--ops">
@@ -823,7 +825,6 @@ export function ImagesPage() {
                               src={previewUrl}
                               alt="Результат генерации"
                               className="image-preview"
-                              onError={() => setImgFailed(true)}
                             />
                           </div>
                         )}

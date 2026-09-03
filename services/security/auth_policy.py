@@ -21,6 +21,7 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
         "/api/auth/me",
         "/api/auth/login",
         "/api/auth/logout",
+        "/api/auth/whoami",
     }
 )
 
@@ -55,10 +56,18 @@ _DOCUMENT_DETAIL_RE = re.compile(r"^/api/documents/[^/]+/(detail|edit-text)$")
 
 
 def get_auth_mode() -> AuthMode:
-    raw = (os.getenv("AF_AUTH_MIDDLEWARE_MODE") or "disabled").strip().lower()
+    """Режим enforcement.
+
+    Демо-стандарт APL: если режим явно не задан, но настроены статические
+    ops-токены консоли — считаем авторизацию required (как в RF/AIC/LQ).
+    Токенов нет → разработка без авторизации (disabled).
+    """
+    raw = (os.getenv("AF_AUTH_MIDDLEWARE_MODE") or "").strip().lower()
     if raw in ("disabled", "optional", "required"):
         return raw  # type: ignore[return-value]
-    return "disabled"
+    from services.security.ops_token import ops_auth_configured
+
+    return "required" if ops_auth_configured() else "disabled"  # type: ignore[return-value]
 
 
 def public_readonly_enabled() -> bool:

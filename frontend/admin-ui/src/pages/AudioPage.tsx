@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   fetchRecentLogs,
-  getAssetPreviewUrl,
   type LogItem,
 } from "../api/client";
+import { useAuthedAssetUrl } from "../hooks/useAuthedAssetUrl";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -115,8 +115,6 @@ export function AudioPage() {
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pendingListFocusRef = useRef(false);
-  const [inputAudioFailed, setInputAudioFailed] = useState(false);
-  const [outputAudioFailed, setOutputAudioFailed] = useState(false);
   const [fullTextModal, setFullTextModal] = useState<{
     title: string;
     body: string;
@@ -332,15 +330,12 @@ export function AudioPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [filtered, selectedId, pageIndex]);
 
-  useEffect(() => {
-    setInputAudioFailed(false);
-    setOutputAudioFailed(false);
-  }, [selectedId]);
-
-  const inputAudioUrl =
-    selected?.inputAudioRef ? getAssetPreviewUrl(selected.inputAudioRef) : null;
-  const outputAudioUrl =
-    selected?.outputAudioRef ? getAssetPreviewUrl(selected.outputAudioRef) : null;
+  // Аудио грузим авторизованным blob-фетчем: <audio src=...> не несёт Bearer,
+  // а 401 с WWW-Authenticate: Basic открывает нативный пароль-диалог.
+  const inputAudio = useAuthedAssetUrl(selected?.inputAudioRef ?? null);
+  const outputAudio = useAuthedAssetUrl(selected?.outputAudioRef ?? null);
+  const inputAudioUrl = inputAudio.url;
+  const outputAudioUrl = outputAudio.url;
 
   const inputPreviewBlockedReason = selected?.inputAudioPreviewBlockedReason ?? null;
 
@@ -676,7 +671,7 @@ export function AudioPage() {
                           Нет preview для входного аудио: в логах нет сохранённого{" "}
                           <span className="mono">asset_ref</span> (AssetRepository).
                         </div>
-                      ) : inputAudioFailed ? (
+                      ) : inputAudio.failed ? (
                         <div className="panel panel--muted">Не удалось воспроизвести входное аудио.</div>
                       ) : (
                         <audio
@@ -684,7 +679,6 @@ export function AudioPage() {
                           controls
                           preload="none"
                           className="audio-player"
-                          onError={() => setInputAudioFailed(true)}
                         >
                           <source src={inputAudioUrl} />
                         </audio>
@@ -733,7 +727,7 @@ export function AudioPage() {
                       </pre>
                       {!outputAudioUrl ? (
                         <div className="panel panel--muted page__mt-sm">Синтезированное аудио отсутствует.</div>
-                      ) : outputAudioFailed ? (
+                      ) : outputAudio.failed ? (
                         <div className="panel panel--muted page__mt-sm">
                           Не удалось воспроизвести выходное аудио.
                         </div>
@@ -743,7 +737,6 @@ export function AudioPage() {
                           controls
                           preload="none"
                           className="audio-player page__mt-sm"
-                          onError={() => setOutputAudioFailed(true)}
                         >
                           <source src={outputAudioUrl} />
                         </audio>

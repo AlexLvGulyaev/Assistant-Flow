@@ -97,26 +97,36 @@ def _chroma_http_probe(
 def _chroma_collection_count_worker(config: AppConfig, persist_path: str) -> int:
     from pathlib import Path
 
-    from services.rag_chroma_store import RAG_CHROMA_COLLECTION_NAME, chromadb_client_for_config
+    from services.rag_chroma_store import (
+        RAG_CHROMA_COLLECTION_NAME,
+        chromadb_client_for_config,
+        close_chroma_client,
+    )
 
     p = Path(persist_path)
     client = chromadb_client_for_config(config, persist_directory=p)
-    coll = client.get_collection(RAG_CHROMA_COLLECTION_NAME)
-    return int(coll.count())
+    try:
+        coll = client.get_collection(RAG_CHROMA_COLLECTION_NAME)
+        return int(coll.count())
+    finally:
+        close_chroma_client(client)
 
 
 def _chroma_client_heartbeat_worker(config: AppConfig, persist_path: str) -> bool:
     from pathlib import Path
 
-    from services.rag_chroma_store import chromadb_client_for_config
+    from services.rag_chroma_store import chromadb_client_for_config, close_chroma_client
 
     p = Path(persist_path)
     client = chromadb_client_for_config(config, persist_directory=p)
-    hb = getattr(client, "heartbeat", None)
-    if callable(hb):
-        _ = hb()
-        return True
-    raise AttributeError("client has no heartbeat()")
+    try:
+        hb = getattr(client, "heartbeat", None)
+        if callable(hb):
+            _ = hb()
+            return True
+        raise AttributeError("client has no heartbeat()")
+    finally:
+        close_chroma_client(client)
 
 
 def _chroma_probe_with_timeout(
@@ -147,68 +157,78 @@ def _chroma_probe_with_timeout(
 
     import concurrent.futures
 
-    # B. Try client.heartbeat() if available
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut_hb = ex.submit(_chroma_client_heartbeat_worker, config, persist_path)
+    def _run_bounded(fn, *args):
+        """Run fn in a worker thread, bounded by timeout without blocking shutdown.
+
+        `with ThreadPoolExecutor(...)` would call shutdown(wait=True) on exit and
+        block until the worker finishes — a hung Chroma call would hang /api/health
+        forever. shutdown(wait=False, cancel_futures=True) returns immediately and
+        abandons the worker thread instead.
+        """
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            _ = fut_hb.result(timeout=timeout_s)
-            if method_used is None:
-                method_used = "client:heartbeat"
-        except concurrent.futures.TimeoutError:
-            if method_error is None:
-                method_error = f"heartbeat timeout after {timeout_s}s"
-        except Exception as exc:
-            if method_error is None:
-                method_error = str(exc)[:500]
+            return ex.submit(fn, *args).result(timeout=timeout_s)
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+
+    # B. Try client.heartbeat() if available
+    try:
+        _ = _run_bounded(_chroma_client_heartbeat_worker, config, persist_path)
+        if method_used is None:
+            method_used = "client:heartbeat"
+    except concurrent.futures.TimeoutError:
+        if method_error is None:
+            method_error = f"heartbeat timeout after {timeout_s}s"
+    except Exception as exc:
+        if method_error is None:
+            method_error = str(exc)[:500]
 
     # C. Always try collection count; this is also the proof for RAG usage.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut_count = ex.submit(_chroma_collection_count_worker, config, persist_path)
-        try:
-            n = fut_count.result(timeout=timeout_s)
-            extras["collection_count"] = n
-            if method_used is None:
-                method_used = "collection:count"
-            else:
-                # Prefer strongest method in UI when count succeeded.
-                method_used = "collection:count"
+    try:
+        n = _run_bounded(_chroma_collection_count_worker, config, persist_path)
+        extras["collection_count"] = n
+        if method_used is None:
+            method_used = "collection:count"
+        else:
+            # Prefer strongest method in UI when count succeeded.
+            method_used = "collection:count"
+        return HealthSnapshot(
+            status="ok",
+            latency_ms=_now_ms(t0),
+            detail=f"{target} · {method_used}",
+            extras=extras,
+        )
+    except concurrent.futures.TimeoutError:
+        if method_used is not None:
+            # One method already succeeded => still OK.
             return HealthSnapshot(
                 status="ok",
                 latency_ms=_now_ms(t0),
                 detail=f"{target} · {method_used}",
                 extras=extras,
             )
-        except concurrent.futures.TimeoutError:
-            if method_used is not None:
-                # One method already succeeded => still OK.
-                return HealthSnapshot(
-                    status="ok",
-                    latency_ms=_now_ms(t0),
-                    detail=f"{target} · {method_used}",
-                    extras=extras,
-                )
+        return HealthSnapshot(
+            status="error",
+            latency_ms=_now_ms(t0),
+            detail=target,
+            error_message=f"count timeout after {timeout_s}s",
+            extras=extras,
+        )
+    except Exception as exc:
+        if method_used is not None:
             return HealthSnapshot(
-                status="error",
+                status="ok",
                 latency_ms=_now_ms(t0),
-                detail=target,
-                error_message=f"count timeout after {timeout_s}s",
+                detail=f"{target} · {method_used}",
                 extras=extras,
             )
-        except Exception as exc:
-            if method_used is not None:
-                return HealthSnapshot(
-                    status="ok",
-                    latency_ms=_now_ms(t0),
-                    detail=f"{target} · {method_used}",
-                    extras=extras,
-                )
-            return HealthSnapshot(
-                status="error",
-                latency_ms=_now_ms(t0),
-                detail=target,
-                error_message=method_error or str(exc)[:500],
-                extras=extras,
-            )
+        return HealthSnapshot(
+            status="error",
+            latency_ms=_now_ms(t0),
+            detail=target,
+            error_message=method_error or str(exc)[:500],
+            extras=extras,
+        )
 
 
 def _chroma_local_probe(

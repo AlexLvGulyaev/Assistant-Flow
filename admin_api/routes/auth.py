@@ -9,7 +9,8 @@ from services.security.auth_middleware import get_request_principal, hash_client
 from services.security.rbac import expand_permissions_for_response
 from services.security.auth_policy import get_auth_mode, is_public_path, requires_authentication
 from services.security.identity_service import get_identity_service
-from services.security.principal import AUTH_SOURCE_BEARER
+from services.security.principal import AUTH_SOURCE_BEARER, AUTH_SOURCE_OPS_TOKEN
+from services.security.rbac import PLATFORM_DEMO
 from services.security.audit_service import get_audit_service
 from services.security.session_token import issue_session_token, revoke_session_token
 
@@ -57,8 +58,8 @@ def _me_payload(request: Request) -> dict[str, object]:
         payload["principal"] = None
         if mode == "required":
             payload["hint"] = (
-                "Войдите через Admin UI (email/password) или задайте "
-                "AF_AUTH_MIDDLEWARE_MODE=disabled для локальной разработки"
+                "Введите Bearer token для доступа к панели управления "
+                "(или задайте AF_AUTH_MIDDLEWARE_MODE=disabled для локальной разработки)"
             )
     return payload
 
@@ -67,6 +68,49 @@ def _me_payload(request: Request) -> dict[str, object]:
 def api_auth_me(request: Request) -> dict[str, object]:
     """Source of truth для frontend auth state."""
     return _me_payload(request)
+
+
+@router.get("/whoami")
+def api_auth_whoami(request: Request) -> dict[str, object]:
+    """Проверка Bearer-токена консоли (демо-стандарт APL).
+
+    Возвращает авторитетную роль; фронт сохраняет сессию {token, role}.
+    Каждый успешный вызов с валидным ops-токеном пишется в аудит
+    как ``console_login`` (вход через форму или восстановление сессии).
+    """
+    token = _bearer_from_request(request)
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "ops_token_required", "message": "Ops token required"},
+        )
+
+    principal = get_request_principal(request)
+    if not principal.is_authenticated:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "invalid_ops_token", "message": "Invalid ops token"},
+        )
+
+    audit = get_audit_service()
+    if principal.auth_source == AUTH_SOURCE_OPS_TOKEN:
+        audit.log_event(
+            event_type="auth.console.login",
+            action="console_login",
+            principal=principal,
+            request=request,
+            target_type="auth",
+            status="success",
+            details={"role": principal.platform_role},
+        )
+
+    return {
+        "role": principal.platform_role,
+        "is_demo": principal.platform_role == PLATFORM_DEMO,
+        "auth_source": principal.auth_source,
+        "email": principal.email,
+        "display_name": principal.display_name,
+    }
 
 
 @router.post("/login")

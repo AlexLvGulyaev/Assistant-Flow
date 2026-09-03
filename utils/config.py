@@ -52,6 +52,9 @@ class AppConfig:
     rag_embedding_request_timeout: float = 30.0
     rag_retrieval_timeout: int = 60
     rag_max_distance: float = 1.38
+    # Heavy RAG safeguards: cap на размер загружаемого/индексируемого документа (MB).
+    # Защита RAM VPS: большой файл больше не читается целиком в память admin-api.
+    admin_upload_max_mb: int = 25
     chroma_use_http: bool = False
     chroma_host: str = "127.0.0.1"
     chroma_port: int = 8000
@@ -180,6 +183,7 @@ def load_config() -> AppConfig:
         ),
         rag_embedding_request_timeout=_float_env("RAG_EMBEDDING_REQUEST_TIMEOUT", 30.0),
         rag_retrieval_timeout=_int_env("RAG_RETRIEVAL_TIMEOUT", 60),
+        admin_upload_max_mb=max(1, _int_env("ADMIN_UPLOAD_MAX_MB", 25)),
         rag_max_distance=_float_env("RAG_MAX_DISTANCE", 1.38),
         chroma_use_http=_bool_env("CHROMA_USE_HTTP", False),
         chroma_host=(os.getenv("CHROMA_HOST", "127.0.0.1").strip() or "127.0.0.1"),

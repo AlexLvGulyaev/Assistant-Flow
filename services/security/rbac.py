@@ -15,6 +15,8 @@ PLATFORM_OPERATOR = "operator"
 PLATFORM_ADMIN = "admin"
 PLATFORM_AUDITOR = "auditor"
 PLATFORM_SUPERADMIN = "superadmin"
+# Демо-роль для витринного входа (демо-стандарт APL): read-only, без мутаций.
+PLATFORM_DEMO = "demo"
 
 # --- Permission names ---
 PERM_DOCUMENTS_READ = "documents:read"
@@ -89,6 +91,16 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     ),
     PLATFORM_ADMIN: _ADMIN_OPERATIONAL,
     PLATFORM_SUPERADMIN: frozenset({"*"}),
+    # Демо-вход (только просмотр): читаемые разделы консоли без мутаций.
+    PLATFORM_DEMO: frozenset(
+        {
+            PERM_DOCUMENTS_READ,
+            PERM_LOGS_READ,
+            PERM_RETRIEVAL_READ,
+            PERM_SETTINGS_READ,
+            PERM_AUDIT_READ,
+        }
+    ),
 }
 
 # Алиасы
@@ -109,6 +121,8 @@ def retrieval_role_for_platform(platform_role: str) -> str:
     if role in (PLATFORM_ADMIN, PLATFORM_SUPERADMIN):
         return ROLE_ADMIN
     if role in (PLATFORM_END_USER, "guest"):
+        return ROLE_GUEST
+    if role == PLATFORM_DEMO:
         return ROLE_GUEST
     return ROLE_EMPLOYEE
 

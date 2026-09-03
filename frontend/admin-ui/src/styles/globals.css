@@ -2516,6 +2516,14 @@ code {
   box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.35);
 }
 
+.rag-chunk-modal__source-note {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border);
+}
+
 .rag-chunk-modal__foot {
   flex-shrink: 0;
   padding: 0.45rem 0.65rem 0.55rem;
@@ -5973,6 +5981,61 @@ code {
 
 .login-card__hint {
   color: var(--warning);
+}
+
+/* ---- Демо-стандарт APL: канон формы входа (RF/AIC/LQ) ---- */
+/* Иконка-круг кейса над заголовком (канон LQ .login-card__icon). */
+.login-card__icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  background: var(--accent-dim);
+  font-size: 1.875rem;
+}
+
+.login-card__title {
+  text-align: center;
+}
+
+.login-card__subtitle {
+  margin: 0 0 4px;
+  text-align: center;
+}
+
+/* Вторичные кнопки формы входа (канон RF rf-login-btn--outline/--home). */
+.login-form__btn {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.login-form__btn:hover {
+  background: var(--bg-hover);
+}
+
+.login-form__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.login-form__btn--home {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
 }
 
 /* ---- P9.5 Audit page ---- */

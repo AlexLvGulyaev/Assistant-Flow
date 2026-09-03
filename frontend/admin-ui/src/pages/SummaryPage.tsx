@@ -123,6 +123,14 @@ export function SummaryPage() {
   const sess = data.sessions;
   const routes = data.routes;
   const tel = data.telemetry_sample ?? {};
+  const tokEcon = data.token_economy ?? null;
+  const tokByStage: Array<[string, { total_tokens: number; rows_with_tokens: number; events: number }]> =
+    Object.entries(tokEcon?.by_stage ?? {})
+      .filter(([, row]) => row.total_tokens > 0 || row.rows_with_tokens > 0)
+      .sort((a, b) => b[1].total_tokens - a[1].total_tokens);
+  const tokByModel: Array<[string, { total_tokens: number }]> = Object.entries(
+    tokEcon?.by_model ?? {}
+  ).sort((a, b) => b[1].total_tokens - a[1].total_tokens);
   const lifecycle = data.lifecycle_events ?? [];
   const lifecycleMap = new Map(lifecycle.map((x) => [x.stage, x.events]));
   const audioDet = data.audio_voice_counts ?? {
@@ -262,6 +270,53 @@ export function SummaryPage() {
             <dt>События voice pipeline</dt>
             <dd>{formatNum(audioDet.voice_pipeline_stage_events)}</dd>
           </dl>
+        </SectionCard>
+
+        <SectionCard
+          title="F. Токен-экономика (точное окно)"
+          description="SQL-агрегация processing_logs за период — не выборка. Проверено суммой токенов."
+        >
+          {tokEcon && tokEcon.grand_total_tokens != null ? (
+            <>
+              <dl className="kv summary-kv">
+                <dt>Всего токенов за окно</dt>
+                <dd className="mono">{formatNum(tokEcon.grand_total_tokens)}</dd>
+              </dl>
+              {tokByStage.length > 0 && (
+                <dl className="kv summary-kv">
+                  {tokByStage.map(([stage, row]) => (
+                    <Fragment key={stage}>
+                      <dt className="mono" title={stage}>
+                        {stageToActionRu(stage, null)}
+                      </dt>
+                      <dd>
+                        {formatNum(row.total_tokens)}{" "}
+                        <span className="muted">
+                          ({row.rows_with_tokens}/{row.events})
+                        </span>
+                      </dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              )}
+              {tokByModel.length > 0 && (
+                <dl className="kv summary-kv">
+                  <dt>По модели</dt>
+                  <dd className="muted">токены</dd>
+                  {tokByModel.map(([model, row]) => (
+                    <Fragment key={model}>
+                      <dt className="mono">{model}</dt>
+                      <dd>{formatNum(row.total_tokens)}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              )}
+            </>
+          ) : (
+            <p className="muted">
+              Токен-агрегация недоступна (нет данных или БД не настроена).
+            </p>
+          )}
         </SectionCard>
       </div>
     </div>

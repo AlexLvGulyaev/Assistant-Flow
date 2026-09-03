@@ -23,6 +23,7 @@ from services.security.principal import (
     AUTH_SOURCE_DEV_HEADER,
     PrincipalContext,
 )
+from services.security.ops_token import resolve_ops_role
 from services.security.session_token import principal_from_token_payload, verify_session_token
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,11 @@ def _resolve_principal_from_request(request: Request) -> PrincipalContext:
 
     bearer = _parse_bearer_token(request.headers.get("authorization"))
     if bearer:
+        # Демо-стандарт APL: статические ops-токены (admin / demo).
+        ops_role = resolve_ops_role(bearer)
+        if ops_role:
+            return PrincipalContext.from_ops_token(ops_role)
+
         payload = verify_session_token(bearer)
         if payload:
             principal = principal_from_token_payload(payload)

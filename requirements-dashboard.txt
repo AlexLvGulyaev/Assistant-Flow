@@ -1,0 +1,4 @@
+# Optional: legacy Streamlit admin UI (admin_ui/app.py, docker-compose.assistant.yml).
+# Install via build-arg INSTALL_DASHBOARD=true (see Dockerfile).
+# React admin-ui (frontend/admin-ui) is the production UI and does not need this.
+streamlit>=1.36.0

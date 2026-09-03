@@ -1,13 +1,16 @@
 """
-Local RAG smoke test: index files under RAG_DOCUMENTS_DIR, query Chroma, print answer.
+Local RAG smoke test: query Chroma and print an answer.
 
 Run from repository root:
-  python scripts/rag_smoke_test.py
-  python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос"
+  python scripts/rag_smoke_test.py                       # query-only (безопасно против живого индекса)
+  python scripts/rag_smoke_test.py --index               # ПЕРЕЗАПИШЕТ индекс: full rebuild (как admin --reindex)
+  python scripts/rag_smoke_test.py --index --question "Ваш вопрос"
 
 Requires OPENAI_API_KEY for embeddings and chat (direct OpenAI). Image generation uses ProxyAPI separately (PROXY_API_KEY).
 
-After `admin_index_documents.py --reindex`, run this script with `--reindex` too, or the smoke test will ADD vectors on top of the existing index (duplicate chunks / inflated collection count).
+Раньше скрипт по умолчанию ДОБАВЛЯЛ векторы поверх существующего индекса
+(duplicate chunks / inflated collection count) — против живого HTTP-Chroma это
+засоряло демо-базу. Теперь индексация только под явным --index.
 """
 
 from __future__ import annotations
@@ -29,9 +32,11 @@ def _resolve_path(raw: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAG Chroma smoke test (local only).")
     parser.add_argument(
-        "--reindex",
+        "--index",
         action="store_true",
-        help="Full reindex: remote collection (CHROMA_USE_HTTP) or local CHROMA_PERSIST_DIR wiped, then rebuild.",
+        help="Full reindex before query: remote collection (CHROMA_USE_HTTP) or "
+             "local CHROMA_PERSIST_DIR wiped, then rebuilt. По умолчанию выключено: "
+             "скрипт только спрашивает индекс, ничего не записывая.",
     )
     parser.add_argument(
         "--question",
@@ -64,19 +69,10 @@ def main() -> None:
     chroma_dir = _resolve_path(config.chroma_persist_dir)
     docs_dir = _resolve_path(args.documents_dir or config.rag_documents_dir)
 
-    if args.reindex:
+    if args.index:
         reset_chroma_for_reindex(config, persist_directory=chroma_dir)
     if not config.chroma_use_http:
         chroma_dir.mkdir(parents=True, exist_ok=True)
-
-    if not args.reindex:
-        existing_chunks = count_chroma_chunks(config, persist_path=chroma_dir)
-        if existing_chunks > 0:
-            print(
-                f"[assistant-flow] WARNING: Chroma already holds {existing_chunks} chunk(s); "
-                "this run will ADD more (duplicates). Use --reindex for a clean rebuild.",
-                flush=True,
-            )
 
     embeddings = build_openai_embeddings(config)
     store = ChromaRagStore(
@@ -84,19 +80,28 @@ def main() -> None:
         embeddings,
         persist_directory=chroma_dir,
     )
-    indexer = LocalRagIndexer(config, ChromaBackend(store))
 
-    print(f"Indexing from: {docs_dir}")
-    n = indexer.index_documents_dir(docs_dir)
-    print(f"Chunks indexed: {n}")
-    print(f"Collection count: {store.collection_count()}")
-
-    if n == 0:
-        print(
-            "No documents indexed. Add .txt, .md, or .pdf under the documents directory.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    if args.index:
+        indexer = LocalRagIndexer(config, ChromaBackend(store))
+        print(f"Indexing from: {docs_dir}")
+        n = indexer.index_documents_dir(docs_dir)
+        print(f"Chunks indexed: {n}")
+        print(f"Collection count: {store.collection_count()}")
+        if n == 0:
+            print(
+                "No documents indexed. Add .txt, .md, or .pdf under the documents directory.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        existing_chunks = count_chroma_chunks(config, persist_path=chroma_dir)
+        print(f"Query-only mode: collection holds {existing_chunks} chunk(s), nothing written.")
+        if existing_chunks == 0:
+            print(
+                "Index is empty. Run with --index to rebuild it.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     chat = OpenAIChatProvider(config)
     retrieval = build_retrieval_backend(config, chroma_store=store, embeddings=embeddings)

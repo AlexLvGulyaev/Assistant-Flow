@@ -57,6 +57,24 @@ def api_retrieval_overview(
     return svc.get_retrieval_overview()
 
 
+@router.get("/chunk-fulltext")
+def api_retrieval_chunk_fulltext(
+    source: str,
+    text_fp: str | None = None,
+    chunk_index: int | None = None,
+    backend: str | None = None,
+    _principal=Depends(require_permission(PERM_RETRIEVAL_READ)),
+) -> dict[str, Any]:
+    """Полный текст чанка из активного vector store (логи RAG несут только text_preview)."""
+    svc = get_admin_service()
+    return svc.fetch_chunk_full_text(
+        source=source,
+        text_fp=text_fp,
+        chunk_index=chunk_index,
+        backend=backend,
+    )
+
+
 @router.put("/active-backend")
 def api_retrieval_active_backend(
     request: Request,

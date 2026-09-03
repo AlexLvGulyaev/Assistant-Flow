@@ -46,6 +46,26 @@ class AudioVoiceCounts(BaseModel):
     voice_pipeline_stage_events: int
 
 
+class TokenEconomyStageRow(BaseModel):
+    events: int
+    rows_with_tokens: int
+    total_tokens: int
+
+
+class TokenEconomyModelRow(BaseModel):
+    rows_with_tokens: int
+    total_tokens: int
+
+
+class TokenEconomy(BaseModel):
+    """Точная токен-экономика по полному окну (SQL-агрегация processing_logs)."""
+
+    window_hours: int
+    grand_total_tokens: int | None = None
+    by_stage: dict[str, TokenEconomyStageRow] = Field(default_factory=dict)
+    by_model: dict[str, TokenEconomyModelRow] = Field(default_factory=dict)
+
+
 class SummaryResponse(BaseModel):
     hours: int
     events: SummaryEvents
@@ -53,6 +73,7 @@ class SummaryResponse(BaseModel):
     routes: SummaryRoutes
     lifecycle_events: list[LifecycleEventRow]
     telemetry_sample: TelemetrySample
+    token_economy: TokenEconomy
     admin_events: int
     reindex_starts: int
     audio_voice_counts: AudioVoiceCounts

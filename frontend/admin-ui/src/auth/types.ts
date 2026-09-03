@@ -15,11 +15,11 @@ export interface AuthMeResponse {
   hint?: string;
 }
 
-export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  user_id: string;
+/** GET /api/auth/whoami — проверка Bearer-токена (демо-стандарт APL). */
+export interface WhoamiResponse {
+  role: string;
+  is_demo: boolean;
+  auth_source: string | null;
   email: string | null;
-  platform_role: string;
+  display_name: string | null;
 }

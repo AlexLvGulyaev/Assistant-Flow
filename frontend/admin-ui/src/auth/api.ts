@@ -1,4 +1,5 @@
-const DEFAULT_BASE = "http://localhost:8600";
+// Относительные /api — тот же origin, nginx проксирует на admin-api
+const DEFAULT_BASE = "";
 
 function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_ADMIN_API_BASE_URL;
@@ -7,8 +8,15 @@ function getApiBaseUrl(): string {
   }
   return DEFAULT_BASE;
 }
-import type { AuthMeResponse, LoginResponse } from "./types";
+import type { AuthMeResponse, WhoamiResponse } from "./types";
 import { getAccessToken, notifyUnauthorized, setAccessToken } from "./token";
+
+/** Build-time демо-токен для витринного входа (VITE_OPS_DEMO_TOKEN). */
+const OPS_DEMO_TOKEN = import.meta.env.VITE_OPS_DEMO_TOKEN || "";
+
+export function isDemoConfigured(): boolean {
+  return Boolean(OPS_DEMO_TOKEN);
+}
 
 async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -35,29 +43,37 @@ export async function fetchAuthMe(): Promise<AuthMeResponse> {
   return parseJson<AuthMeResponse>(res);
 }
 
-export async function postLogin(
-  email: string,
-  password: string
-): Promise<LoginResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+export async function signInWithToken(
+  token: string
+): Promise<WhoamiResponse> {
+  // Демо-стандарт APL: вход по Bearer-токену через /api/auth/whoami.
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new Error("Введите токен.");
+  }
+  const res = await fetch(`${getApiBaseUrl()}/api/auth/whoami`, {
+    headers: { Authorization: `Bearer ${trimmed}` },
   });
   if (res.status === 401) {
-    const body = await res.json().catch(() => ({}));
-    const detail =
-      typeof body?.detail === "string"
-        ? body.detail
-        : "Неверный email или пароль";
-    throw new Error(detail);
+    throw new Error("Токен не принят. Проверьте, что токен указан верно.");
+  }
+  if (res.status === 403) {
+    throw new Error("Недействительный токен.");
   }
   if (!res.ok) {
-    throw new Error(`Вход: ${res.status}`);
+    throw new Error(`Ошибка авторизации (${res.status}).`);
   }
-  const data = await parseJson<LoginResponse>(res);
-  setAccessToken(data.access_token);
+  const data = await parseJson<WhoamiResponse>(res);
+  setAccessToken(trimmed);
   return data;
+}
+
+/** Вход в демо-режиме: запечённый при сборке read-only токен. */
+export async function signInDemo(): Promise<WhoamiResponse> {
+  if (!OPS_DEMO_TOKEN) {
+    throw new Error("Демо-вход не настроен на этом экземпляре.");
+  }
+  return signInWithToken(OPS_DEMO_TOKEN);
 }
 
 export async function postLogout(): Promise<void> {

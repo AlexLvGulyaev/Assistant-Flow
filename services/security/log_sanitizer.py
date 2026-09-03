@@ -45,6 +45,28 @@ _DEFAULT_MAX_LEN: dict[str, int] = {
 
 _CHUNK_PREVIEW_CAP = 96
 
+# Машинные идентификаторы/пути (sha256, asset refs): PII-маскировка портит их
+# (телефонный регэксп съедает цифровые прогоны в sha) и ломает превью медиа
+# в админ-консоли. Секрет-паттернам в структурных ключах взяться неоткуда.
+_UNMASKED_KEYS: frozenset[str] = frozenset(
+    {
+        "asset_ref",
+        "input_asset_ref",
+        "intake_image_asset_ref",
+        "output_asset_ref",
+        "input_audio_ref",
+        "output_audio_ref",
+        "document_id",
+        "document_version_id",
+        "chunk_id",
+        "execution_id",
+        "session_id",
+        "sha256",
+        "input_sha256",
+        "output_sha256",
+    }
+)
+
 _FORENSIC_MAX_LEN: dict[str, int] = {
     "user_input": 800,
     "retrieval_ready_query": 4000,
@@ -175,6 +197,9 @@ def sanitize_log_details(
             continue
 
         if isinstance(value, str):
+            if key in _UNMASKED_KEYS:
+                out[key] = value
+                continue
             cap = _DEFAULT_MAX_LEN.get(key)
             if cap is not None:
                 cleaned = sanitize_text_for_log(value, max_len=cap)

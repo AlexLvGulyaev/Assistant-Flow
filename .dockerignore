@@ -2,18 +2,25 @@
 .env.*
 __pycache__/
 *.pyc
+*.pyo
 .git/
 .venv/
 .venv312/
 venv/
-data/chroma_db/
-data/chroma_db_broken_backup/
-tmp_chroma_test/
-tmp_chroma_test_312/
+data/
+storage/
 logs.db
 outputs/
 legacy/
 _test_chroma/
-frontend/admin-ui/node_modules/
-frontend/admin-ui/dist/
-frontend/admin-ui/.vite/
+tmp_chroma_test/
+tmp_chroma_test_312/
+# Backend image does not ship the React app (separate build context ./frontend/admin-ui)
+frontend/
+# Internal engineering material, not part of the runtime image
+docs/
+task_history/
+cursor_tasks_local/
+evaluation/datasets/
+*.zip
+Текстовый документ.txt

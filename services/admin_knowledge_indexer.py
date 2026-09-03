@@ -496,6 +496,22 @@ class AdminKnowledgeIndexer:
         title = file_path.stem
         source_filename = file_path.name
         rb = normalize_rag_backend(self._config.rag_backend)
+        # Heavy RAG safeguard: не тянем в память файлы выше ADMIN_UPLOAD_MAX_MB
+        # (файл мог попасть в bind-mount каталог мимо upload-роута).
+        max_bytes = max(1, int(self._config.admin_upload_max_mb)) * 1024 * 1024
+        try:
+            file_size = file_path.stat().st_size
+        except OSError:
+            file_size = 0
+        if file_size > max_bytes:
+            return FileIndexOutcome(
+                path=file_path,
+                chunks=0,
+                error=(
+                    f"file too large: {file_size} bytes "
+                    f"(limit {max_bytes} = ADMIN_UPLOAD_MAX_MB)"
+                ),
+            )
         idx_path = ""
         mf_path = ""
         if rb == "faiss":

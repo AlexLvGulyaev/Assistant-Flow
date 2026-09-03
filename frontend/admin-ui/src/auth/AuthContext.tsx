@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { fetchAuthMe, postLogin, postLogout } from "./api";
+import { fetchAuthMe, isDemoConfigured, postLogout, signInDemo, signInWithToken } from "./api";
 import { hasPermission as checkPerm } from "./permissions";
 import { setUnauthorizedHandler } from "./token";
 import type { AuthMeResponse, AuthMode } from "./types";
@@ -19,14 +19,20 @@ export interface AuthState {
   email: string | null;
   userId: string | null;
   platformRole: string | null;
+  displayName: string | null;
   permissions: string[];
   hint: string | null;
+  /** Сессия открыта демо-токеном (витринный read-only вход). */
+  isDemo: boolean;
+  /** Демо-токен запечён при сборке — кнопка «Войти в демо-режиме» доступна. */
+  demoAvailable: boolean;
   /** В режиме required без сессии — нужен login. */
   needsLogin: boolean;
   /** Login доступен (optional/required). */
   loginAvailable: boolean;
   refresh: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (token: string) => Promise<void>;
+  loginDemo: () => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -35,13 +41,14 @@ const AuthContext = createContext<AuthState | null>(null);
 
 function deriveFromMe(me: AuthMeResponse): Omit<
   AuthState,
-  "loading" | "refresh" | "login" | "logout" | "hasPermission"
+  "loading" | "refresh" | "login" | "loginDemo" | "logout" | "hasPermission"
 > {
   const authMode = me.auth_mode;
   const authenticated =
     authMode === "disabled" ? true : Boolean(me.authenticated);
   const needsLogin = authMode === "required" && !me.authenticated;
   const loginAvailable = authMode !== "disabled";
+  const principal = (me.principal ?? null) as { display_name?: string } | null;
 
   return {
     authenticated,
@@ -49,8 +56,11 @@ function deriveFromMe(me: AuthMeResponse): Omit<
     email: me.email ?? null,
     userId: me.user_id ?? null,
     platformRole: me.platform_role ?? null,
+    displayName: principal?.display_name ?? null,
     permissions: me.permissions ?? [],
     hint: me.hint ?? null,
+    isDemo: (me.platform_role ?? "") === "demo",
+    demoAvailable: isDemoConfigured(),
     needsLogin,
     loginAvailable,
   };
@@ -103,12 +113,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(
-    async (email: string, password: string) => {
-      await postLogin(email, password);
+    async (token: string) => {
+      await signInWithToken(token);
       await refresh();
     },
     [refresh]
   );
+
+  const loginDemo = useCallback(async () => {
+    await signInDemo();
+    await refresh();
+  }, [refresh]);
 
   const logout = useCallback(async () => {
     await postLogout();
@@ -134,10 +149,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...core,
       refresh,
       login,
+      loginDemo,
       logout,
       hasPermission,
     }),
-    [loading, core, refresh, login, logout, hasPermission]
+    [loading, core, refresh, login, loginDemo, logout, hasPermission]
   );
 
   return (

@@ -2,8 +2,10 @@ requests
 python-dotenv
 openai
 pyTelegramBotAPI
-streamlit
+# streamlit moved to requirements-dashboard.txt (legacy Streamlit UI, opt-in via INSTALL_DASHBOARD)
 fastapi>=0.115.0
+# explicit: upload endpoints (multipart/form-data); was a hidden transitive dep of streamlit
+python-multipart>=0.0.9
 uvicorn[standard]>=0.32.0
 pandas
 psycopg[binary]>=3.1

@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { fetchChunkFullText } from "../api/client";
 import {
   chunkPreviewText,
   relevanceLabel,
@@ -28,7 +29,40 @@ function ChunkFullTextModal({
   backendTitle: string;
   onClose: () => void;
 }) {
-  const full = chunk.fullText?.trim() || "Текст чанка не передан в логах.";
+  const logText = chunk.fullText?.trim() || "Текст чанка не передан в логах.";
+  const canFetch = Boolean((chunk.source || "").trim() && (chunk.textFp || chunk.chunkIndex != null));
+  const [fetched, setFetched] = useState<
+    { state: "loading" } | { state: "ok"; text: string; matchedBy: string | null; truncated: boolean } | { state: "miss"; reason: string } | null
+  >(canFetch ? { state: "loading" } : null);
+
+  useEffect(() => {
+    if (!canFetch) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetchChunkFullText({
+          source: chunk.source,
+          textFp: chunk.textFp ?? null,
+          chunkIndex: chunk.chunkIndex,
+        });
+        if (cancelled) return;
+        if (r.found && r.text?.trim()) {
+          setFetched({ state: "ok", text: r.text, matchedBy: r.matched_by ?? null, truncated: Boolean(r.truncated) });
+        } else {
+          setFetched({ state: "miss", reason: r.reason || "not_found" });
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setFetched({ state: "miss", reason: e instanceof Error ? e.message : "fetch_error" });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canFetch, chunk.source, chunk.textFp, chunk.chunkIndex]);
+
+  const bodyText = fetched?.state === "ok" ? fetched.text : logText;
   return (
     <div className="rag-chunk-modal-backdrop" role="presentation" onClick={onClose}>
       <div
@@ -72,7 +106,22 @@ function ChunkFullTextModal({
           />
           <OpsRow label="Релевантность" value={relevance} />
         </dl>
-        <pre className="mono rag-chunk-modal__body">{full}</pre>
+        {fetched?.state === "loading" ? (
+          <p className="muted rag-chunk-modal__source-note">Загрузка полного текста из vector store…</p>
+        ) : null}
+        {fetched?.state === "ok" && fetched.matchedBy === "text_fp" ? null : fetched?.state === "ok" ? (
+          <p className="muted rag-chunk-modal__source-note">
+            Текст из vector store (совпадение по {fetched.matchedBy === "chunk_index" ? "индексу чанка" : "единице кандидата"}).
+          </p>
+        ) : fetched?.state === "miss" ? (
+          <p className="muted rag-chunk-modal__source-note">
+            Полный текст из vector store недоступен ({fetched.reason}); показан текст из логов.
+          </p>
+        ) : null}
+        <pre className="mono rag-chunk-modal__body">{bodyText}</pre>
+        {fetched?.state === "ok" && fetched.truncated ? (
+          <p className="muted rag-chunk-modal__source-note">Текст обрезан на лимите отображения.</p>
+        ) : null}
         <div className="rag-chunk-modal__foot">
           <button type="button" className="rag-chunk-modal__done" onClick={onClose}>
             Закрыть

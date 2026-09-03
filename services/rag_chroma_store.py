@@ -134,6 +134,42 @@ def chromadb_client_for_config(
     )
 
 
+def close_chroma_client(client: Any) -> None:
+    """
+    Best-effort release of a short-lived chromadb client's sockets.
+
+    chromadb.HttpClient builds a System whose FastAPI adapter keeps an httpx.Client
+    with a keep-alive pool. Per-call clients that are never closed leak one open
+    TCP socket each; at ~2 sockets per /api/health call the admin-api process
+    exhausts its 1024 fd limit within hours (observed live), and the Chroma
+    server saturates on ~1000 idle keep-alive connections and stops serving.
+
+    Persistent clients hold no sockets; close() only releases their System
+    reference count.
+    """
+    if client is None:
+        return
+    # httpx pool: Client._server (ServerAPI/FastAPI adapter)._session
+    holder = client
+    sess = getattr(holder, "_session", None)
+    if sess is None:
+        server = getattr(holder, "_server", None)
+        if server is not None:
+            sess = getattr(server, "_session", None)
+    if sess is not None and hasattr(sess, "close"):
+        try:
+            sess.close()
+        except Exception:
+            pass
+    # System refcount (PersistentClient: SQLite handles).
+    closer = getattr(client, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:
+            pass
+
+
 def reset_chroma_for_reindex(
     config: AppConfig,
     *,
@@ -149,11 +185,14 @@ def reset_chroma_for_reindex(
             config,
             persist_directory=persist_directory,
         )
-        _recreate_collection_on_client(
-            client,
-            collection_name,
-            backend_label=f"HttpClient {config.chroma_host}:{config.chroma_port}",
-        )
+        try:
+            _recreate_collection_on_client(
+                client,
+                collection_name,
+                backend_label=f"HttpClient {config.chroma_host}:{config.chroma_port}",
+            )
+        finally:
+            close_chroma_client(client)
         return
 
     if persist_directory.exists():
@@ -172,11 +211,14 @@ def reset_chroma_for_reindex(
         config,
         persist_directory=persist_directory,
     )
-    _recreate_collection_on_client(
-        client,
-        collection_name,
-        backend_label=f"PersistentClient {persist_directory}",
-    )
+    try:
+        _recreate_collection_on_client(
+            client,
+            collection_name,
+            backend_label=f"PersistentClient {persist_directory}",
+        )
+    finally:
+        close_chroma_client(client)
 
 
 def count_chroma_chunks(
@@ -192,10 +234,13 @@ def count_chroma_chunks(
         if config.chroma_use_http:
             print("count_chunks: opening chromadb HttpClient", flush=True)
             client = chromadb.HttpClient(host=config.chroma_host, port=config.chroma_port)
-            coll = client.get_collection(collection_name)
-            n = int(coll.count())
-            print(f"count_chunks: count = {n}", flush=True)
-            return n
+            try:
+                coll = client.get_collection(collection_name)
+                n = int(coll.count())
+                print(f"count_chunks: count = {n}", flush=True)
+                return n
+            finally:
+                close_chroma_client(client)
         if not persist_path.exists():
             print("count_chunks: count = 0 (persist dir missing)", flush=True)
             return 0
@@ -256,6 +301,10 @@ class ChromaRagStore:
         self._collection = _get_or_create_collection(
             self._client, self._collection_name
         )
+
+    def close(self) -> None:
+        """Release the client (sockets for HTTP mode); for per-call short-lived stores."""
+        close_chroma_client(self._client)
 
     @property
     def persist_directory(self) -> Path:
@@ -406,3 +455,31 @@ class ChromaRagStore:
             return int(self._collection.count())
         except Exception:
             return 0
+
+    def get_by_source(self, source: str, *, limit: int = 200) -> list[tuple[str, dict[str, Any]]]:
+        """Прямая выборка чанков по metadata.source (full-text lookup для админ-консоли RAG).
+
+        Не использует embeddings и similarity — точный fetch по where-фильтру.
+        """
+        src = (source or "").strip()
+        if not src:
+            return []
+        try:
+            got = self._collection.get(
+                where={"source": src},
+                include=["documents", "metadatas"],
+                limit=max(1, int(limit)),
+            )
+        except Exception:
+            self.refresh_client_and_collection()
+            got = self._collection.get(
+                where={"source": src},
+                include=["documents", "metadatas"],
+                limit=max(1, int(limit)),
+            )
+        docs = got.get("documents") or []
+        metas = got.get("metadatas") or []
+        return [
+            (str(text or ""), dict(meta or {}))
+            for text, meta in zip(docs, metas)
+        ]

@@ -51,6 +51,7 @@ from services.retrieval.factory import (
     normalize_rag_backend,
 )
 from services.preprocessing.preprocessing_service import Format, PreprocessingService
+from services.rag_query_service import _chunk_text_fingerprint
 from services.runtime_lifecycle_service import RuntimeLifecycleService
 from utils.config import AppConfig, load_config
 
@@ -571,6 +572,10 @@ class AdminService:
                 out.append(p.name)
         return sorted(out)
 
+    def upload_max_bytes(self) -> int:
+        """Heavy RAG safeguard: лимит размера документа (bytes), env ADMIN_UPLOAD_MAX_MB."""
+        return max(1, int(self._config.admin_upload_max_mb)) * 1024 * 1024
+
     def save_uploaded_document(
         self,
         filename: str,
@@ -600,6 +605,12 @@ class AdminService:
             raise ValueError("Invalid file name (missing basename).")
         if not isinstance(data, (bytes, bytearray)) or len(data) == 0:
             raise ValueError("Uploaded file is empty.")
+        if len(data) > self.upload_max_bytes():
+            raise ValueError(
+                "Uploaded file is too large "
+                f"({len(data)} bytes; limit {self.upload_max_bytes()} "
+                "= ADMIN_UPLOAD_MAX_MB)."
+            )
 
         pipeline_id = str(uuid.uuid4())
         index_name = f"{stem}.txt"
@@ -903,6 +914,146 @@ class AdminService:
                         closer()
                     except Exception:
                         pass
+
+    def fetch_chunk_full_text(
+        self,
+        *,
+        source: str,
+        text_fp: str | None = None,
+        chunk_index: int | None = None,
+        backend: str | None = None,
+        max_chars: int = 24_000,
+    ) -> dict[str, Any]:
+        """
+        Полный текст чанка из активного vector store по (source, text_fp|chunk_index).
+
+        Операционные логи RAG пишут только text_preview (+ text_fp), поэтому модалка
+        «Полный текст чанка» достраивает текст прямым fetch'ем из хранилища.
+        Возврат: found / matched_by / backend / text / chunk_index / visibility.
+        """
+        src = (source or "").strip()
+        if not src:
+            return {"found": False, "reason": "source_required", "backend": None, "text": ""}
+
+        name = normalize_rag_backend(backend) if (backend or "").strip() else (
+            self._effective_rag_backend_resolved()
+        )
+        if name not in KNOWN_RAG_BACKENDS:
+            return {"found": False, "reason": "unknown_backend", "backend": name, "text": ""}
+
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        try:
+            if name == "faiss":
+                # chunks.json на диске — без загрузки FAISS-индекса.
+                idx_dir = resolve_faiss_index_dir(self._config, project_root=_PROJECT_ROOT)
+                chunks_path = idx_dir / "chunks.json"
+                if chunks_path.is_file():
+                    raw = json.loads(chunks_path.read_text(encoding="utf-8"))
+                    for item in raw if isinstance(raw, list) else []:
+                        if not isinstance(item, dict):
+                            continue
+                        meta = dict(item.get("metadata") or {})
+                        if str(meta.get("source") or "").strip() == src:
+                            candidates.append((str(item.get("page_content") or ""), meta))
+            elif name == "chroma":
+                cfg = self._config
+                from services.rag_chroma_store import ChromaRagStore
+                from services.retrieval.chroma_backend import ChromaBackend
+
+                cdir = self._chroma_dir
+                if not cfg.chroma_use_http:
+                    cdir.mkdir(parents=True, exist_ok=True)
+                emb = build_openai_embeddings(cfg)
+                store = ChromaRagStore(cfg, emb, persist_directory=cdir)
+                try:
+                    candidates = store.get_by_source(src)
+                finally:
+                    store.close()
+            else:  # weaviate
+                cfg = replace(self._config, rag_backend="weaviate")
+                emb = build_openai_embeddings(cfg)
+                be = build_retrieval_backend(cfg, chroma_store=None, embeddings=emb)
+                try:
+                    # Фабрика оборачивает backend в CachingRetrievalBackend; полный текст
+                    # берём из inner-хранилища (мимо retrieval-кэша).
+                    inner = be
+                    while not hasattr(inner, "fetch_chunks_by_source") and hasattr(inner, "_inner"):
+                        inner = inner._inner
+                    fetch = getattr(inner, "fetch_chunks_by_source", None)
+                    if not callable(fetch):
+                        raise RuntimeError("active backend does not support fetch_chunks_by_source")
+                    for ch in fetch(src):
+                        candidates.append((ch.page_content, dict(ch.metadata or {})))
+                finally:
+                    closer = getattr(be, "close", None)
+                    if callable(closer):
+                        try:
+                            closer()
+                        except Exception:
+                            pass
+        except Exception as exc:
+            return {
+                "found": False,
+                "reason": f"backend_error: {type(exc).__name__}: {exc}",
+                "backend": name,
+                "text": "",
+            }
+
+        if not candidates:
+            return {
+                "found": False,
+                "reason": "source_not_in_index",
+                "backend": name,
+                "text": "",
+                "source": src,
+            }
+
+        fp = (text_fp or "").strip()
+        matched: tuple[str, dict[str, Any]] | None = None
+        matched_by = None
+        if fp:
+            for page, meta in candidates:
+                if _chunk_text_fingerprint(page) == fp:
+                    matched = (page, meta)
+                    matched_by = "text_fp"
+                    break
+        if matched is None and chunk_index is not None:
+            for page, meta in candidates:
+                ci = meta.get("chunk_index")
+                try:
+                    if ci is not None and int(ci) == int(chunk_index):
+                        matched = (page, meta)
+                        matched_by = "chunk_index"
+                        break
+                except (TypeError, ValueError):
+                    continue
+        if matched is None and len(candidates) == 1:
+            matched = candidates[0]
+            matched_by = "single_candidate"
+        if matched is None:
+            return {
+                "found": False,
+                "reason": "chunk_not_matched",
+                "backend": name,
+                "text": "",
+                "source": src,
+                "candidates": len(candidates),
+            }
+
+        page, meta = matched
+        text = page[:max_chars]
+        return {
+            "found": True,
+            "matched_by": matched_by,
+            "backend": name,
+            "source": src,
+            "chunk_index": meta.get("chunk_index"),
+            "token_count": meta.get("token_count"),
+            "visibility": meta.get("visibility"),
+            "text_chars": len(page),
+            "truncated": len(page) > len(text),
+            "text": text,
+        }
 
     def get_retrieval_overview(self) -> dict[str, Any]:
         """Сводка для Admin API: env vs DB vs effective + health по каждому backend."""
@@ -2456,6 +2607,22 @@ class AdminService:
         rows_win = _summary_filter_rows_since_hours(logs, hours=h)
         tel = _summary_telemetry_sample(rows_win)
 
+        # Долг №3: точная токен-экономика по полному окну (SQL-агрегация
+        # processing_logs), а не хвостовая выборка.
+        try:
+            with get_connection() as conn:
+                token_economy = self._proc_repo.get_token_economy_since(
+                    conn, hours=h
+                )
+                conn.commit()
+        except Exception:
+            token_economy = {
+                "window_hours": h,
+                "grand_total_tokens": None,
+                "by_stage": {},
+                "by_model": {},
+            }
+
         return {
             "hours": h,
             "events": {
@@ -2481,6 +2648,7 @@ class AdminService:
                 "rows_in_window": len(rows_win),
                 **tel,
             },
+            "token_economy": token_economy,
             "admin_events": int(dash.get("admin_events", 0)),
             "reindex_starts": int(dash.get("reindex_runs", 0)),
             "audio_voice_counts": {

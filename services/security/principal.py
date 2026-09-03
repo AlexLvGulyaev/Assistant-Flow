@@ -10,6 +10,7 @@ from services.retrieval_security.context import ROLE_EMPLOYEE
 from services.security.rbac import (
     PLATFORM_ADMIN,
     PLATFORM_AUDITOR,
+    PLATFORM_DEMO,
     PLATFORM_EMPLOYEE,
     PLATFORM_END_USER,
     PLATFORM_OPERATOR,
@@ -21,6 +22,7 @@ from services.security.rbac import (
 AUTH_SOURCE_ANONYMOUS = "anonymous"
 AUTH_SOURCE_BASIC = "basic"
 AUTH_SOURCE_BEARER = "bearer"
+AUTH_SOURCE_OPS_TOKEN = "ops_token"
 AUTH_SOURCE_TELEGRAM = "telegram"
 AUTH_SOURCE_DEV_HEADER = "dev_header"
 
@@ -33,6 +35,7 @@ __all__ = [
     "AUTH_SOURCE_TELEGRAM",
     "PLATFORM_ADMIN",
     "PLATFORM_AUDITOR",
+    "PLATFORM_DEMO",
     "PLATFORM_EMPLOYEE",
     "PLATFORM_END_USER",
     "PLATFORM_OPERATOR",
@@ -68,6 +71,21 @@ class PrincipalContext:
             permissions=frozenset(),
             auth_source=AUTH_SOURCE_ANONYMOUS,
             is_authenticated=False,
+        )
+
+    @classmethod
+    def from_ops_token(cls, platform_role: str) -> PrincipalContext:
+        """Static ops-токен (демо-стандарт APL): без пользователя в БД."""
+        return cls(
+            user_id=None,
+            platform_role=platform_role,
+            retrieval_role=retrieval_role_for_platform(platform_role),
+            permissions=resolve_permissions(platform_role),
+            auth_source=AUTH_SOURCE_OPS_TOKEN,
+            is_authenticated=True,
+            email=None,
+            display_name=("Demo console" if platform_role == PLATFORM_DEMO else "Ops Console"),
+            actor_id=f"ops:{platform_role}",
         )
 
     @classmethod

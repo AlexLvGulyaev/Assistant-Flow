@@ -10,6 +10,8 @@ export type SharedRetrievalChunk = {
   fullText: string;
   chunkIndex: number | null;
   backend: string | null;
+  /** Fingerprint of the full chunk text (from rag diagnostics); enables full-text fetch from the vector store. */
+  textFp?: string | null;
 };
 
 export function clipText(text: string | null | undefined, max: number): string | null {
@@ -85,6 +87,7 @@ export function chunkFromRagSessionChunk(c: {
   fullText: string;
   chunkIndex: number | null;
   backend: string | null;
+  textFp?: string | null;
 }): SharedRetrievalChunk {
   return {
     source: c.source,
@@ -94,5 +97,6 @@ export function chunkFromRagSessionChunk(c: {
     fullText: c.fullText,
     chunkIndex: c.chunkIndex,
     backend: c.backend,
+    textFp: c.textFp ?? null,
   };
 }

@@ -174,6 +174,48 @@ class WeaviateBackend:
             return
         coll.data.delete_many(where=flt)
 
+    def fetch_chunks_by_source(self, source: str, *, limit: int = 200) -> list[RetrievalChunk]:
+        """Точная выборка чанков по свойству source (full-text lookup, без embeddings)."""
+        from weaviate.classes.query import Filter  # noqa: PLC0415
+
+        src = (source or "").strip()
+        if not src:
+            return []
+        coll = self._collection()
+        resp = coll.query.fetch_objects(
+            filters=Filter.by_property("source").equal(src),
+            limit=max(1, int(limit)),
+        )
+        out: list[RetrievalChunk] = []
+        for rank, obj in enumerate(resp.objects):
+            props = obj.properties or {}
+            page = str(props.get("text") or "")
+            vis_raw = props.get("visibility")
+            meta: dict[str, Any] = {
+                "source": props.get("source"),
+                "chunk_id": props.get("chunk_id"),
+                "document_id": props.get("document_id"),
+                "document_version_id": props.get("document_version_id"),
+            }
+            if vis_raw is not None and str(vis_raw).strip():
+                v = str(vis_raw).strip().lower()
+                meta["visibility"] = v
+                meta["document_visibility"] = v
+            ci = props.get("chunk_index")
+            tc = props.get("total_chunks")
+            if ci is not None:
+                meta["chunk_index"] = ci
+            if tc is not None:
+                meta["total_chunks"] = tc
+            meta = {k: v for k, v in meta.items() if v is not None and v != ""}
+            meta = apply_retrieval_metadata_contract(
+                meta,
+                backend=self.backend_name,
+                result_rank=rank,
+            )
+            out.append(RetrievalChunk(page_content=page, metadata=meta))
+        return out
+
     def add_documents(self, documents: list[Any]) -> list[str]:
         if not documents:
             return []

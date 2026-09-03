@@ -43,6 +43,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Legacy Streamlit UI requires streamlit (requirements-dashboard.txt);
+        # production portfolio contour (docker-compose.portfolio.yml) does not install it.
+        INSTALL_DASHBOARD: "true"
     container_name: assistant-admin
     restart: unless-stopped
     env_file:

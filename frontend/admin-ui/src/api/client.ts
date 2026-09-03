@@ -1,6 +1,7 @@
 import { authAwareFetch } from "../auth/api";
 
-const DEFAULT_BASE = "http://localhost:8600";
+// Относительные /api — тот же origin, nginx проксирует на admin-api
+const DEFAULT_BASE = "";
 
 export function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_ADMIN_API_BASE_URL;
@@ -198,6 +199,36 @@ export async function fetchRetrievalOverview(): Promise<RetrievalOverviewRespons
   return parseJson<RetrievalOverviewResponse>(res);
 }
 
+export interface ChunkFullTextResponse {
+  found: boolean;
+  reason?: string;
+  matched_by?: string | null;
+  backend?: string | null;
+  source?: string;
+  chunk_index?: number | string | null;
+  token_count?: number | null;
+  visibility?: string | null;
+  text_chars?: number;
+  truncated?: boolean;
+  text: string;
+}
+
+export async function fetchChunkFullText(params: {
+  source: string;
+  textFp?: string | null;
+  chunkIndex?: number | null;
+}): Promise<ChunkFullTextResponse> {
+  const qs = new URLSearchParams({ source: params.source });
+  if (params.textFp) qs.set("text_fp", params.textFp);
+  if (params.chunkIndex != null) qs.set("chunk_index", String(params.chunkIndex));
+  const res = await authAwareFetch(`/api/retrieval/chunk-fulltext?${qs.toString()}`);
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Chunk full text: ${res.status} ${t ? t.slice(0, 200) : res.statusText}`);
+  }
+  return parseJson<ChunkFullTextResponse>(res);
+}
+
 async function parseFastApiError(res: Response, fallback: string): Promise<string> {
   const t = await res.text().catch(() => "");
   if (!t) return fallback;
@@ -363,6 +394,24 @@ export interface AudioVoiceCountsBlock {
   voice_pipeline_stage_events: number;
 }
 
+export interface TokenEconomyStageRow {
+  events: number;
+  rows_with_tokens: number;
+  total_tokens: number;
+}
+
+export interface TokenEconomyModelRow {
+  rows_with_tokens: number;
+  total_tokens: number;
+}
+
+export interface TokenEconomyBlock {
+  window_hours: number;
+  grand_total_tokens: number | null;
+  by_stage: Record<string, TokenEconomyStageRow>;
+  by_model: Record<string, TokenEconomyModelRow>;
+}
+
 export interface SummaryResponse {
   hours?: number;
   events?: SummaryEventsBlock;
@@ -370,6 +419,7 @@ export interface SummaryResponse {
   routes?: SummaryRoutesBlock;
   lifecycle_events?: SummaryLifecycleRow[];
   telemetry_sample?: TelemetrySampleBlock;
+  token_economy?: TokenEconomyBlock;
   admin_events?: number;
   reindex_starts?: number;
   audio_voice_counts?: AudioVoiceCountsBlock;

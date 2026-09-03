@@ -82,6 +82,8 @@ interface RagChunk {
   version: string | null;
   chunkIndex: number | null;
   tokenCount: number | null;
+  /** Fingerprint of the full chunk text (rag diagnostics); enables full-text fetch from vector store. */
+  textFp: string | null;
   /** Retrieval backend id (chroma | faiss | weaviate); fallback to session active_backend. */
   backend: string | null;
 }
@@ -1505,6 +1507,7 @@ function extractChunks(
       const chromaRaw = item.chroma_id ?? item.id ?? item.chunk_id;
       const ver = item.version ?? item.version_number ?? item.document_version;
       const tok = item.token_count ?? item.tokens;
+      const fpRaw = item.text_fp ?? item.textFp;
       const diagRaw =
         typeof d.active_backend === "string"
           ? d.active_backend
@@ -1530,6 +1533,7 @@ function extractChunks(
         version: ver != null ? String(ver) : null,
         chunkIndex: typeof item.chunk_index === "number" ? item.chunk_index : idx,
         tokenCount: typeof tok === "number" && Number.isFinite(tok) ? tok : null,
+        textFp: typeof fpRaw === "string" && fpRaw.trim() ? fpRaw.trim() : null,
         backend,
       });
       idx += 1;

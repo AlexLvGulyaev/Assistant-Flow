@@ -4,7 +4,12 @@ Seed RAGAS baseline evaluation dataset (isolated from P1-lite AF corpus).
 
   docker exec portfolio-test-assistant-flow-1 python scripts/evaluation_seed_ragas_dataset.py
 
-Expects knowledge file indexed separately: data/documents/ragas_facts_baseline.txt
+Knowledge file: evaluation/datasets/ragas_facts_baseline.txt.
+Он сознательно НЕ лежит в data/documents (чтобы файловые индексаторы не тащили
+«НоваТех» в живой демо-индекс). Процедура RAGAS-оценки:
+  1) docker cp evaluation/datasets/ragas_facts_baseline.txt <admin-api>:/app/data/documents/
+  2) проиндексировать файл через admin (Documents → reindex)
+  3) выполнить оценку; 4) вернуть индекс в демо-состояние: python scripts/clean_demo_index.py --apply
 """
 
 from __future__ import annotations

@@ -37,6 +37,20 @@ class ChromaBackend:
     def collection_count(self) -> int:
         return int(self._store.collection_count())
 
+    def fetch_chunks_by_source(self, source: str, *, limit: int = 200) -> list[RetrievalChunk]:
+        """Точная выборка чанков по metadata.source (без embeddings/similarity)."""
+        out: list[RetrievalChunk] = []
+        for rank, (page, meta) in enumerate(
+            self._store.get_by_source(source, limit=limit)
+        ):
+            meta = apply_retrieval_metadata_contract(
+                meta,
+                backend=self.backend_name,
+                result_rank=rank,
+            )
+            out.append(RetrievalChunk(page_content=page, metadata=meta))
+        return out
+
     def reset_for_full_reindex(self) -> None:
         from services.rag_chroma_store import reset_chroma_for_reindex
 

@@ -1140,6 +1140,14 @@ def create_bot() -> telebot.TeleBot:
                 stt_details["asset_ref"] = input_asset.asset_ref
                 stt_details["input_asset_ref"] = input_asset.asset_ref
                 stt_details["audio_path"] = str(input_path) if input_path else None
+                # Token economy (долг №3): STT-usage раньше терялся между
+                # AudioTranscriptionResult и лог-строкой.
+                for tok_key in ("input_tokens", "output_tokens", "total_tokens"):
+                    tv = getattr(stt_norm, tok_key, None)
+                    if tv is not None:
+                        stt_details[tok_key] = int(tv)
+                if getattr(stt_norm, "cost_usd", None) is not None:
+                    stt_details["cost_usd"] = float(stt_norm.cost_usd)
                 stt_details["provider"] = stt_norm.provider
                 stt_details["model"] = stt_norm.model
                 stt_details["latency_ms"] = stt_norm.latency_ms
@@ -1463,6 +1471,23 @@ def create_bot() -> telebot.TeleBot:
                             str(out_path) if out_path else None
                         )
                         tts_details["latency_ms"] = tts_result.latency_ms
+                        # Token economy (долг №3): TTS-usage, если провайдер его
+                        # вернул (сейчас DisabledTTSProvider — usage=None).
+                        tts_usage = tts_result.usage
+                        if isinstance(tts_usage, dict):
+                            for tok_key in (
+                                "input_tokens",
+                                "output_tokens",
+                                "total_tokens",
+                            ):
+                                tv = tts_usage.get(tok_key)
+                                if tv is not None:
+                                    try:
+                                        tts_details[tok_key] = int(float(tv))
+                                    except (TypeError, ValueError):
+                                        pass
+                            if tts_usage.get("cost_usd") is not None:
+                                tts_details["cost_usd"] = float(tts_usage["cost_usd"])
                         try:
                             if out_path is None:
                                 raise FileNotFoundError("tts output asset path missing")

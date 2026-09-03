@@ -313,7 +313,29 @@ async def api_documents_upload(
     principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_WRITE)),
 ) -> dict[str, Any]:
     svc = get_admin_service()
-    raw = await file.read()
+    max_bytes = svc.upload_max_bytes()
+    # Heavy RAG safeguard: не читаем произвольно большой файл целиком в RAM.
+    # file.size известен заранее (multipart); на всякий случай чтение тоже ограничено.
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {declared} bytes (limit {max_bytes}).",
+        )
+    chunks: list[bytes] = []
+    received = 0
+    while True:
+        part = await file.read(1024 * 1024)
+        if not part:
+            break
+        received += len(part)
+        if received > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large: >{max_bytes} bytes (ADMIN_UPLOAD_MAX_MB).",
+            )
+        chunks.append(part)
+    raw = b"".join(chunks)
     name = file.filename or "upload.txt"
     try:
         result = svc.upload_txt_and_index(name, raw, document_visibility=visibility)
