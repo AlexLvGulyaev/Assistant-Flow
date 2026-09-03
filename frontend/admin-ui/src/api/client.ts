@@ -367,11 +367,6 @@ export async function setActiveRetrievalBackend(
   return parseJson<SetActiveRetrievalBackendResponse>(res);
 }
 
-export function getAssetPreviewUrl(assetRef: string): string {
-  const enc = encodeURIComponent(assetRef.trim());
-  return `${getApiBaseUrl()}/api/assets/preview?asset_ref=${enc}`;
-}
-
 /** Mirrors admin_api/schemas — keep loose for API evolution */
 export interface HealthResponse {
   status: string;

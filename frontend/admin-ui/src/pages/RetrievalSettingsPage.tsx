@@ -14,19 +14,10 @@ import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
 import { SectionCard } from "../components/SectionCard";
+import { StatusBadge } from "../components/StatusBadge";
 import { RetrievalCacheSettingsPanel } from "../components/RetrievalCacheSettingsPanel";
 import { useAuth } from "../auth/AuthContext";
 import { PERM } from "../auth/permissions";
-
-function Badge({
-  text,
-  tone,
-}: {
-  text: string;
-  tone: "ok" | "warn" | "err" | "muted";
-}) {
-  return <span className={`status-badge status-badge--${tone}`}>{text}</span>;
-}
 
 const BACKEND_ORDER = ["chroma", "faiss", "weaviate"] as const;
 
@@ -86,15 +77,11 @@ function buildTuningPatch(
   return patch;
 }
 
-function readinessBadge(row: RetrievalBackendHealthRow | undefined): {
-  label: string;
-  tone: "ok" | "warn" | "err";
-} {
-  if (!row) return { label: "unknown", tone: "warn" };
-  if (!row.ok) return { label: "not ready", tone: "err" };
-  const n = row.collection_count;
-  if (n === 0) return { label: "empty index", tone: "warn" };
-  return { label: "ready", tone: "ok" };
+function readinessBadge(row: RetrievalBackendHealthRow | undefined): string {
+  if (!row) return "unknown";
+  if (!row.ok) return "down";
+  if (row.collection_count === 0) return "empty";
+  return "ready";
 }
 
 function SourceChip({ source }: { source?: string }) {
@@ -387,10 +374,7 @@ export function RetrievalSettingsPage() {
               <dd>
                 <code>{fmt(data?.effective_backend)}</code>{" "}
                 {activeHealth ? (
-                  <Badge
-                    text={activeHealth.ok ? "health ok" : "health not ok"}
-                    tone={activeHealth.ok ? "ok" : "err"}
-                  />
+                  <StatusBadge status={activeHealth.ok ? "ok" : "error"} />
                 ) : null}
               </dd>
               <dt>Env default</dt>
@@ -408,9 +392,9 @@ export function RetrievalSettingsPage() {
               <dt>Postgres</dt>
               <dd>
                 {data?.database_configured ? (
-                  <Badge text="DATABASE_URL configured" tone="ok" />
+                  <StatusBadge status="configured" />
                 ) : (
-                  <Badge text="DATABASE_URL missing" tone="err" />
+                  <StatusBadge status="not_configured" />
                 )}
               </dd>
             </dl>
@@ -501,14 +485,14 @@ export function RetrievalSettingsPage() {
                         </td>
                         <td>
                           {row ? (
-                            <Badge text={row.ok ? "yes" : "no"} tone={row.ok ? "ok" : "err"} />
+                            <StatusBadge status={row.ok ? "ok" : "down"} />
                           ) : (
                             "—"
                           )}
                         </td>
                         <td>{row?.collection_count ?? "—"}</td>
                         <td>
-                          <Badge text={rb.label} tone={rb.tone} />
+                          <StatusBadge status={rb} />
                         </td>
                         <td className="retrieval-settings__cell-detail">
                           {!row?.ok && row?.detail ? (

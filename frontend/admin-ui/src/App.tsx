@@ -8,6 +8,7 @@ import { AudioPage } from "./pages/AudioPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ExitPage } from "./pages/ExitPage";
 import { ImagesPage } from "./pages/ImagesPage";
+import { LegendPage } from "./pages/LegendPage";
 import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { EvaluationPage } from "./pages/EvaluationPage";
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="memory" element={<MemoryPage />} />
           <Route path="evaluation" element={<EvaluationPage />} />
           <Route path="audit" element={<AuditPage />} />
+          <Route path="legend" element={<LegendPage />} />
         </Route>
       </Route>
     </Routes>

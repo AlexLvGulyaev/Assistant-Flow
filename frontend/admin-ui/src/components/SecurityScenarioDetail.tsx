@@ -15,7 +15,6 @@ import {
   buildTimelineSteps,
   buildUserRequestNarrative,
   retrievalPolicyStory,
-  securityTitleStatusTone,
 } from "../utils/securityScenarios";
 
 function OpsRow({ label, value }: { label: string; value: ReactNode }) {
@@ -89,18 +88,11 @@ export function SecurityScenarioDetail({
     [item]
   );
 
-  const titleTone = securityTitleStatusTone(item, scenario.severity);
-
   return (
     <div className="logs-detail rag-modality-detail security-detail">
       <div className="modality-card__head">
         <h2 className="modality-card__title">СВОДКА SECURITY-СЕССИИ</h2>
-        <span
-          className={`modality-card__status status-badge status-badge--${titleTone}`}
-          title={scenario.auditEventType}
-        >
-          {scenario.title.toUpperCase()}
-        </span>
+        <StatusBadge status={item.status ?? "success"} />
       </div>
 
       <div className="modality-ops-panels modality-ops-panels--rag-split security-ops-summary">

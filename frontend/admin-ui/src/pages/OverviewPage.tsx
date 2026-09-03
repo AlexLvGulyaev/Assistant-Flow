@@ -99,7 +99,7 @@ export function OverviewPage() {
   const overviewHead = (
     <div className="overview-page__head">
       <div>
-        <h1 className="page__title">Обзор</h1>
+        <h1 className="page__title">Панель состояния</h1>
         <p className="page__lead muted overview-lead">
           Конфигурационный снимок <code>/api/overview</code> + live-проверки{" "}
           <code>/api/health</code>

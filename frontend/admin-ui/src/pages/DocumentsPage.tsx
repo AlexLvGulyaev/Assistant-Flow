@@ -1213,17 +1213,13 @@ export function DocumentsPage() {
                             const vn = v.version_number ?? 0;
                             const active = !!v.is_active;
                             const sel = detail.selected_version?.version_number === vn;
-                            let stLabel = "архивная";
-                            let stClass = "docs-ver-pill docs-ver-pill--arch";
-                            if (active) {
-                              if (docStatusRaw === "failed") {
-                                stLabel = "ACTIVE·сбой";
-                                stClass = "docs-ver-pill docs-ver-pill--warn";
-                              } else {
-                                stLabel = "ACTIVE";
-                                stClass = "docs-ver-pill docs-ver-pill--act";
-                              }
-                            }
+                            /* Эмодзи-SOT: активная версия ⚡ / в архиве ⏸️ /
+                               сбой ⚠️ (SESSION_ACTIVE + HEALTH.warning). */
+                            const stChip = active
+                              ? docStatusRaw === "failed"
+                                ? { emoji: "⚠️", label: "ACTIVE · сбой", variant: "ai-status--warning" }
+                                : { emoji: "⚡", label: "ACTIVE", variant: "ai-status--success" }
+                              : { emoji: "⏸️", label: "в архиве", variant: "ai-status--muted" };
                             return (
                               <tr
                                 key={`${v.version_id}-${vn}`}
@@ -1239,7 +1235,10 @@ export function DocumentsPage() {
                               >
                                 <td className="mono">v{vn}</td>
                                 <td>
-                                  <span className={stClass}>{stLabel}</span>
+                                  <span className={`ai-status ai-status--emoji ${stChip.variant}`}>
+                                    <span aria-hidden>{stChip.emoji}</span>
+                                    {stChip.label}
+                                  </span>
                                 </td>
                                 <td className="docs-ver-table__num mono">{v.chunk_count ?? 0}</td>
                                 <td className="mono muted">{formatShortDateMsk(v.indexed_at ?? null)}</td>

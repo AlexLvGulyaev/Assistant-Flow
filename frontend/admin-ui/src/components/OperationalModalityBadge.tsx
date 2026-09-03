@@ -1,7 +1,6 @@
+import { MODALITY } from "../lib/chipContract";
 import {
-  OPERATIONAL_MODALITY_LABEL,
   normalizeOperationalModality,
-  operationalModalityBadgeClassList,
   type OperationalModality,
 } from "../utils/operationalConsoleUi";
 
@@ -11,16 +10,22 @@ type Props = {
   title?: string;
 };
 
+/**
+ * Маркер модальности — тихий эмодзи-чип по эмодзи-SOT (MODALITY):
+ * эмодзи меню, утверждены владельцем; ocr 🔤 / vision 👁️ / test 🧪 —
+ * согласованы с владельцем (аналогии в референсах нет).
+ */
 export function OperationalModalityBadge({ modality, className = "", title }: Props) {
   const safe =
     typeof modality === "string" ? normalizeOperationalModality(modality) : modality;
-  const label = OPERATIONAL_MODALITY_LABEL[safe];
+  const chip = MODALITY[safe] ?? MODALITY.log;
   return (
     <span
-      className={`${operationalModalityBadgeClassList(safe)}${className ? ` ${className}` : ""}`}
-      title={title ?? label}
+      className={`ai-status ai-status--emoji ${chip.variant}${className ? ` ${className}` : ""}`}
+      title={title ?? chip.label}
     >
-      {label}
+      <span aria-hidden>{chip.emoji}</span>
+      {chip.label}
     </span>
   );
 }

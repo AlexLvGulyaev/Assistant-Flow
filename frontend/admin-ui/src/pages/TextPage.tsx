@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { fetchRecentLogs, getApiBaseUrl, type LogItem } from "../api/client";
+import { fetchRecentLogs, type LogItem } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { OperationalRefreshButton } from "../components/OperationalRefreshButton";
@@ -9,6 +9,7 @@ import { OperationalModalityBadge } from "../components/OperationalModalityBadge
 import { OperationalPipelineStageIcon } from "../components/OperationalPipelineStageIcon";
 import { SessionJsonSnapshot } from "../components/SessionJsonSnapshot";
 import { StatusBadge } from "../components/StatusBadge";
+import { useAuthedAssetUrl } from "../hooks/useAuthedAssetUrl";
 import {
   detailsJsonPreview,
   pipelineStageVariant,
@@ -306,6 +307,10 @@ export function TextPage() {
     pageSessions.find((s) => s.executionId === selectedId) ??
     filtered.find((s) => s.executionId === selectedId) ??
     null;
+  // Превью OCR-входа грузим авторизованным blob-фетчем (как в Изображениях):
+  // <img src=...> не несёт Bearer, а 401 с WWW-Authenticate: Basic
+  // открывает нативный браузерный пароль-диалог.
+  const intakePreview = useAuthedAssetUrl(selected?.intakeImageAssetRef);
 
   function resetPagination() {
     pendingListFocusRef.current = true;
@@ -552,12 +557,7 @@ export function TextPage() {
                 <div className="logs-detail rag-modality-detail">
                   <div className="modality-card__head">
                     <h2 className="modality-card__title">СВОДКА TEXT-СЕССИИ</h2>
-                    <span
-                      className={`modality-card__status status-badge status-badge--${textTitleStatusTone(selected.status)}`}
-                      title={selected.status}
-                    >
-                      {textTitleStatusText(selected.status)}
-                    </span>
+                    <StatusBadge status={selected.status} />
                   </div>
 
                   <div className="modality-ops-panels modality-ops-panels--rag-split text-ops-summary">
@@ -725,19 +725,23 @@ export function TextPage() {
                       <h3 className="logs-detail-block__title">ЧТО СПРОСИЛ ПОЛЬЗОВАТЕЛЬ</h3>
                       {selected.intakeImageAssetRef?.trim() ? (
                         <div className="page__mt-sm">
-                          <img
-                            src={`${getApiBaseUrl()}/api/assets/preview?asset_ref=${encodeURIComponent(
-                              selected.intakeImageAssetRef.trim()
-                            )}`}
-                            alt="Входное изображение OCR"
-                            style={{
-                              maxWidth: "100%",
-                              maxHeight: 320,
-                              objectFit: "contain",
-                              borderRadius: 8,
-                              border: "1px solid var(--border, #1F2A44)",
-                            }}
-                          />
+                          {intakePreview.failed ? (
+                            <div className="panel panel--muted">
+                              Не удалось загрузить превью изображения OCR.
+                            </div>
+                          ) : intakePreview.url ? (
+                            <img
+                              src={intakePreview.url}
+                              alt="Входное изображение OCR"
+                              style={{
+                                maxWidth: "100%",
+                                maxHeight: 320,
+                                objectFit: "contain",
+                                borderRadius: 8,
+                                border: "1px solid var(--border, #1F2A44)",
+                              }}
+                            />
+                          ) : null}
                         </div>
                       ) : null}
                       <pre className="logs-pre logs-pre--compact mono">
@@ -924,20 +928,7 @@ function TextFullTextModal({
   );
 }
 
-function textTitleStatusTone(status: string): "ok" | "warn" | "err" | "muted" {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "ok";
-  if (n === "error" || n === "failed" || n.includes("fail")) return "err";
-  if (n === "warning" || n === "degraded" || n === "skipped") return "warn";
-  return "muted";
-}
 
-function textTitleStatusText(status: string): string {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "УСПЕХ";
-  if (n === "error" || n === "failed") return "ОШИБКА";
-  return statusLabelRu(status).toUpperCase();
-}
 
 function hasNum(n: number | null | undefined): boolean {
   return n != null && Number.isFinite(n);

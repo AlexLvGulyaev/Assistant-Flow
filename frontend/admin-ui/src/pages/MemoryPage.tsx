@@ -196,15 +196,6 @@ function pairDialogRows(
   return rows;
 }
 
-function memoryDetailTitleStatus(detail: MemorySessionDetailResponse): {
-  tone: "ok" | "warn" | "muted";
-  label: string;
-} {
-  if (isSyntheticDetail(detail)) return { tone: "warn", label: "TEST" };
-  if (detail.is_active) return { tone: "ok", label: "ACTIVE" };
-  return { tone: "muted", label: "INACTIVE" };
-}
-
 function sourceLabel(src: string | undefined): string {
   if (src === "pg") return "PostgreSQL";
   if (src === "fallback_in_memory") return "in-memory fallback";
@@ -244,7 +235,6 @@ function MemorySessionDetailPanel({
     [detail.recent_turns]
   );
 
-  const titleSts = memoryDetailTitleStatus(detail);
   const trimLine =
     trimmed && dialogMsgs > 0 ? `${sentToLlm} / ${dialogMsgs}` : trimmed ? "да" : "нет";
 
@@ -258,12 +248,11 @@ function MemorySessionDetailPanel({
     <div className="logs-detail rag-modality-detail memory-detail-panel">
         <div className="modality-card__head">
           <h2 className="modality-card__title">СВОДКА MEMORY-СЕССИИ</h2>
-          <span
-            className={`modality-card__status status-badge status-badge--${titleSts.tone}`}
-            title={titleSts.label}
-          >
-            {titleSts.label}
-          </span>
+          {isSyntheticDetail(detail) ? (
+            <OperationalModalityBadge modality="test" title="Synthetic (эвристика UI)" />
+          ) : (
+            <StatusBadge status={detail.is_active ? "yes" : "no"} />
+          )}
         </div>
 
         <div className="modality-ops-panels memory-memory-top-panels memory-memory-top-panels--triple">
@@ -903,9 +892,7 @@ export function MemoryPage() {
                       <div className="logs-item__preview memory-logs-item__user" title={row.user_label}>
                         {row.user_label}
                         {isSyntheticSessionRow(row) ? (
-                          <span className="memory-synth-pill" title="Synthetic (эвристика UI)">
-                            test
-                          </span>
+                          <OperationalModalityBadge modality="test" title="Synthetic (эвристика UI)" />
                         ) : null}
                       </div>
                       <div className="logs-item__row logs-item__meta muted">

@@ -505,12 +505,7 @@ export function ImagesPage() {
                 <div className="logs-detail rag-modality-detail">
                   <div className="modality-card__head">
                     <h2 className="modality-card__title">СВОДКА IMAGE-СЕССИИ</h2>
-                    <span
-                      className={`modality-card__status status-badge status-badge--${imageTitleStatusTone(selected.status)}`}
-                      title={selected.status}
-                    >
-                      {imageTitleStatusText(selected.status)}
-                    </span>
+                    <StatusBadge status={selected.status} />
                   </div>
 
                   <div className="modality-ops-panels modality-ops-panels--rag-split image-ops-summary">
@@ -1075,20 +1070,7 @@ function PromptFullTextModal({
   );
 }
 
-function imageTitleStatusTone(status: string): "ok" | "warn" | "err" | "muted" {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "ok";
-  if (n === "error" || n === "failed" || n.includes("fail")) return "err";
-  if (n === "warning" || n === "degraded" || n === "skipped") return "warn";
-  return "muted";
-}
 
-function imageTitleStatusText(status: string): string {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "УСПЕХ";
-  if (n === "error" || n === "failed") return "ОШИБКА";
-  return statusLabelRu(status).toUpperCase();
-}
 
 function hasNum(n: number | null | undefined): boolean {
   return n != null && Number.isFinite(n);

@@ -158,7 +158,7 @@ export function AuditPage() {
   if (!canRead) {
     return (
       <div className="page logs-page security-console-page">
-        <h1 className="page__title">Security console</h1>
+        <h1 className="page__title">Журнал аудита</h1>
         <p className="muted">
           Нет права <code>audit:read</code>. Доступно ролям auditor и admin.
         </p>
@@ -172,7 +172,7 @@ export function AuditPage() {
 
   return (
     <div className="page logs-page security-console-page">
-      <h1 className="page__title">Security console</h1>
+      <h1 className="page__title">Журнал аудита</h1>
       <p className="page__lead rag-page__lead muted">
         Операционная консоль security-сценариев · <code>/api/security/audit/*</code> · время: МСК
       </p>

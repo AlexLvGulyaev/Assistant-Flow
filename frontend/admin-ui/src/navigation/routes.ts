@@ -4,7 +4,9 @@ export interface NavItem {
   /** Router path (relative to site root), e.g. "/" or "/logs" */
   path: string;
   label: string;
-  /** NavLink `end` — only Overview uses true */
+  /** Эмодзи-иконка пункта (меню-канон APL: эмодзи + текст, без `◇`). */
+  icon: string;
+  /** NavLink `end` — only «Панель состояния» uses true */
   end?: boolean;
   /** Not wired to API yet */
   placeholder?: boolean;
@@ -12,27 +14,110 @@ export interface NavItem {
   requiredPermission?: string;
 }
 
-/** Primary sidebar navigation (order matches legacy Streamlit tabs intent). */
-export const NAV_ITEMS: NavItem[] = [
-  { path: "/", label: "Обзор", end: true, requiredPermission: PERM.documentsRead },
-  { path: "/summary", label: "Сводка", requiredPermission: PERM.documentsRead },
-  { path: "/text", label: "Текст", requiredPermission: PERM.logsRead },
-  { path: "/rag", label: "RAG", requiredPermission: PERM.logsRead },
-  { path: "/images", label: "Изображения", requiredPermission: PERM.documentsRead },
-  { path: "/audio", label: "Аудио", requiredPermission: PERM.documentsRead },
-  { path: "/documents", label: "Документы", requiredPermission: PERM.documentsRead },
-  { path: "/retrieval", label: "Retrieval Settings", requiredPermission: PERM.retrievalRead },
-  { path: "/logs", label: "Логи", requiredPermission: PERM.logsRead },
-  { path: "/memory", label: "Memory", requiredPermission: PERM.logsRead },
-  { path: "/evaluation", label: "Анализ RAG", requiredPermission: PERM.logsRead },
-  { path: "/audit", label: "Безопасность", requiredPermission: PERM.auditRead },
+export interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
+/**
+ * Меню-канон APL (shared/patterns/admin-menu-canon.md):
+ * Система → Ядро (проектное имя) → Аналитика → Наблюдаемость → Справка.
+ *
+ * AF-раскладка (утверждена владельцем 2026-09-03):
+ *  - Ядро = «База знаний» (Документы — индекс Chroma);
+ *  - RAG — модальность (в ТГ выбирается наряду с текстом);
+ *  - «Обзор» = health/readiness рантаймов → «Панель состояния» в «Системе»;
+ *  - Memory (журнал сессий памяти) — в «Наблюдаемости»;
+ *  - аудит — канонное имя «Журнал аудита».
+ */
+export const NAV_GROUPS: NavGroup[] = [
+  {
+    title: "Система",
+    items: [
+      {
+        path: "/",
+        label: "Панель состояния",
+        icon: "🩺",
+        end: true,
+        requiredPermission: PERM.documentsRead,
+      },
+      {
+        path: "/retrieval",
+        label: "Retrieval Settings",
+        icon: "⚙️",
+        requiredPermission: PERM.retrievalRead,
+      },
+    ],
+  },
+  {
+    title: "База знаний",
+    items: [
+      {
+        path: "/documents",
+        label: "Документы",
+        icon: "📄",
+        requiredPermission: PERM.documentsRead,
+      },
+    ],
+  },
+  {
+    title: "Модальности",
+    items: [
+      { path: "/text", label: "Текст", icon: "💬", requiredPermission: PERM.logsRead },
+      { path: "/rag", label: "RAG", icon: "🔎", requiredPermission: PERM.logsRead },
+      {
+        path: "/images",
+        label: "Изображения",
+        icon: "🖼️",
+        requiredPermission: PERM.documentsRead,
+      },
+      { path: "/audio", label: "Аудио", icon: "🔊", requiredPermission: PERM.documentsRead },
+    ],
+  },
+  {
+    title: "Аналитика",
+    items: [
+      {
+        path: "/summary",
+        label: "Сводка",
+        icon: "📊",
+        requiredPermission: PERM.documentsRead,
+      },
+      {
+        path: "/evaluation",
+        label: "Анализ RAG",
+        icon: "🧪",
+        requiredPermission: PERM.logsRead,
+      },
+    ],
+  },
+  {
+    title: "Наблюдаемость",
+    items: [
+      { path: "/logs", label: "Логи", icon: "📜", requiredPermission: PERM.logsRead },
+      { path: "/memory", label: "Memory", icon: "🧠", requiredPermission: PERM.logsRead },
+      {
+        path: "/audit",
+        label: "Журнал аудита",
+        icon: "📋",
+        requiredPermission: PERM.auditRead,
+      },
+    ],
+  },
+  {
+    title: "Справка",
+    items: [{ path: "/legend", label: "Обозначения", icon: "🗺️" }],
+  },
 ];
 
-/** Permission-filtered nav for sidebar (nav hint only; routes stay registered). */
-export function navItemsForPermissions(
+/** Permission-filtered nav groups for sidebar (nav hint only; routes stay registered). */
+export function navGroupsForPermissions(
   hasPermission: (permission: string) => boolean
-): NavItem[] {
-  return NAV_ITEMS.filter(
-    (item) => !item.requiredPermission || hasPermission(item.requiredPermission)
-  );
+): NavGroup[] {
+  return NAV_GROUPS.map((group) => ({
+    title: group.title,
+    items: group.items.filter(
+      (item) => !item.requiredPermission || hasPermission(item.requiredPermission)
+    ),
+  })).filter((group) => group.items.length > 0);
 }

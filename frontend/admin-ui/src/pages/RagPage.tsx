@@ -37,7 +37,6 @@ import {
   formatTimestampMsk,
   sessionWallDurationMs,
   stageToActionRu,
-  statusLabelRu,
   formatRetrievalBackendTitle,
   retrievalReadinessForStatusBadge,
 } from "../utils/operationalLabels";
@@ -558,12 +557,7 @@ export function RagPage() {
                 <div className="logs-detail rag-modality-detail">
                 <div className="modality-card__head">
                   <h2 className="modality-card__title">СВОДКА RAG-СЕССИИ</h2>
-                  <span
-                    className={`modality-card__status status-badge status-badge--${ragTitleStatusTone(selected.status)}`}
-                    title={selected.status}
-                  >
-                    {ragTitleStatusText(selected.status)}
-                  </span>
+                  <StatusBadge status={selected.status} />
                 </div>
 
                 <div className="modality-ops-panels modality-ops-panels--rag-header-grid">
@@ -1011,20 +1005,7 @@ function hasMeaningfulFallback(s: string | null | undefined): boolean {
   return t.length > 0 && t !== "none";
 }
 
-function ragTitleStatusTone(status: string): "ok" | "warn" | "err" | "muted" {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "ok";
-  if (n === "error" || n === "failed" || n.includes("fail")) return "err";
-  if (n === "warning" || n === "degraded") return "warn";
-  return "muted";
-}
 
-function ragTitleStatusText(status: string): string {
-  const n = status.trim().toLowerCase();
-  if (n === "success") return "УСПЕХ";
-  if (n === "error" || n === "failed") return "ОШИБКА";
-  return statusLabelRu(status).toUpperCase();
-}
 
 function sessionProviderModelLine(s: RagSession): string | null {
   const p = s.llmProvider?.trim();

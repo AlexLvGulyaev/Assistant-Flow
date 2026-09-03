@@ -1031,7 +1031,7 @@ export function EvaluationPage() {
 
   return (
     <div className="page logs-page rag-page evaluation-page">
-      <h1 className="page__title">Анализ качества RAG</h1>
+      <h1 className="page__title">Анализ RAG</h1>
       <p className="page__lead muted">
         Операционная диагностика retrieval и качества ответов
       </p>

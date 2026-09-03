@@ -1,102 +1,20 @@
+import { statusChip } from "../lib/chipContract";
+
 interface StatusBadgeProps {
   status: string;
 }
 
-function normalizeStatus(s: string): string {
-  return s.trim().toLowerCase();
-}
-
+/**
+ * Статус-чип по эмодзи-SOT (канон RF OpChip / LQ ai-status): тихий чип
+ * «эмодзи + лейбл», эмодзи заменяет точку, цвет — только текст.
+ * Контракт значений — STATUS в lib/chipContract.ts (SOT).
+ */
 export function StatusBadge({ status }: StatusBadgeProps) {
-  const n = normalizeStatus(status);
-  let tone: "ok" | "warn" | "err" | "muted" = "muted";
-  if (
-    n === "ok" ||
-    n === "ready" ||
-    n === "configured" ||
-    n === "available" ||
-    n === "on" ||
-    n === "yes" ||
-    n === "indexed"
-  ) {
-    tone = "ok";
-  } else if (
-    n === "degraded" ||
-    n === "empty" ||
-    n === "unreachable" ||
-    n === "checking…" ||
-    n === "started" ||
-    n === "warning" ||
-    n === "pending" ||
-    n === "stale" ||
-    n === "missing"
-  ) {
-    tone = "warn";
-  } else if (
-    n === "error" ||
-    n === "down" ||
-    n.includes("fail") ||
-    n === "err" ||
-    n === "internal_error" ||
-    n === "unavailable" ||
-    n === "unsupported"
-  ) {
-    tone = "err";
-  } else if (
-    n === "off" ||
-    n === "not_configured" ||
-    n === "no" ||
-    n === "—"
-  ) {
-    tone = "muted";
-  } else if (n === "queued") {
-    tone = "muted";
-  } else if (n === "retry_scheduled") {
-    tone = "warn";
-  } else if (n === "succeeded") {
-    tone = "ok";
-  }
-
-  const label =
-    {
-      ok: "норма",
-      success: "успех",
-      error: "ошибка",
-      failed: "ошибка",
-      available: "доступно",
-      unavailable: "недоступно",
-      configured: "настроено",
-      not_configured: "не настроено",
-      started: "запущено",
-      running: "в работе",
-      queued: "в очереди",
-      retry_scheduled: "повтор запланирован",
-      succeeded: "выполнено",
-      skipped: "пропущено",
-      completed: "завершено",
-      scored: "оценено",
-      "not scored": "не оценено",
-      degraded: "ограничено",
-      empty: "EMPTY",
-      ready: "READY",
-      down: "DOWN",
-      unknown: "неизвестно",
-      unreachable: "недоступно",
-      checking: "проверка",
-      "checking…": "проверка",
-      indexed: "проиндексирован",
-      pending: "ожидание",
-      missing: "нет в индексе",
-      stale: "устарело",
-      unsupported: "не поддерживается",
-      on: "вкл",
-      off: "выкл",
-      yes: "да",
-      no: "нет",
-    }[n] ?? status;
-
+  const chip = statusChip(status);
   return (
-    <span className={`status-badge status-badge--${tone}`} title={status}>
-      {label}
+    <span className={`ai-status ai-status--emoji ${chip.variant}`} title={status}>
+      <span aria-hidden>{chip.emoji}</span>
+      {chip.label}
     </span>
   );
 }
