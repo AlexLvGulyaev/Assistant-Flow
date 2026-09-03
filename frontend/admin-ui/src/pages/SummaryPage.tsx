@@ -124,13 +124,22 @@ export function SummaryPage() {
   const routes = data.routes;
   const tel = data.telemetry_sample ?? {};
   const tokEcon = data.token_economy ?? null;
-  const tokByStage: Array<[string, { total_tokens: number; rows_with_tokens: number; events: number }]> =
-    Object.entries(tokEcon?.by_stage ?? {})
-      .filter(([, row]) => row.total_tokens > 0 || row.rows_with_tokens > 0)
+  const tokByStage: Array<
+    [string, { total_tokens: number; rows_with_tokens: number; events: number; cost_usd?: number | null }]
+  > = Object.entries(tokEcon?.by_stage ?? {})
+    .filter(
+      ([, row]) =>
+        row.total_tokens > 0 || row.rows_with_tokens > 0 || (row.cost_usd ?? 0) > 0
+    )
+    .sort((a, b) => b[1].total_tokens - a[1].total_tokens);
+  const tokByModel: Array<[string, { total_tokens: number; cost_usd?: number | null }]> =
+    Object.entries(tokEcon?.by_model ?? {})
+      .filter(([, row]) => row.total_tokens > 0 || (row.cost_usd ?? 0) > 0)
       .sort((a, b) => b[1].total_tokens - a[1].total_tokens);
-  const tokByModel: Array<[string, { total_tokens: number }]> = Object.entries(
-    tokEcon?.by_model ?? {}
-  ).sort((a, b) => b[1].total_tokens - a[1].total_tokens);
+  const grandCost =
+    tokEcon && tokEcon.grand_total_cost_usd != null && tokEcon.grand_total_cost_usd > 0
+      ? `$${tokEcon.grand_total_cost_usd.toFixed(4)}`
+      : null;
   const lifecycle = data.lifecycle_events ?? [];
   const lifecycleMap = new Map(lifecycle.map((x) => [x.stage, x.events]));
   const audioDet = data.audio_voice_counts ?? {
@@ -280,7 +289,12 @@ export function SummaryPage() {
             <>
               <dl className="kv summary-kv">
                 <dt>Всего токенов за окно</dt>
-                <dd className="mono">{formatNum(tokEcon.grand_total_tokens)}</dd>
+                <dd className="mono">
+                  {formatNum(tokEcon.grand_total_tokens)}
+                  {grandCost && (
+                    <span className="muted"> · ~{grandCost}</span>
+                  )}
+                </dd>
               </dl>
               {tokByStage.length > 0 && (
                 <dl className="kv summary-kv">
@@ -293,6 +307,8 @@ export function SummaryPage() {
                         {formatNum(row.total_tokens)}{" "}
                         <span className="muted">
                           ({row.rows_with_tokens}/{row.events})
+                          {(row.cost_usd ?? 0) > 0 &&
+                            ` · ~$${(row.cost_usd as number).toFixed(4)}`}
                         </span>
                       </dd>
                     </Fragment>
@@ -306,7 +322,14 @@ export function SummaryPage() {
                   {tokByModel.map(([model, row]) => (
                     <Fragment key={model}>
                       <dt className="mono">{model}</dt>
-                      <dd>{formatNum(row.total_tokens)}</dd>
+                      <dd>
+                        {formatNum(row.total_tokens)}
+                        {(row.cost_usd ?? 0) > 0 && (
+                          <span className="muted">
+                            {" "}· ~${(row.cost_usd as number).toFixed(4)}
+                          </span>
+                        )}
+                      </dd>
                     </Fragment>
                   ))}
                 </dl>

@@ -123,7 +123,7 @@ RAG-ответ Telegram-ассистента на основе корпорат�
 ![Управление документами knowledge base](docs/screenshots/documents-adm.png)
 
 <p align="center"><em>
-Управление документами knowledge base: индексация, preprocessing, версии документов и жизненный цикл ingestion pipeline.
+Управление документами knowledge base: индексация, preprocessing, версии документов, жизненный цикл ingestion pipeline и фоновые задачи reindex (воркер потребляет очередь <code>async_jobs</code> внутри admin-api).
 </em></p>
 
 ![Панель Retrieval Settings](docs/screenshots/rs-adm.png)
@@ -530,9 +530,10 @@ curl -sS http://localhost:8600/api/health
 | Текст / RAG | `GIGACHAT_*`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `PROXY_*` |
 | PostgreSQL | `DATABASE_URL` → `postgresql://assistant:assistant@postgres:5432/assistant_flow` (portfolio) |
 | Поиск / кэш | `RAG_BACKEND`, `CHROMA_*`, `FAISS_INDEX_DIR`, `WEAVIATE_*`, `RAG_DOCUMENTS_DIR`, `ENABLE_RETRIEVAL_CACHE` |
-| Аудио | `AUDIO_ENABLED`, `STT_PROVIDER`, `TTS_PROVIDER` (по умолчанию `disabled`) |
+| Аудио | `AUDIO_ENABLED`, `STT_PROVIDER`, `TTS_PROVIDER` (по умолчанию `disabled`), `AUDIO_TIMEOUT_SECONDS` (default 60), `AUDIO_MAX_RETRIES` (default 1), `STT_COST_PER_MINUTE_USD` (default 0.006), `TTS_COST_PER_1M_CHARS_USD` (default 15.0) — таймауты/ретраи OpenAI-клиентов STT/TTS и оценочная стоимость (cost_basis=estimated) |
 | Доступ к консоли | `AF_ADMIN_TOKEN` (полный доступ), `AF_ADMIN_DEMO_TOKEN` (демо read-only, запечён в UI при сборке), `AF_AUTH_MIDDLEWARE_MODE` (legacy Basic-аутентификация) |
 | Лимиты | `ADMIN_UPLOAD_MAX_MB` (лимит размера документа, default 25) |
+| Фоновый воркер | `AF_ASYNC_WORKER_ENABLED` (default on), `AF_ASYNC_WORKER_POLL_SECONDS` (default 5), `AF_ASYNC_WORKER_STALE_RUNNING_SECONDS` (default 1800) |
 | Admin UI | `ADMIN_API_CORS_ORIGINS` → `http://localhost:8080` |
 
 Полный перечень — `.env.example`, [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -560,7 +561,6 @@ curl -sS http://localhost:8600/api/health
 
 - React Admin UI;
 - оценка качества RAG (RAGAS, `ENABLE_RAGAS_EVALUATION`);
-- асинхронный слой фоновых задач (фундамент: таблица `async_jobs`, постановка reindex-задач; воркер — в разработке);
 - аудио-контур (STT/TTS) — остаток по P5.4;
 - фильтрация поиска по источникам.
 
@@ -568,7 +568,6 @@ curl -sS http://localhost:8600/api/health
 
 ## Roadmap
 
-- Воркер асинхронных задач (потребление `async_jobs`, фоновый reindex).
 - Завершение аудио-контура (P5.4 remainder).
 - Фильтрация поиска по источникам.
 - Резервная маршрутизация провайдеров (OpenAI / GigaChat / Proxy API).

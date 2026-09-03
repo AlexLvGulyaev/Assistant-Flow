@@ -6371,3 +6371,84 @@ code {
   padding: 0.45rem;
   border-radius: 4px;
 }
+
+/* ---- Документы: фоновые задачи reindex (async_jobs, P5.3c) ---- */
+
+.docs-async-panel {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.55rem 0.45rem;
+  margin-bottom: 0.32rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.docs-async-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.docs-async-panel__title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.docs-async-panel__hint {
+  font-size: 0.78rem;
+}
+
+.docs-async-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.docs-async-panel__empty {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.docs-async-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.docs-async-panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.22rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.docs-async-panel__id {
+  font-family: var(--mono, monospace);
+}
+
+.docs-async-panel__meta,
+.docs-async-panel__time {
+  font-size: 0.78rem;
+}
+
+.docs-async-panel__err {
+  color: var(--error, #c0392b);
+  font-size: 0.78rem;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

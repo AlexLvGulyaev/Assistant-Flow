@@ -26,7 +26,7 @@
 
 ### 3.1 Telegram-ассистент
 - Режимы: `/mode text` (диалог + генерация изображений), `/mode rag`, `/mode ocr`; `/start`, `/help`, `/stats`, `/reset`, `/clear`.
-- Голос: STT/TTS при включении в окружении (`AUDIO_ENABLED`, провайдеры по умолчанию `disabled`).
+- Голос: STT/TTS при включении в окружении (`AUDIO_ENABLED`, провайдеры по умолчанию `disabled`); явные таймауты/ретраи OpenAI-клиентов (`AUDIO_TIMEOUT_SECONDS`, `AUDIO_MAX_RETRIES`), оценочная стоимость STT/TTS в telemetry (`cost_usd`, `cost_basis=estimated`).
 - Память диалога в PostgreSQL с ограничением размера контекста.
 
 ### 3.2 Корпоративная база знаний (RAG)
@@ -37,8 +37,9 @@
 
 ### 3.3 Операционная консоль (Admin API + React Admin UI)
 - Разделы: Обзор, Сводка, Текст, RAG, Изображения, Аудио, Документы, Retrieval Settings, Логи, Memory, Анализ RAG (RAGAS), Аудит; экраны входа/выхода.
-- Трассировка pipeline каждой сессии, диагностика retrieval (чанки, relevance-score, latency, полный текст чанка), token economy за окно.
+- Трассировка pipeline каждой сессии, диагностика retrieval (чанки, relevance-score, latency, полный текст чанка), token economy за окно (токены + оценочная стоимость per stage/model и grand total).
 - Журнал аудита обращений к Admin API.
+- Фоновые задачи reindex: очередь `async_jobs` + воркер-поток в admin-api (панель «Фоновые задачи» в Документах).
 
 ### 3.4 Доступ и безопасность
 - Демо-стандарт APL: `AF_ADMIN_TOKEN` (admin) / `AF_ADMIN_DEMO_TOKEN` (демо, read-only, запечён в UI при сборке); без токенов — локальный режим.
@@ -62,8 +63,7 @@
 ## 5. Вне скоупа текущей версии
 
 - Multi-tenant изоляция, external IAM/OAuth (Keycloak — направление P9.7).
-- Асинхронные воркеры (фундамент `async_jobs` готов, воркер — в разработке).
-- CI/CD, автоматические бэкапы, S3 object storage.
+- Отдельный контейнер-воркер (воркер — поток внутри admin-api), CI/CD, автоматические бэкапы, S3 object storage.
 - Semantic/glossary-aware chunking (P5.5).
 
 ---

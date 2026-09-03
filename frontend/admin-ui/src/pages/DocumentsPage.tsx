@@ -10,11 +10,15 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { PERM } from "../auth/permissions";
 import {
+  fetchAsyncJobs,
   fetchDocumentDetail,
   fetchDocuments,
+  postAsyncJobRetry,
   postDocumentTextEdit,
   postDocumentsReindex,
+  postDocumentsReindexAsync,
   uploadDocument,
+  type AsyncJobItem,
   type DocumentVisibility,
   type DocumentDetailChunk,
   type DocumentDetailResponse,
@@ -130,6 +134,11 @@ export function DocumentsPage() {
   const [reindexDocBusy, setReindexDocBusy] = useState(false);
   const [reindexAllBusy, setReindexAllBusy] = useState(false);
   const [actionHint, setActionHint] = useState<string | null>(null);
+
+  const [asyncJobs, setAsyncJobs] = useState<AsyncJobItem[]>([]);
+  const [asyncJobsLoading, setAsyncJobsLoading] = useState(false);
+  const [asyncEnqueueBusy, setAsyncEnqueueBusy] = useState(false);
+  const [asyncRetryBusyId, setAsyncRetryBusyId] = useState<string | null>(null);
   const [summaryPopOpen, setSummaryPopOpen] = useState(false);
   const [indexPopOpen, setIndexPopOpen] = useState(false);
   const summaryPopRef = useRef<HTMLDivElement | null>(null);
@@ -564,6 +573,64 @@ export function DocumentsPage() {
     }
   }
 
+  async function loadAsyncJobs() {
+    setAsyncJobsLoading(true);
+    try {
+      const r = await fetchAsyncJobs(10);
+      setAsyncJobs(r.jobs);
+    } catch {
+      /* panel keeps last snapshot; main error surface not used here */
+    } finally {
+      setAsyncJobsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAsyncJobs();
+  }, [refreshKey]);
+
+  const hasActiveAsyncJob = asyncJobs.some((j) =>
+    ["queued", "running"].includes(String(j.status ?? ""))
+  );
+
+  useEffect(() => {
+    if (!hasActiveAsyncJob) return;
+    const timer = setInterval(() => {
+      loadAsyncJobs();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [hasActiveAsyncJob]);
+
+  async function onReindexAllAsync() {
+    setAsyncEnqueueBusy(true);
+    setActionHint(null);
+    try {
+      const j = await postDocumentsReindexAsync();
+      setActionHint(
+        `Фоновая переиндексация поставлена в очередь · задача ${(j.job_id ?? "").slice(0, 8)}`
+      );
+      await loadAsyncJobs();
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setActionHint(err instanceof Error ? err.message : "Ошибка постановки задачи");
+    } finally {
+      setAsyncEnqueueBusy(false);
+    }
+  }
+
+  async function onRetryAsyncJob(jobId: string) {
+    setAsyncRetryBusyId(jobId);
+    setActionHint(null);
+    try {
+      await postAsyncJobRetry(jobId);
+      await loadAsyncJobs();
+    } catch (err) {
+      setActionHint(err instanceof Error ? err.message : "Ошибка retry");
+    } finally {
+      setAsyncRetryBusyId(null);
+    }
+  }
+
   const docStatusRaw = String(detail?.document?.status ?? selected?.status_raw ?? "");
   const vectorStoreDisplay = formatRetrievalBackendTitle(
     rop?.effective_backend ?? gis?.active_retrieval_backend ?? undefined
@@ -856,6 +923,78 @@ export function DocumentsPage() {
             {actionHint ? <span>{actionHint}</span> : null}
           </p>
         ) : null}
+      </div>
+
+      <div className="docs-async-panel card" role="region" aria-label="Фоновые задачи reindex">
+        <div className="docs-async-panel__header">
+          <h2 className="docs-async-panel__title">Фоновые задачи</h2>
+          {hasActiveAsyncJob ? <StatusBadge status="running" /> : null}
+          <span className="docs-async-panel__hint muted">
+            Воркер admin-api исполняет <code>rag_reindex</code> из очереди <code>async_jobs</code>
+          </span>
+          <div className="docs-async-panel__actions">
+            <button
+              type="button"
+              className="docs-action-btn docs-action-btn--secondary"
+              onClick={onReindexAllAsync}
+              disabled={asyncEnqueueBusy || reindexAllBusy || !canReindex}
+              title={!canReindex ? "Нет прав documents:reindex" : undefined}
+            >
+              {asyncEnqueueBusy ? "⏳ Постановка…" : "⏭ Переиндексировать всё (фон)"}
+            </button>
+            <button
+              type="button"
+              className="docs-action-btn docs-action-btn--ghost"
+              onClick={loadAsyncJobs}
+              disabled={asyncJobsLoading}
+            >
+              {asyncJobsLoading ? "Обновление…" : "Обновить"}
+            </button>
+          </div>
+        </div>
+        {asyncJobs.length === 0 ? (
+          <p className="docs-async-panel__empty muted">
+            Задач пока нет — фоновая переиндексация не запускалась.
+          </p>
+        ) : (
+          <ul className="docs-async-panel__list">
+            {asyncJobs.map((j) => {
+              const st = String(j.status ?? "—");
+              const retryable = ["failed", "retry_scheduled"].includes(st) && canReindex;
+              const durationMs = j.result_json?.duration_ms;
+              const errText =
+                j.error_json?.error_message ?? j.error_json?.error_type ?? null;
+              return (
+                <li key={String(j.job_id ?? j.created_at)} className="docs-async-panel__row">
+                  <StatusBadge status={st} />
+                  <span className="docs-async-panel__id mono">{String(j.job_id ?? "").slice(0, 8)}</span>
+                  <span className="docs-async-panel__meta muted">
+                    попыток {j.attempts ?? "—"}/{j.max_attempts ?? "—"}
+                    {typeof durationMs === "number" ? ` · ${formatDurationMs(durationMs)}` : ""}
+                  </span>
+                  <span className="docs-async-panel__time muted">
+                    {formatTimestampMsk(j.created_at ?? null)}
+                  </span>
+                  {errText ? (
+                    <span className="docs-async-panel__err" title={String(errText)}>
+                      {String(errText).slice(0, 80)}
+                    </span>
+                  ) : null}
+                  {retryable ? (
+                    <button
+                      type="button"
+                      className="docs-action-btn docs-action-btn--ghost"
+                      onClick={() => onRetryAsyncJob(String(j.job_id))}
+                      disabled={asyncRetryBusyId === String(j.job_id)}
+                    >
+                      {asyncRetryBusyId === String(j.job_id) ? "⏳…" : "↩ Повтор"}
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="docs-main-split">

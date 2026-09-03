@@ -1084,6 +1084,7 @@ def create_bot() -> telebot.TeleBot:
                         "execution_id": execution_id,
                         "telegram_chat_id": message.chat.id,
                         "telegram_user_id": message.from_user.id,
+                        "duration_sec": duration_sec,
                     },
                 )
                 stt_latency_ms = stt_result.latency_ms
@@ -1148,6 +1149,11 @@ def create_bot() -> telebot.TeleBot:
                         stt_details[tok_key] = int(tv)
                 if getattr(stt_norm, "cost_usd", None) is not None:
                     stt_details["cost_usd"] = float(stt_norm.cost_usd)
+                    if (
+                        isinstance(stt_result.usage, dict)
+                        and stt_result.usage.get("cost_basis")
+                    ):
+                        stt_details["cost_basis"] = str(stt_result.usage["cost_basis"])
                 stt_details["provider"] = stt_norm.provider
                 stt_details["model"] = stt_norm.model
                 stt_details["latency_ms"] = stt_norm.latency_ms
@@ -1488,6 +1494,8 @@ def create_bot() -> telebot.TeleBot:
                                         pass
                             if tts_usage.get("cost_usd") is not None:
                                 tts_details["cost_usd"] = float(tts_usage["cost_usd"])
+                            if tts_usage.get("cost_basis"):
+                                tts_details["cost_basis"] = str(tts_usage["cost_basis"])
                         try:
                             if out_path is None:
                                 raise FileNotFoundError("tts output asset path missing")

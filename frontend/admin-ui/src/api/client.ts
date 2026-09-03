@@ -190,6 +190,64 @@ export async function postDocumentsReindex(
   return parseJson<ReindexResponse>(res);
 }
 
+/** POST /api/documents/reindex-async — enqueue full-corpus reindex job (P5.3c). */
+export interface AsyncJobInfo {
+  job_id?: string;
+  job_type?: string;
+  status?: string;
+  attempts?: number;
+  max_attempts?: number;
+  created_at?: string | null;
+}
+
+export interface AsyncJobItem extends AsyncJobInfo {
+  payload_json?: Record<string, unknown> | null;
+  result_json?: Record<string, unknown> | null;
+  error_json?: Record<string, unknown> | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+}
+
+export async function postDocumentsReindexAsync(): Promise<AsyncJobInfo> {
+  const res = await authAwareFetch(`/api/documents/reindex-async`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(
+      await parseFastApiError(res, `Reindex (async): ${res.status}`)
+    );
+  }
+  return parseJson<AsyncJobInfo>(res);
+}
+
+export async function fetchAsyncJobs(
+  limit = 10
+): Promise<{ jobs: AsyncJobItem[]; count: number }> {
+  const res = await authAwareFetch(
+    `/api/documents/async-jobs?limit=${encodeURIComponent(String(limit))}`
+  );
+  if (!res.ok) {
+    throw new Error(
+      await parseFastApiError(res, `Async jobs: ${res.status}`)
+    );
+  }
+  return parseJson<{ jobs: AsyncJobItem[]; count: number }>(res);
+}
+
+export async function postAsyncJobRetry(jobId: string): Promise<AsyncJobInfo> {
+  const res = await authAwareFetch(
+    `/api/documents/async-jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await parseFastApiError(res, `Job retry: ${res.status}`)
+    );
+  }
+  return parseJson<AsyncJobInfo>(res);
+}
+
 export async function fetchRetrievalOverview(): Promise<RetrievalOverviewResponse> {
   const res = await authAwareFetch(`/api/retrieval/overview`);
   if (!res.ok) {
@@ -398,16 +456,19 @@ export interface TokenEconomyStageRow {
   events: number;
   rows_with_tokens: number;
   total_tokens: number;
+  cost_usd?: number | null;
 }
 
 export interface TokenEconomyModelRow {
   rows_with_tokens: number;
   total_tokens: number;
+  cost_usd?: number | null;
 }
 
 export interface TokenEconomyBlock {
   window_hours: number;
   grand_total_tokens: number | null;
+  grand_total_cost_usd?: number | null;
   by_stage: Record<string, TokenEconomyStageRow>;
   by_model: Record<string, TokenEconomyModelRow>;
 }

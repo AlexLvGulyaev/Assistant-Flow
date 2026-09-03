@@ -94,6 +94,11 @@ class AppConfig:
     tts_voice: str = "alloy"
     tts_output_format: str = "mp3"
     tts_max_chars: int = 3000
+    # Audio hardening / cost accounting (P5.4 remainder).
+    audio_timeout_seconds: int = 60
+    audio_max_retries: int = 1
+    stt_cost_per_minute_usd: float = 0.006
+    tts_cost_per_1m_chars_usd: float = 15.0
     # Memory v1: Telegram RAG short-term dialog в PostgreSQL (chat_sessions / chat_messages).
     telegram_pg_conversation_memory: bool = True
     telegram_memory_max_turn_pairs: int = 6
@@ -240,6 +245,10 @@ def load_config() -> AppConfig:
         tts_voice=(os.getenv("TTS_VOICE", "alloy").strip() or "alloy"),
         tts_output_format=(os.getenv("TTS_OUTPUT_FORMAT", "mp3").strip().lower() or "mp3"),
         tts_max_chars=_int_env("TTS_MAX_CHARS", 3000),
+        audio_timeout_seconds=_int_env("AUDIO_TIMEOUT_SECONDS", 60),
+        audio_max_retries=_int_env("AUDIO_MAX_RETRIES", 1),
+        stt_cost_per_minute_usd=_float_env("STT_COST_PER_MINUTE_USD", 0.006),
+        tts_cost_per_1m_chars_usd=_float_env("TTS_COST_PER_1M_CHARS_USD", 15.0),
         telegram_pg_conversation_memory=_bool_env("TELEGRAM_PG_CONVERSATION_MEMORY", True),
         telegram_memory_max_turn_pairs=_int_env("TELEGRAM_MEMORY_MAX_TURN_PAIRS", 6),
         telegram_memory_max_llm_messages=_int_env("TELEGRAM_MEMORY_MAX_LLM_MESSAGES", 24),

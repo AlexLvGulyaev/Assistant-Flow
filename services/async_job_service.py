@@ -282,6 +282,31 @@ class AsyncJobService:
             return None
         return self._row_to_job(row)
 
+    def reclaim_stale_running(self, *, older_than_seconds: int = 1800) -> int:
+        """
+        Reclaim `running` jobs left orphaned by a restarted process.
+
+        A job stuck in `running` (worker died mid-job) is moved back to
+        `queued` if its last update is older than the threshold and attempts
+        remain. Attempts are NOT decremented (the failed attempt is counted).
+        Returns the number of reclaimed jobs.
+        """
+        with get_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                UPDATE async_jobs
+                   SET status = 'queued'
+                 WHERE status = 'running'
+                   AND attempts < max_attempts
+                   AND updated_at < NOW() - (%s || ' seconds')::interval
+                RETURNING id
+                """,
+                (int(older_than_seconds),),
+            )
+            rows = cur.fetchall()
+            conn.commit()
+        return len(rows)
+
     @staticmethod
     def _normalize_job_id(job_id: uuid.UUID | str) -> uuid.UUID:
         if isinstance(job_id, uuid.UUID):

@@ -48,6 +48,12 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     n === "—"
   ) {
     tone = "muted";
+  } else if (n === "queued") {
+    tone = "muted";
+  } else if (n === "retry_scheduled") {
+    tone = "warn";
+  } else if (n === "succeeded") {
+    tone = "ok";
   }
 
   const label =
@@ -62,6 +68,9 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       not_configured: "не настроено",
       started: "запущено",
       running: "в работе",
+      queued: "в очереди",
+      retry_scheduled: "повтор запланирован",
+      succeeded: "выполнено",
       skipped: "пропущено",
       completed: "завершено",
       scored: "оценено",

@@ -183,6 +183,12 @@ class ProcessingLogsRepository:
         " ELSE NULL END"
     )
     _TOKEN_ROW_SQL = f"COALESCE({_TOKEN_TOTAL_SQL}, {_TOKEN_INOUT_SQL})"
+    # Учёт стоимости (долг №7): details->>'cost_usd' пишется провайдерами STT/TTS.
+    # Guarded cast: мусорное/нечисловое значение не должно ломать агрегат.
+    _COST_SQL = (
+        "CASE WHEN details->>'cost_usd' ~ '^[0-9]+(\\.[0-9]+)?$' "
+        "THEN (details->>'cost_usd')::numeric ELSE 0 END"
+    )
 
     def get_token_economy_since(
         self, conn: Connection, *, hours: int = 24
@@ -195,6 +201,7 @@ class ProcessingLogsRepository:
         """
         h = _sanitize_hours(hours)
         tok = self._TOKEN_ROW_SQL
+        cost = self._COST_SQL
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -202,7 +209,8 @@ class ProcessingLogsRepository:
                     stage,
                     COUNT(*)::bigint AS events,
                     COUNT({tok})::bigint AS rows_with_tokens,
-                    COALESCE(SUM({tok}), 0)::bigint AS total
+                    COALESCE(SUM({tok}), 0)::bigint AS total,
+                    COALESCE(SUM({cost}), 0) AS cost_usd
                 FROM processing_logs
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
                 GROUP BY stage
@@ -217,10 +225,11 @@ class ProcessingLogsRepository:
                     COALESCE(NULLIF(details->>'llm_model', ''), NULLIF(details->>'model', ''), '—')
                         AS model,
                     COUNT({tok})::bigint AS rows_with_tokens,
-                    COALESCE(SUM({tok}), 0)::bigint AS total
+                    COALESCE(SUM({tok}), 0)::bigint AS total,
+                    COALESCE(SUM({cost}), 0) AS cost_usd
                 FROM processing_logs
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
-                  AND {tok} IS NOT NULL
+                  AND ({tok} IS NOT NULL OR {cost} > 0)
                 GROUP BY 1
                 ORDER BY total DESC
                 LIMIT 20
@@ -230,31 +239,38 @@ class ProcessingLogsRepository:
             by_model_rows = cur.fetchall()
             cur.execute(
                 f"""
-                SELECT COALESCE(SUM({tok}), 0)::bigint
+                SELECT COALESCE(SUM({tok}), 0)::bigint, COALESCE(SUM({cost}), 0)
                 FROM processing_logs
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
                 """,
                 (h,),
             )
             grand = cur.fetchone()
-        by_stage: dict[str, dict[str, int]] = {}
-        for stage, events, rows_with_tokens, total in by_stage_rows:
+        by_stage: dict[str, dict[str, Any]] = {}
+        for stage, events, rows_with_tokens, total, stage_cost in by_stage_rows:
             s = str(stage)
-            if int(rows_with_tokens) > 0 or s.endswith("_done"):
+            has_cost = bool(stage_cost) and float(stage_cost) > 0
+            if int(rows_with_tokens) > 0 or s.endswith("_done") or has_cost:
                 by_stage[s] = {
                     "events": int(events),
                     "rows_with_tokens": int(rows_with_tokens),
                     "total_tokens": int(total),
                 }
-        by_model: dict[str, dict[str, int]] = {}
-        for model, rows_with_tokens, total in by_model_rows:
-            by_model[str(model)] = {
+                if has_cost:
+                    by_stage[s]["cost_usd"] = round(float(stage_cost), 4)
+        by_model: dict[str, dict[str, Any]] = {}
+        for model, rows_with_tokens, total, model_cost in by_model_rows:
+            m = {
                 "rows_with_tokens": int(rows_with_tokens),
                 "total_tokens": int(total),
             }
+            if model_cost and float(model_cost) > 0:
+                m["cost_usd"] = round(float(model_cost), 4)
+            by_model[str(model)] = m
         return {
             "window_hours": h,
             "grand_total_tokens": int(grand[0] or 0) if grand else 0,
+            "grand_total_cost_usd": round(float(grand[1] or 0), 4) if grand else 0.0,
             "by_stage": by_stage,
             "by_model": by_model,
         }

@@ -50,7 +50,26 @@ async def _admin_api_lifespan(application: FastAPI):
         run_identity_bootstrap()
     except Exception as exc:
         logger.warning("Identity bootstrap on startup: %s", exc)
+    # Variant A (P5.3c): in-process async job worker thread.
+    worker_started = False
+    try:
+        from services.async_job_worker import AsyncJobWorkerDaemon, get_async_job_worker
+
+        if AsyncJobWorkerDaemon.enabled():
+            get_async_job_worker().start()
+            worker_started = True
+        else:
+            logger.info("Async job worker disabled (AF_ASYNC_WORKER_ENABLED=0)")
+    except Exception as exc:
+        logger.warning("Async job worker start failed: %s", exc)
     yield
+    if worker_started:
+        try:
+            from services.async_job_worker import get_async_job_worker
+
+            get_async_job_worker().stop()
+        except Exception as exc:
+            logger.warning("Async job worker stop failed: %s", exc)
 
 
 def create_admin_api_app() -> FastAPI:

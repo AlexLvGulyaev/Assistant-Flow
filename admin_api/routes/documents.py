@@ -402,6 +402,86 @@ def api_documents_reindex(
     return out
 
 
+@router.post("/documents/reindex-async")
+def api_documents_reindex_async(
+    request: Request,
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_REINDEX)),
+) -> dict[str, Any]:
+    """Enqueue full-corpus reindex as an async job (P5.3c, variant A).
+
+    Execution happens in the background worker thread (admin-api);
+    progress is visible via GET /api/documents/async-jobs.
+    """
+    svc = get_admin_service()
+    try:
+        job = svc.enqueue_reindex_job(payload={"trigger": "admin_api"})
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="documents.reindex_async",
+        principal=principal,
+        request=request,
+        target_type="corpus",
+        target_id=str(job.id),
+        details={"scope": "all", "job_id": str(job.id)},
+    )
+    return {
+        "job_id": str(job.id),
+        "job_type": job.job_type,
+        "status": job.status,
+        "max_attempts": job.max_attempts,
+        "created_at": job.created_at,
+    }
+
+
+@router.get("/documents/async-jobs")
+def api_async_jobs(
+    limit: int = Query(default=20, ge=1, le=200),
+    status: str | None = Query(default=None),
+    job_type: str | None = Query(default=None),
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_READ)),
+) -> dict[str, Any]:
+    """Read-only async_jobs list for the console (worker progress visibility)."""
+    svc = get_admin_service()
+    jobs = svc.list_async_jobs(limit=limit, status=status, job_type=job_type)
+    return {"jobs": jobs, "count": len(jobs)}
+
+
+@router.post("/documents/async-jobs/{job_id}/retry")
+def api_async_job_retry(
+    request: Request,
+    job_id: str,
+    principal: PrincipalContext = Depends(require_permission(PERM_DOCUMENTS_REINDEX)),
+) -> dict[str, Any]:
+    """Manual retry: failed/retry_scheduled job back to queued (worker picks it up)."""
+    try:
+        jid = uuid.UUID(job_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid job_id") from exc
+    svc = get_admin_service()
+    try:
+        job = svc.retry_async_job(jid)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="job not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    get_audit_service().log_privileged_action(
+        action="documents.async_job_retry",
+        principal=principal,
+        request=request,
+        target_type="async_job",
+        target_id=str(jid),
+        details={"status": job.status},
+    )
+    return {
+        "job_id": str(job.id),
+        "job_type": job.job_type,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+    }
+
+
 @router.get("/documents/{document_id}/detail")
 def api_document_detail(
     request: Request,

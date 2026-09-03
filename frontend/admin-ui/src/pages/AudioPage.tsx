@@ -87,9 +87,11 @@ interface AudioSession {
   sttProvider: string | null;
   sttModel: string | null;
   sttLatencyMs: number | null;
+  sttCostUsd: number | null;
   ttsProvider: string | null;
   ttsModel: string | null;
   ttsLatencyMs: number | null;
+  ttsCostUsd: number | null;
   llmProvider: string | null;
   llmModel: string | null;
   inputAudioRef: string | null;
@@ -645,6 +647,26 @@ export function AudioPage() {
                                 `${selected.ttsLatencyMs} мс`
                               ) : (
                                 <TelemetryGap kind="pipeline" />
+                              )
+                            }
+                          />
+                          <OpsRow
+                            label="Стоимость STT (оценка)"
+                            value={
+                              hasNum(selected.sttCostUsd) ? (
+                                `~$${selected.sttCostUsd!.toFixed(4)}`
+                              ) : (
+                                <TelemetryGap kind="data" />
+                              )
+                            }
+                          />
+                          <OpsRow
+                            label="Стоимость TTS (оценка)"
+                            value={
+                              hasNum(selected.ttsCostUsd) ? (
+                                `~$${selected.ttsCostUsd!.toFixed(4)}`
+                              ) : (
+                                <TelemetryGap kind="data" />
                               )
                             }
                           />
@@ -1297,18 +1319,22 @@ function extractSttTtsLlm(
   sttProvider: string | null;
   sttModel: string | null;
   sttLatencyMs: number | null;
+  sttCostUsd: number | null;
   ttsProvider: string | null;
   ttsModel: string | null;
   ttsLatencyMs: number | null;
+  ttsCostUsd: number | null;
   llmProvider: string | null;
   llmModel: string | null;
 } {
   let sttProvider: string | null = null;
   let sttModel: string | null = null;
   let sttLatencyMs: number | null = null;
+  let sttCostUsd: number | null = null;
   let ttsProvider: string | null = null;
   let ttsModel: string | null = null;
   let ttsLatencyMs: number | null = null;
+  let ttsCostUsd: number | null = null;
   let llmProvider: string | null = null;
   let llmModel: string | null = null;
 
@@ -1322,6 +1348,10 @@ function extractSttTtsLlm(
         const lm = numVal(stt.latency_ms);
         if (lm != null) sttLatencyMs = Math.round(lm);
       }
+      if (sttCostUsd == null) {
+        const c = numVal(stt.cost_usd) ?? numVal(d.cost_usd);
+        if (c != null) sttCostUsd = c;
+      }
     }
     const tts = readSub(d, "tts");
     if (tts) {
@@ -1330,6 +1360,10 @@ function extractSttTtsLlm(
       if (ttsLatencyMs == null) {
         const lm = numVal(tts.latency_ms);
         if (lm != null) ttsLatencyMs = Math.round(lm);
+      }
+      if (ttsCostUsd == null) {
+        const c = numVal(tts.cost_usd) ?? numVal(d.cost_usd);
+        if (c != null) ttsCostUsd = c;
       }
     }
     const hasAnswer =
@@ -1355,6 +1389,10 @@ function extractSttTtsLlm(
         const lm = extractLatencyMs(d);
         if (lm != null) sttLatencyMs = Math.round(lm);
       }
+      if (sttCostUsd == null) {
+        const c = numVal(d.cost_usd);
+        if (c != null) sttCostUsd = c;
+      }
     }
     if (stage.includes("tts")) {
       if (!ttsProvider && typeof d.provider === "string") ttsProvider = d.provider.trim();
@@ -1362,6 +1400,10 @@ function extractSttTtsLlm(
       if (ttsLatencyMs == null) {
         const lm = extractLatencyMs(d);
         if (lm != null) ttsLatencyMs = Math.round(lm);
+      }
+      if (ttsCostUsd == null) {
+        const c = numVal(d.cost_usd);
+        if (c != null) ttsCostUsd = c;
       }
     }
   }
@@ -1381,9 +1423,11 @@ function extractSttTtsLlm(
     sttProvider,
     sttModel,
     sttLatencyMs,
+    sttCostUsd,
     ttsProvider,
     ttsModel,
     ttsLatencyMs,
+    ttsCostUsd,
     llmProvider,
     llmModel,
   };

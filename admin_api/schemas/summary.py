@@ -50,11 +50,13 @@ class TokenEconomyStageRow(BaseModel):
     events: int
     rows_with_tokens: int
     total_tokens: int
+    cost_usd: float | None = None
 
 
 class TokenEconomyModelRow(BaseModel):
     rows_with_tokens: int
     total_tokens: int
+    cost_usd: float | None = None
 
 
 class TokenEconomy(BaseModel):
@@ -62,6 +64,7 @@ class TokenEconomy(BaseModel):
 
     window_hours: int
     grand_total_tokens: int | None = None
+    grand_total_cost_usd: float | None = None
     by_stage: dict[str, TokenEconomyStageRow] = Field(default_factory=dict)
     by_model: dict[str, TokenEconomyModelRow] = Field(default_factory=dict)
 
