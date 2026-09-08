@@ -14,13 +14,11 @@ Hygiene живого демо-индекса Assistant Flow (закрытие д
   - dirty_test_* (7)          — тест-фикстуры мая, попали в демо-индекс;
   - cooking_recipes           — out-of-domain тестовый документ («рецепт пасты»);
   - candidate_scoring         — HR-тестовый документ;
-  - ragas_facts_baseline      — синтетический «ООО НоваТех» (решение владельца
-                                02.09: из индекса убрать). Канонический файл —
-                                evaluation/datasets/ragas_facts_baseline.txt
-                                (gitignore на data/ исключает его из
-                                data/documents); для RAGAS-оценки временно
-                                копируется в data/documents, после оценки
-                                чистка возвращает индекс в демо-состояние.
+  (ragas_facts_baseline «ООО НоваТех» исключён из целей решением владельца
+  08.09: решение 02.09 об удалении было отозвано, документ восстановлен в
+  живой индекс как легитимный демо-контент RAG. Канонический файл —
+  evaluation/datasets/ragas_facts_baseline.txt; копия в data/documents
+  поддерживается намеренно, чтобы файловые индексаторы держали его в индексе.)
 
 Оставляются сознательно (НЕ цели):
   - p9_6b_restricted_handbook — protected/restricted демо P9.6b visibility;
@@ -53,12 +51,11 @@ TARGET_TITLES: list[str] = [
     "dirty_test_af_regulation_cyrillic_v2",
     "cooking_recipes",
     "candidate_scoring",
-    "ragas_facts_baseline",
 ]
 
 # Канонический ragas_facts_baseline.txt лежит в evaluation/datasets/ (data/
-# в gitignore). Если его временно копировали в data/documents под RAGAS-оценку,
-# чистка обязана удалить копию — потому KEEP_FILES пуст.
+# в gitignore). С 08.09 он является легитимным демо-документом и исключён из
+# целей чистки — его копия в data/documents сохраняется намеренно.
 KEEP_FILES: set[str] = set()
 
 DOCUMENTS_DIR = Path("/app/data/documents")

@@ -63,7 +63,7 @@ python scripts/admin_index_documents.py --reindex
 Договорённости:
 
 - **Активный backend живёт в PG** (`platform_settings.active_rag_backend`, переключается через Retrieval Settings) и может отличаться от `RAG_BACKEND` в `.env` — проверять через `/retrieval`, а не только по env.
-- `ragas_facts_baseline.txt` («НоваТех») канонически лежит в `evaluation/datasets/` и **не** должен находиться в `data/documents/` — иначе файловые индексаторы тащат его в демо-индекс. Процедура RAGAS-оценки — в docstring `scripts/evaluation_seed_ragas_dataset.py`.
+- `ragas_facts_baseline.txt` («НоваТех») — легитимный демо-документ RAG (решение владельца 08.09: решение об удалении от 02.09 отозвано, документ восстановлен в живой индекс во все хранилища). Канонический файл лежит в `evaluation/datasets/` (data/ в gitignore); рабочая копия держится в `data/documents/`, чтобы файловые индексаторы включали его в индекс. Из целей `scripts/clean_demo_index.py` исключён. Процедура RAGAS-оценки — в docstring `scripts/evaluation_seed_ragas_dataset.py`.
 
 Heavy RAG safeguard — лимит размера документа (`ADMIN_UPLOAD_MAX_MB`, default 25 МБ):
 
