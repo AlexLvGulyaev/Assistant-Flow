@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-# Явный prompt для урока RAG (модуль 5): только текст, без комментариев модели.
+# Явный prompt для OCR: только текст, без комментариев модели.
 OCR_DEFAULT_USER_PROMPT_RU = (
     "Распознай весь текст на изображении. Верни только текст. "
     "Если текста нет, скажи, что текст не обнаружен."

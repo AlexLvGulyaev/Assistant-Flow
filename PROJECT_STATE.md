@@ -1,7 +1,6 @@
 # 📊 PROJECT STATE — Assistant Flow
 
 Паспорт состояния проекта (канон APL). Точка входа для любого агента, начинающего работу с кейсом.
-Append-only инженерный журнал (хронология, инциденты, этапы P5–P9) — внутренний аналог task-history: [task_history/engineering_log.md](task_history/engineering_log.md).
 
 ---
 
@@ -9,7 +8,7 @@ Append-only инженерный журнал (хронология, инцид�
 
 **Assistant Flow** — мультимодальная AI-платформа для работы с корпоративными знаниями: Telegram-ассистент (текст, RAG, OCR/Vision, голос STT/TTS, генерация изображений), корпоративная база знаний с управляемой индексацией и переключаемыми vector-бэкендами (Chroma / FAISS / Weaviate), операционная консоль (FastAPI Admin API + React Admin UI) с наблюдаемостью, оценкой качества RAG (RAGAS), памятью диалога и журналом аудита.
 
-Позиционирование: `production-grade multimodal AI operations platform prototype` (single-tenant maturity stage). Принцип: operational-first / observability-first, без образовательных MVP-упрощений.
+Позиционирование: исследовательская платформа (прототип) для проверки мультимодальных AI-сценариев. Принцип: operational-first / observability-first.
 
 Стек: Python / FastAPI / PostgreSQL / ChromaDB / Weaviate / FAISS / React / Vite / Docker Compose; провайдеры OpenAI / GigaChat / ProxyAPI (embeddings отделены от chat).
 
@@ -30,7 +29,7 @@ Append-only инженерный журнал (хронология, инцид�
 
 ## Market Validation
 
-Внешних клиентских заказов нет. Проект вырос из учебного контура (Module 5) и развивается как инженерный актив AI Automation Portfolio Lab. Рыночный сигнал — косвенный: платформа демонстрирует компетенции (RAG, мультимодальность, эксплуатация AI-систем), востребованные в других кейсах лаборатории.
+Внешних клиентских заказов нет. Проект развивается как исследовательский актив AI Automation Portfolio Lab. Рыночный сигнал — косвенный: платформа демонстрирует компетенции (RAG, мультимодальность, эксплуатация AI-систем), востребованные в других кейсах лаборатории.
 
 ---
 
@@ -67,7 +66,7 @@ Append-only инженерный журнал (хронология, инцид�
 
 | Дата | Статус | Событие |
 |------|--------|---------|
-| 2025–2026 | Разработка | Проект из Module 5 (уроки → операционная платформа) |
+| 2025–2026 | Разработка | Учебный проект → операционная платформа |
 | 2026-08 | Кейс APL | Перенос из `/opt/assistant-flow/` в `cases/assistant-flow/` как самостоятельный git-репозиторий |
 | 2026-09-02 | Активная разработка | Демо-стандарт APL (токен + демо-вход), публичный эндпойнт, token economy (долг №3), heavy-RAG safeguards, multi-version docs, production build (multi-stage, −25…−33%) |
 | 2026-09-03 | Сопровождение | Инцидент fd-leak chroma HttpClient закрыт; KB-паттерн; актуализация документации по стандартам APL |
@@ -79,5 +78,4 @@ Append-only инженерный журнал (хронология, инцид�
 ## Границы документа
 
 - **PROJECT_STATE.md** — только паспорт: состояние, решения, шаги. Не содержит session logs, task prompts, пошаговых walkthrough.
-- Инженерная история: [task_history/engineering_log.md](task_history/engineering_log.md) (append-only), `task_history/*.md` по задачам.
 - Специализированная документация: `docs/` (RUNBOOK, OPERATIONS, ARCHITECTURE, SECURITY_NOTES, security/, architecture/), `database/POSTGRES_SETUP.md`.

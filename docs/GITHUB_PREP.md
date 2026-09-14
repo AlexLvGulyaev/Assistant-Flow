@@ -16,7 +16,7 @@
 | [docs/ARCHITECTURE.md](ARCHITECTURE.md) | FastAPI + React Admin UI, без Streamlit как текущего UI |
 | [docs/OPERATIONS.md](OPERATIONS.md) | Каноническая команда запуска, порты, Chroma/кэш |
 | [docs/screenshots/](screenshots/) | Скриншоты для README (15 файлов, пути `docs/screenshots/*.png`) |
-| Внутренние логи | `docs/cursor_sessions/` не в git и **не** в публичной навигации README; инженерный журнал — `task_history/engineering_log.md` |
+| Внутренние логи | `docs/cursor_sessions/` не в git и **не** в публичной навигации README |
 
 ---
 
@@ -79,4 +79,4 @@ git rm -r --cached _test_chroma
 
 ## 7. [PROJECT_STATE.md](../PROJECT_STATE.md)
 
-Паспорт проекта (канон APL): состояние, решения, следующие шаги. Не обязателен внешнему reviewer, но должен не противоречить README по статусу подсистем. Инженерный журнал (append-only) вынесен в `task_history/engineering_log.md`.
+Паспорт проекта (канон APL): состояние, решения, следующие шаги. Не обязателен внешнему reviewer, но должен не противоречить README по статусу подсистем. Инженерная история остаётся вне публичной поставки.

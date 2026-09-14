@@ -9,7 +9,6 @@
 - Design (identity/control plane, P9): [architecture/identity_and_security_architecture.md](../architecture/identity_and_security_architecture.md)
 - Auth modes (P9.2): [auth_modes.md](auth_modes.md)
 - Ограничения: [SECURITY_NOTES.md](../SECURITY_NOTES.md)
-- Session logs: `docs/cursor_sessions/2026-05-19_p8-*.md`
 
 ---
 
