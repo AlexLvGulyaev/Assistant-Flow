@@ -34,7 +34,7 @@ from services.rag_query_service import RagQueryService
 from services.retrieval_security.context import ROLE_ADMIN
 from services.retrieval_security.principal_bridge import resolve_retrieval_security_for_telegram
 from services.security.log_sanitizer import sanitize_log_details
-from services.rag_types import RagQueryResult
+from services.rag_types import RagQueryResult, RagSourceChunk
 from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
 from services.retrieval.runtime_manager import RetrievalBackendManager
 from services.runtime_lifecycle_service import (
@@ -231,8 +231,28 @@ def _try_build_rag_query_service(
 
 
 def _format_rag_telegram_reply(result: RagQueryResult) -> str:
-    # User-facing Telegram response must stay clean (no technical diagnostics).
-    return (result.answer or "").strip()
+    # Answer stays clean (no technical diagnostics); sources are appended
+    # as a compact "Источники" block (file + score), newest docs canon.
+    reply = (result.answer or "").strip()
+    sources_block = _format_sources_block(result.sources)
+    if not sources_block:
+        return reply
+    return f"{reply}\n\n{sources_block}"
+
+
+def _format_sources_block(sources: tuple[RagSourceChunk, ...]) -> str:
+    if not sources:
+        return ""
+    lines = ["Источники:"]
+    for chunk in sources:
+        source = (chunk.source or "").strip()
+        if not source:
+            continue
+        score = (
+            f" — {chunk.score:.2f}" if chunk.score is not None else ""
+        )
+        lines.append(f"📄 {source}{score}")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def _safe_answer_text_for_log(text: str, max_len: int = 3000) -> str:
@@ -758,7 +778,7 @@ def create_bot() -> telebot.TeleBot:
         try:
             bot.send_message(
                 message.chat.id,
-                "Я карьерный мультимодальный ассистент.\n"
+                "Я ассистент корпоративной базы знаний Assistant Flow.\n"
                 "Могу:\n"
                 "- отвечать на вопросы (режим текста, GigaChat)\n"
                 "- отвечать по базе знаний (режим RAG, нужен проиндексированный Chroma)\n"

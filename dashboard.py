@@ -41,12 +41,12 @@ def load_logs_dataframe(db_path: Path) -> tuple[pd.DataFrame | None, str | None]
 
 def main() -> None:
     st.set_page_config(
-        page_title="Карьерный AI-ассистент — Аналитика",
+        page_title="Assistant Flow — Аналитика",
         layout="wide",
     )
 
-    st.title("Карьерный AI-ассистент\nАналитика и мониторинг системы")
-    st.caption("Career AI Assistant — Analytics & Monitoring")
+    st.title("Assistant Flow\nАналитика и мониторинг системы")
+    st.caption("Assistant Flow — Analytics & Monitoring")
 
     df, error_message = load_logs_dataframe(Path("logs.db"))
     if error_message:

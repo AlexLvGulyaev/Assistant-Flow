@@ -58,8 +58,7 @@ def _me_payload(request: Request) -> dict[str, object]:
         payload["principal"] = None
         if mode == "required":
             payload["hint"] = (
-                "Введите Bearer token для доступа к панели управления "
-                "(или задайте AF_AUTH_MIDDLEWARE_MODE=disabled для локальной разработки)"
+                "Введите Bearer token для доступа к панели управления."
             )
     return payload
 

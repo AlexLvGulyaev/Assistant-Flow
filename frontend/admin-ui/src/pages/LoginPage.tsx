@@ -4,6 +4,25 @@ import { useAuth } from "../auth/AuthContext";
 
 /** Канон логина админок APL (RF/AIC/LQ): токен + демо-вход + «К проекту». */
 const PROJECT_URL = "https://ai.alex-n8n.site/cases/assistant-flow.html";
+const SUBTITLE = "Введите Bearer token для доступа к панели управления.";
+
+/**
+ * Канон возврата на лэндинг (RF/AIC): витрина открыла консоль с rel="opener",
+ * поэтому «К проекту» возвращает фокус на страницу кейса и закрывает консоль —
+ * окна не размножаются. Без opener — обычный переход в той же вкладке.
+ */
+function goProject() {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.focus();
+      window.close();
+      return;
+    }
+  } catch {
+    /* opener недоступен — обычный переход */
+  }
+  window.location.href = PROJECT_URL;
+}
 
 export function LoginPage() {
   const { loading, needsLogin, login, loginDemo, demoAvailable, authMode, hint } =
@@ -59,9 +78,7 @@ export function LoginPage() {
           🤖
         </div>
         <h1 className="login-card__title">Assistant Flow Admin Console</h1>
-        <p className="login-card__subtitle">
-          Введите Bearer token для доступа к панели управления.
-        </p>
+        <p className="login-card__subtitle">{SUBTITLE}</p>
 
         <form className="login-form" onSubmit={onSubmit} noValidate>
           <label className="login-form__field">
@@ -107,19 +124,21 @@ export function LoginPage() {
               Войти в демо-режим (только просмотр)
             </button>
           ) : null}
-          <a
+          <button
+            type="button"
             className="login-form__btn login-form__btn--outline login-form__btn--home"
-            href={PROJECT_URL}
-            target="_blank"
-            rel="opener"
+            onClick={goProject}
             title="Вернуться на страницу проекта в витрине AIP."
           >
             К проекту
-          </a>
+          </button>
         </form>
 
         <footer className="login-card__footer muted">
-          {hint ? <p className="login-card__hint">{hint}</p> : null}
+          {/* hint дублирует subtitle для анонима (whoami) — показываем только новую информацию */}
+          {hint && hint !== SUBTITLE ? (
+            <p className="login-card__hint">{hint}</p>
+          ) : null}
           {authMode === "disabled" ? (
             <p>Авторизация выключена (локальный режим без токенов).</p>
           ) : null}

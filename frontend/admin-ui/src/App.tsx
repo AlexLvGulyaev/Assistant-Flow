@@ -6,7 +6,6 @@ import { AdminLayout } from "./layout/AdminLayout";
 import { AuditPage } from "./pages/AuditPage";
 import { AudioPage } from "./pages/AudioPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
-import { ExitPage } from "./pages/ExitPage";
 import { ImagesPage } from "./pages/ImagesPage";
 import { LegendPage } from "./pages/LegendPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -40,7 +39,6 @@ export default function App() {
       <AuthSessionGuard />
     <Routes>
       <Route path="login" element={<LoginPage />} />
-      <Route path="exit" element={<ExitPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AdminLayout />}>
           <Route index element={<OverviewPage />} />

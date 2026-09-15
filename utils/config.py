@@ -43,7 +43,7 @@ class AppConfig:
     timeout_seconds: int = 30
     chroma_persist_dir: str = "data/chroma_db"
     rag_documents_dir: str = "data/documents"
-    rag_top_k: int = 3
+    rag_top_k: int = 5
     rag_chunk_size: int = 1000
     rag_chunk_overlap: int = 200
     rag_answer_max_tokens: int = 1500
@@ -178,7 +178,7 @@ def load_config() -> AppConfig:
         image_provider=(os.getenv("IMAGE_PROVIDER", "proxy").strip().lower() or "proxy"),
         chroma_persist_dir=os.getenv("CHROMA_PERSIST_DIR", "data/chroma_db"),
         rag_documents_dir=os.getenv("RAG_DOCUMENTS_DIR", "data/documents"),
-        rag_top_k=_int_env("RAG_TOP_K", 3),
+        rag_top_k=_int_env("RAG_TOP_K", 5),
         rag_chunk_size=_int_env("RAG_CHUNK_SIZE", 1000),
         rag_chunk_overlap=_int_env("RAG_CHUNK_OVERLAP", 200),
         rag_answer_max_tokens=_int_env("RAG_ANSWER_MAX_TOKENS", 1500),
