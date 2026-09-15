@@ -1,6 +1,6 @@
 # 📖 Assistant Flow User Guide
 
-Как **пользоваться** уже запущенной системой. Развёртывание — [🚀 docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
+Как **пользоваться** уже запущенной системой. Развёртывание — [🚀 docs/DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ---
 
@@ -24,19 +24,19 @@ Assistant Flow — мультимодальная AI-платформа:
 | **Telegram** | Пользователь | Вопросы, RAG, фото, голос, картинки |
 | **Admin UI** | Оператор | Диагностика, документы, память, оценка RAG |
 
-Адрес UI после portfolio-запуска: `http://localhost:8080` (см. [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)).
+Адрес UI после portfolio-запуска: `http://localhost:8080` (см. [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)).
 
 ---
 
 ## 3. Подключение к Telegram-боту
 
-Система должна быть уже запущена ([DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)).
+Система должна быть уже запущена ([DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)).
 
 1. Найдите в Telegram бота по **@username**, который задал оператор в BotFather (в репозитории имени нет).
 2. **Start** или `/start`.
 3. `/help` — режимы и примеры.
 
-Если бот не отвечает — оператору: [docs/OPERATIONS.md](docs/OPERATIONS.md) § «Типовые проблемы» (токен, restart).
+Если бот не отвечает — оператору: [docs/OPERATIONS.md](OPERATIONS.md) § «Типовые проблемы» (токен, restart).
 
 ---
 
@@ -177,13 +177,13 @@ flowchart LR
 
 **Пример:** «объясни простыми словами, что такое фотосинтез».
 
-![Пример текстового ответа в Telegram](docs/screenshots/text-tg.png)
+![Пример текстового ответа в Telegram](screenshots/text-tg.png)
 
 <p align="center"><em>
 Пример текстового ответа Telegram-ассистента в режиме обычного диалога.
 </em></p>
 
-![Консоль текстового pipeline](docs/screenshots/text-adm.png)
+![Консоль текстового pipeline](screenshots/text-adm.png)
 
 <p align="center"><em>
 Консоль текстового pipeline: параметры LLM-запроса, telemetry и таймлайн обработки text-response.
@@ -203,19 +203,19 @@ flowchart LR
 
 Без индексации — fallback без релевантных источников.
 
-![RAG-ответ в Telegram](docs/screenshots/rag-tg.png)
+![RAG-ответ в Telegram](screenshots/rag-tg.png)
 
 <p align="center"><em>
 RAG-ответ Telegram-ассистента на основе корпоративной базы знаний Assistant Flow.
 </em></p>
 
-![Операционная консоль RAG-сессий](docs/screenshots/rag-adm.png)
+![Операционная консоль RAG-сессий](screenshots/rag-adm.png)
 
 <p align="center"><em>
 Операционная консоль RAG-сессий с диагностикой retrieval, latency, cache-state и найденных чанков.
 </em></p>
 
-![Расширенная диагностика retrieval](docs/screenshots/retrieval-details-adm.png)
+![Расширенная диагностика retrieval](screenshots/retrieval-details-adm.png)
 
 <p align="center"><em>
 Расширенная диагностика retrieval: найденные чанки, relevance-score, latency retrieval и состояние retrieval cache.
@@ -239,13 +239,13 @@ OpenAI Vision; локальный Tesseract не используется.
 
 Оператор смотрит маршрут `vision_ocr` в **Текст** / **Логи**.
 
-![OCR в Telegram](docs/screenshots/ocr_tg.png)
+![OCR в Telegram](screenshots/ocr_tg.png)
 
 <p align="center"><em>
 Пример OCR-обработки изображения в Telegram: распознавание текста средствами OpenAI Vision.
 </em></p>
 
-![OCR / Vision pipeline в консоли](docs/screenshots/ocr_adm.png)
+![OCR / Vision pipeline в консоли](screenshots/ocr_adm.png)
 
 <p align="center"><em>
 OCR/Vision pipeline: распознавание изображения, telemetry обработки и извлечённый текст документа.
@@ -257,13 +257,13 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 
 При включённом аудио в окружении: голосовое → текст (и опционально озвучка). По умолчанию в demo — отключено.
 
-![Голосовое взаимодействие в Telegram](docs/screenshots/audio-tg.png)
+![Голосовое взаимодействие в Telegram](screenshots/audio-tg.png)
 
 <p align="center"><em>
 Пример голосового взаимодействия с Telegram-ассистентом: распознавание речи и генерация аудио-ответа.
 </em></p>
 
-![Консоль voice pipeline](docs/screenshots/audio-adm.png)
+![Консоль voice pipeline](screenshots/audio-adm.png)
 
 <p align="center"><em>
 Операционная консоль voice pipeline: STT/TTS telemetry, аудио-сессия и таймлайн обработки голосового запроса.
@@ -275,13 +275,13 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 
 `/mode text` → «нарисуй слона в посудной лавке» → изображение в чате.
 
-![Генерация изображения в Telegram](docs/screenshots/image-tg.png)
+![Генерация изображения в Telegram](screenshots/image-tg.png)
 
 <p align="center"><em>
 Пример генерации изображения Telegram-ассистентом по текстовому запросу пользователя.
 </em></p>
 
-![Консоль генерации изображений](docs/screenshots/image-adm.png)
+![Консоль генерации изображений](screenshots/image-adm.png)
 
 <p align="center"><em>
 Консоль генерации изображений: refined prompt, telemetry image pipeline и сохранённый generated asset.
@@ -297,7 +297,7 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 
 `/reset` — сброс режима и in-memory RAG.
 
-![Диагностика runtime memory](docs/screenshots/mem-adm.png)
+![Диагностика runtime memory](screenshots/mem-adm.png)
 
 <p align="center"><em>
 Диагностика runtime memory: контекст диалога, trimming history и политика ограничения conversational memory.
@@ -309,9 +309,9 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 
 Admin UI → **Документы**: загрузка, индексация, reindex, `chunk_count`.
 
-[docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md)
+[docs/ADMIN_INDEXING.md](ADMIN_INDEXING.md)
 
-![Управление документами knowledge base](docs/screenshots/documents-adm.png)
+![Управление документами knowledge base](screenshots/documents-adm.png)
 
 <p align="center"><em>
 Управление документами knowledge base: индексация, preprocessing, версии документов и жизненный цикл ingestion pipeline.
@@ -326,7 +326,7 @@ Admin UI → **Документы**: загрузка, индексация, rei
 - Токены заданы в `.env` (`AF_ADMIN_TOKEN`, `AF_ADMIN_DEMO_TOKEN`) → при открытии консоли открывается экран входа: введите токен или нажмите **«Войти в демо-режиме»** (read-only, токен запечён в UI при сборке).
 - Токены не заданы → консоль открывается без авторизации (локальный режим).
 - Выход — кнопка **Выход** (экран `/exit`) сбрасывает сессию.
-- Подробности (режимы, legacy-режим Basic-аутентификации, RBAC, аудит) — [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md).
+- Подробности (режимы, legacy-режим Basic-аутентификации, RBAC, аудит) — [docs/SECURITY_NOTES.md](SECURITY_NOTES.md).
 
 ### Разделы
 
@@ -351,43 +351,43 @@ Admin UI → **Документы**: загрузка, индексация, rei
 
 Кэш OFF/MISS/HIT — в карточках RAG.
 
-![Обзор состояния платформы](docs/screenshots/overview-adm.png)
+![Обзор состояния платформы](screenshots/overview-adm.png)
 
 <p align="center"><em>
 Обзор состояния платформы Assistant Flow: health-check сервисов, активные AI-провайдеры, retrieval backend и операционные метрики.
 </em></p>
 
-![Сводная операционная статистика](docs/screenshots/summary-adm.png)
+![Сводная операционная статистика](screenshots/summary-adm.png)
 
 <p align="center"><em>
 Сводная операционная статистика платформы: маршруты обработки, этапы pipeline, телеметрия провайдеров и агрегированные метрики.
 </em></p>
 
-![Панель Retrieval Settings](docs/screenshots/rs-adm.png)
+![Панель Retrieval Settings](screenshots/rs-adm.png)
 
 <p align="center"><em>
 Панель управления retrieval backend: переключение vector storage, runtime tuning, chunking и cache-настройки RAG.
 </em></p>
 
-![Сравнение retrieval cache MISS и HIT](docs/screenshots/cache-hit-adm.png)
+![Сравнение retrieval cache MISS и HIT](screenshots/cache-hit-adm.png)
 
 <p align="center"><em>
 Сравнение retrieval cache MISS и HIT: снижение latency retrieval при повторном запросе.
 </em></p>
 
-![Журнал execution-сессий](docs/screenshots/logs-adm.png)
+![Журнал execution-сессий](screenshots/logs-adm.png)
 
 <p align="center"><em>
 Журнал execution-сессий и трассировка pipeline обработки запросов Assistant Flow.
 </em></p>
 
-![Консоль оценки качества RAG](docs/screenshots/ragas-adm.png)
+![Консоль оценки качества RAG](screenshots/ragas-adm.png)
 
 <p align="center"><em>
 Консоль оценки качества RAG: RAGAS-метрики, ручная валидация ответов и анализ retrieved chunks.
 </em></p>
 
-![Сравнение сессий в evaluation run](docs/screenshots/evaluation-run-adm.png)
+![Сравнение сессий в evaluation run](screenshots/evaluation-run-adm.png)
 
 <p align="center"><em>
 Сравнение отдельных RAG-сессий внутри evaluation run с отображением метрик quality evaluation.
@@ -397,7 +397,7 @@ Admin UI → **Документы**: загрузка, индексация, rei
 
 ## 14. См. также
 
-- [🏠 README.md](README.md)
-- [🧭 docs/DEMO_ROUTE.md](docs/DEMO_ROUTE.md)
-- [🎬 docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md)
-- [🏗️ docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство системы
+- [🏠 README.md](../README.md)
+- [🧭 docs/DEMO_ROUTE.md](DEMO_ROUTE.md)
+- [🎬 docs/DEMO_SCENARIOS.md](DEMO_SCENARIOS.md)
+- [🏗️ docs/ARCHITECTURE.md](ARCHITECTURE.md) — устройство системы

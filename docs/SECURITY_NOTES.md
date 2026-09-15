@@ -209,5 +209,5 @@ portfolio-прототипа.
 
 - [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) — env-переменные доступа при развёртывании
 - [ARCHITECTURE.md](ARCHITECTURE.md) — архитектура контуров
-- [USER_GUIDE.md](../USER_GUIDE.md) — вход в консоль (пользовательский взгляд)
+- [USER_GUIDE.md](USER_GUIDE.md) — вход в консоль (пользовательский взгляд)
 - [database/db_contract.md](../database/db_contract.md) — контракт БД (identity, аудит)

@@ -11,8 +11,6 @@
 ```text
 Assistant-Flow/
 ├── README.md                            # Точка входа: что это, возможности, стек, быстрый старт, карта документации
-├── USER_GUIDE.md                        # Руководство пользователя: Telegram-команды, режимы, консоль
-├── PROJECT_STATE.md                     # Паспорт состояния проекта (статус, следующие шаги, история)
 ├── .env.example                         # Шаблон переменных окружения (заполнить → .env)
 ├── .env.server.example                  # Шаблон окружения для server-контура (docker-compose.assistant.yml)
 ├── .gitignore / .dockerignore           # Исключения git / Docker build context
@@ -126,6 +124,8 @@ Assistant-Flow/
 ├── docs/                                # Публичная документация
 │   ├── DEPLOYMENT_GUIDE.md              # Развёртывание с нуля (Source of Truth)
 │   ├── DEPLOYMENT_VALIDATION_REPORT.md  # Отчёт Deployment Validation (чистое окружение)
+│   ├── USER_GUIDE.md                    # Руководство пользователя: Telegram-команды, режимы, консоль
+│   ├── PROJECT_STATE.md                 # Паспорт состояния проекта (статус, следующие шаги, история)
 │   ├── OPERATIONS.md                    # Эксплуатация: compose, БД, векторные бэкенды, кэш, логи
 │   ├── SECURITY_NOTES.md                # Секреты, модель доступа, RBAC, retrieval security, аудит
 │   ├── ARCHITECTURE.md                  # Архитектура и принципы системы

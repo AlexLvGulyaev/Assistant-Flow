@@ -9,7 +9,7 @@ vector backends, кэш, логи, диагностика, типовые про
 |----------|------------|
 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Развёртывание с нуля (SOT воспроизводимости) |
 | **OPERATIONS.md** (этот файл) | Эксплуатация запущенного стека: compose, порты, backends, диагностика |
-| [USER_GUIDE.md](../USER_GUIDE.md) | Как пользоваться ботом и консолью |
+| [USER_GUIDE.md](USER_GUIDE.md) | Как пользоваться ботом и консолью |
 | [SECURITY_NOTES.md](SECURITY_NOTES.md) | Доступ, RBAC, аудит |
 
 ---

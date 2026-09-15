@@ -250,7 +250,7 @@ Assistant Flow поддерживает генерацию изображени�
 OCR/Vision pipeline: распознавание изображения, telemetry обработки и извлечённый текст документа.
 </em></p>
 
-Подробнее — [USER_GUIDE.md](USER_GUIDE.md).
+Подробнее — [USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ---
 
@@ -474,15 +474,13 @@ assistant-flow/
 ├── database/               # schema.sql, миграции
 ├── frontend/
 │   └── admin-ui/           # React операционная консоль (Vite)
-├── docs/                   # архитектура, DEPLOYMENT_GUIDE, OPERATIONS, screenshots/
+├── docs/                   # USER_GUIDE, PROJECT_STATE, DEPLOYMENT_GUIDE, OPERATIONS, screenshots/
 ├── evaluation/             # датасеты и контур оценки качества
 ├── scripts/                # smoke, индексация, утилиты
 ├── storage/                # FAISS, SQLite cache, assets (volume в compose)
 ├── utils/                  # AppConfig, общие утилиты
 ├── docker-compose.portfolio.yml
 ├── .env.example
-├── USER_GUIDE.md
-├── PROJECT_STATE.md
 └── README.md
 ```
 
@@ -592,7 +590,8 @@ curl -sS http://localhost:8600/api/health
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура системы |
 | [docs/DEMO_ROUTE.md](docs/DEMO_ROUTE.md) | Маршрут проверки демо |
 | [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Расширенная матрица демо-проверок |
-| [USER_GUIDE.md](USER_GUIDE.md) | Руководство пользователя и оператора |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Руководство пользователя и оператора |
+| [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) | Паспорт состояния проекта |
 | [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md) | Индексация базы знаний |
 | [docs/RAG_SMOKE_TEST.md](docs/RAG_SMOKE_TEST.md) | Smoke-тест RAG |
 | [docs/SPEC.md](docs/SPEC.md) | Продуктовая спецификация |

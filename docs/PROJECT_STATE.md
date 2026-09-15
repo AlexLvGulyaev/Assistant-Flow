@@ -51,14 +51,14 @@
 
 ## Decision
 
-Проект сохраняется как **портфельный актив** лаборатории: живой инстанс используется как витрина (демо-вход read-only), публичный репозиторий — Source of Truth развёртывания ([DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)). Накопленные долги (token economy, async layer, аудио hardening и др.) закрыты в 2026-09.
+Проект сохраняется как **портфельный актив** лаборатории: живой инстанс используется как витрина (демо-вход read-only), публичный репозиторий — Source of Truth развёртывания ([DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)). Накопленные долги (token economy, async layer, аудио hardening и др.) закрыты в 2026-09.
 
 ---
 
 ## Next Steps
 
-1. Deployment Validation в чистом окружении (dind) по DEPLOYMENT_GUIDE с фиксацией в [DEPLOYMENT_VALIDATION_REPORT.md](docs/DEPLOYMENT_VALIDATION_REPORT.md).
-2. Решения владельца: удаление устаревших volumes/образов `portfolio-test_*`.
+1. Решения владельца: удаление устаревших volumes/образов `portfolio-test_*`.
+2. Опционально: rag_smoke_test без tuning-резолвера тестирует env-конфиг, а не effective (Retrieval Settings) — кандидат на однострочный фикс.
 
 ---
 
@@ -73,10 +73,11 @@
 | 2026-09-03 | Разработка | Долг №6 закрыт: async-воркер (вариант A) — очередь `async_jobs`, панель «Фоновые задачи», enqueue/retry API |
 | 2026-09-03 | Разработка | Долг №7 закрыт: аудио-контур — таймауты/ретраи OpenAI STT/TTS, оценочная стоимость (cost_usd, cost_basis=estimated), token economy с per-stage/model/grand cost, стоимость в UI Сводки и Аудио |
 | 2026-09-15 | Упаковка | Рефакторинг публичной документации: канонический DEPLOYMENT_GUIDE, OPERATIONS (консолидация RUNBOOK), SECURITY_NOTES, DEMO_ROUTE, PROJECT_STRUCTURE, MEDIA_INDEX; устранение исторического sprawl (docs/security/, docs/architecture/, P-коды) |
+| 2026-09-15 | Разработка | RAG-поведение доведено до документации: блок «Источники» в Telegram, retrieval top_k 3→5 (батарея PASS); канон возврата на лэндинг (goProject), подпись логинформы без dev-жаргона, позиционирование /start; USER_GUIDE и PROJECT_STATE перенесены в docs/ |
 
 ---
 
 ## Границы документа
 
 - **PROJECT_STATE.md** — только паспорт: состояние, решения, шаги. Не содержит session logs, task prompts, пошаговых walkthrough.
-- Специализированная документация: `docs/` (DEPLOYMENT_GUIDE, DEPLOYMENT_VALIDATION_REPORT, OPERATIONS, SECURITY_NOTES, ARCHITECTURE и др.), `database/POSTGRES_SETUP.md`; полная карта — [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
+- Специализированная документация: `docs/` (DEPLOYMENT_GUIDE, DEPLOYMENT_VALIDATION_REPORT, OPERATIONS, SECURITY_NOTES, ARCHITECTURE и др.), `database/POSTGRES_SETUP.md`; полная карта — [docs/PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
