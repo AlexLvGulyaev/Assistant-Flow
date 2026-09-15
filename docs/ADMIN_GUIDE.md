@@ -67,16 +67,19 @@ Workflow индексации и safeguard-и — [🖥️ `ADMIN_INDEXING.md`](
 ### Схема индексации
 
 ```mermaid
-flowchart LR
-    OP[Оператор] --> UI[Admin UI: Документы]
-    UI --> S1[Загрузка файла]
-    S1 --> S2[Предобработка текста]
-    S2 --> S3[Артефакт сохранён]
-    S3 --> S4[Копия для RAG-каталога]
-    S4 --> S5[Индексация: чанки]
-    S5 --> S6[Эмбеддинги в vector backend]
-    S5 --> PG[(Метаданные PostgreSQL)]
-    S6 --> S7[Пайплайн загрузки завершён]
+flowchart TB
+    subgraph r1 [" "]
+        direction LR
+        OP[Оператор] --> UI[Admin UI: Документы] --> S1[Загрузка файла] --> S2[Предобработка текста] --> S3[Артефакт сохранён] --> S4[Копия для RAG-каталога]
+    end
+    subgraph r2 [" "]
+        direction LR
+        S5[Индексация: чанки] --> S6[Эмбеддинги в vector backend] --> S7[Пайплайн загрузки завершён]
+        S5 --> PG[(Метаданные PostgreSQL)]
+    end
+    r1 --> r2
+    style r1 fill:none,stroke:none
+    style r2 fill:none,stroke:none
 ```
 
 *Стадии в логах:* `admin_document_uploaded_raw` → `document_preprocessing_started` → `document_preprocessing_done` → `document_processed_artifact_saved` → `document_compatibility_file_written` → `document_indexing_started` → `document_indexing_done` → `document_upload_pipeline_done`.

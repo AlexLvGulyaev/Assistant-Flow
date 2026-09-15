@@ -1,18 +1,60 @@
 # 🏗️ Архитектура Assistant Flow
 
-**Статус:** актуально на 2026-09-15.
-
 ![Assistant Flow: интерфейс системы](screenshots/AF_portfolio_dark.png)
 
-Документ дополняет [README.md](../README.md): границы компонентов, потоки данных и модели развёртывания. Рантайм — `core/`, `services/`, `providers/`, `interfaces/`, `repositories/`, `admin_api/`, `frontend/admin-ui/`.
+**Проект:** assistant-flow · **Версия:** 1.0 · **Дата:** 2026-09-15 · **Статус:** актуально
 
-Платформа изначально **мультимодальная** (текст, голос, изображения в Telegram); полноценный **RAG**-контур и операционная React-консоль развивались как следующий этап.
+Документ — инженерный reference проекта (слой 3): границы компонентов, архитектурные принципы, потоки обработки, модель данных и развёртывания. Аудитория — инженеры сопровождения и развития. Пользовательский вход в проект — [README.md](../README.md); развёртывание с нуля — [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+
+Рантайм — `core/`, `services/`, `providers/`, `interfaces/`, `repositories/`, `admin_api/`, `frontend/admin-ui/`.
 
 ---
 
-## Схема верхнего уровня
+## 🎯 1. Архитектурные принципы
 
-Та же схема, что в [README.md](../README.md#архитектура-платформы):
+- **Пользовательский контур — только Telegram**: конечный пользователь не обращается к Admin API, базам и LLM-провайдерам напрямую.
+- **Операционный контур — Admin UI + Admin API**: React-консоль ходит только к FastAPI Admin API (same-origin `/api`), не к базам и провайдерам.
+- **Единый оркестратор** маршрутизации запросов по модальностям (`core/orchestrator.py`).
+- **PostgreSQL — source of truth** операционных данных: документы, версии, метаданные чанков, логи, память, настройки, аудит. Векторные backend — **производные хранилища**, восстановимы переиндексацией из документов.
+- **Векторный backend переключаем** (chroma / faiss / weaviate) через фабрику retrieval; активный backend — `platform_settings.active_rag_backend` (PostgreSQL), а не env-переменная.
+- **Runtime-тюнинг — не хардкод**: параметры поиска (`rag_top_k` и др.) резолвятся по цепочке DB override → env → default кода (`RetrievalTuningResolver`).
+- **Провайдеры разделены**: chat-LLM и embeddings — отдельные провайдеры (OpenAI / GigaChat / ProxyAPI-совместимые).
+- **Индексация отделена от чата**: загрузка/реиндекс — Admin UI, CLI или async-воркер; Telegram-контур базу знаний не пишет.
+- **Observability-first**: стадии pipeline фиксируются в `processing_logs`, health/degraded-статусы зависимостей, аудит привилегированных действий.
+
+---
+
+## 🌐 2. Схема верхнего уровня
+
+### Context (акторы и внешние системы)
+
+```mermaid
+flowchart TB
+    subgraph Пользователи
+        C[Клиент Telegram]
+        O[Оператор консоли]
+        D[Демо-зритель — read-only]
+    end
+
+    subgraph Assistant Flow
+        BOT[Telegram-бот]
+        CONSOLE[Admin UI + Admin API]
+    end
+
+    subgraph Внешние системы
+        TG[Telegram Bot API]
+        LLM[LLM-провайдеры<br/>OpenAI · GigaChat · ProxyAPI]
+    end
+
+    C -->|чат: текст, RAG, фото, голос| TG
+    TG --> BOT
+    O -->|HTTPS| CONSOLE
+    D -->|демо-вход read-only| CONSOLE
+    BOT --> LLM
+    CONSOLE --> LLM
+```
+
+### Контейнеры и данные
 
 ```mermaid
 flowchart TD
@@ -53,7 +95,7 @@ flowchart TD
 
 ---
 
-## Общая идея
+## 🧭 3. Контуры
 
 Система разделена на **пользовательский** и **операционный** контуры.
 
@@ -68,7 +110,7 @@ flowchart TD
 
 ---
 
-## Основные компоненты
+## 🧩 4. Основные компоненты
 
 ### Telegram bot
 
@@ -92,6 +134,7 @@ flowchart TD
 
 - `admin_api/`, `run_admin_api.py` (порт **8600**).
 - `/api`: `health`, `overview`, `summary`, `logs`, `documents`, `assets`, retrieval settings, evaluation, security audit и др.
+- Асинхронный слой: очередь `async_jobs` (миграция 004) + воркер-поток внутри admin-api (`rag_reindex`), reclaim stale-`running` на старте.
 - Аутентификация и RBAC: Bearer-токены консоли (`AF_ADMIN_TOKEN` — admin, `AF_ADMIN_DEMO_TOKEN` — demo read-only), permission-проверки на маршрутах, журнал аудита — [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
 ### React Admin UI
@@ -102,7 +145,7 @@ flowchart TD
 
 ### PostgreSQL
 
-- `database/schema.sql`, контракт: `database/db_contract.md`.
+- `database/schema.sql` (snapshot), контракт: `database/db_contract.md`.
 - Доступ: `repositories/`, сервисы lifecycle.
 
 ### Провайдеры
@@ -119,7 +162,31 @@ flowchart TD
 
 ---
 
-## Потоки обработки
+## 🗄️ 5. Данные и хранилища
+
+| Хранилище | Содержимое | Пишут | Читают |
+|-----------|------------|-------|--------|
+| **PostgreSQL** (SOT) | операционные данные — инвентарь ниже | бот, admin-api (+ воркер), CLI | консоль, бот, RAG-контур |
+| **Vector backend** (chroma / weaviate / faiss) | чанки + эмбеддинги — **производное** хранилище | воркер индексации, CLI (`admin_index_documents.py`) | RAG-контур |
+| **Retrieval cache** (SQLite `storage/cache/`) | результаты RAG-поиска | `caching_retrieval_backend` | RAG-контур |
+| **logs.db** (SQLite) | технические записи провайдеров | `RequestLogger` | консоль (частично) |
+| **Файлы**: `data/documents`, `storage/assets`, `outputs` | исходные документы, превью, генерации | upload pipeline, модальности | Admin API, Telegram |
+
+Инвентарь таблиц PostgreSQL (по группам):
+
+- **Документы:** `documents`, `document_versions`, `document_chunks`, `indexing_jobs`.
+- **Диалог и память:** `chat_sessions`, `chat_messages`, `user_channel_identities`, `user_preferences`.
+- **Наблюдаемость:** `processing_logs`, `intake_events`, `request_logs`, `error_logs`, `usage_metrics`, `generated_assets`, `outbox` — все связаны `execution_id`.
+- **Конфигурация:** `platform_settings` (активный retrieval backend, кэш, параметры безопасности).
+- **Identity и безопасность:** `app_users`, `auth_login_events`, `admin_audit_log`.
+- **Фоновые задачи:** `async_jobs` (тип, payload, статус, попытки; воркер — поток admin-api).
+- **Оценка качества:** `evaluation_dataset`, `evaluation_dataset_item`, `evaluation_run`, `evaluation_item`, `evaluation_metric_fact`.
+
+Контракт схемы и правило её изменения — `database/db_contract.md` (SOT); снапшот — `database/schema.sql`. Автоматическая ретенция/ротация записей не реализованы — очистка относится к ручным операциям ([OPERATIONS.md](OPERATIONS.md)).
+
+---
+
+## 🔀 6. Потоки обработки
 
 ### Text
 
@@ -128,6 +195,32 @@ Telegram → оркестратор → GigaChat (и связанные серв
 ### RAG
 
 Режим `rag`: **read-only** поиск по векторному backend → контекст → LLM с источниками → диагностика в Telegram и Admin UI.
+
+```mermaid
+sequenceDiagram
+    participant U as Пользователь
+    participant B as Telegram-бот
+    participant R as RagQueryService
+    participant C as Retrieval cache
+    participant V as Vector backend
+    participant L as LLM-провайдер
+    participant P as PostgreSQL
+
+    U->>B: вопрос (режим rag)
+    B->>R: запрос + effective tuning (DB override → env → код)
+    R->>C: ключ кэша (детерминированный SHA-256)
+    alt HIT
+        C-->>R: чанки из кэша
+    else MISS
+        R->>V: embedding запроса + поиск top_k
+        V-->>R: чанки и scores
+        R->>C: запись результата
+    end
+    R->>L: RAG prompt (контекст + вопрос)
+    L-->>R: ответ
+    R-->>B: ответ + блок «Источники»
+    R->>P: стадии pipeline → processing_logs
+```
 
 ### Image / Audio
 
@@ -161,13 +254,34 @@ Telegram: фото или image/* document
 
 Оператор: Admin UI **Документы** или CLI → чанки → векторный backend + Postgres (`documents`, `document_versions`, `document_chunks`, события). Telegram этот путь не использует.
 
+```mermaid
+sequenceDiagram
+    participant O as Оператор
+    participant UI as Admin UI
+    participant A as Admin API
+    participant W as Async-воркер (admin-api)
+    participant V as Vector backend
+    participant P as PostgreSQL
+
+    O->>UI: Документы → загрузка / Reindex
+    UI->>A: POST /api/documents/upload | /api/documents/reindex-async
+    A->>P: enqueue async_jobs (rag_reindex)
+    A-->>UI: job_id
+    W->>P: берёт queued-задачу
+    W->>V: чанки + эмбеддинги
+    W->>P: метаданные (documents, document_versions, document_chunks), processing_logs
+    W->>P: async_jobs → done/failed
+    UI->>A: GET /api/documents/async-jobs (прогресс)
+```
+
 ---
 
-## Наблюдаемость
+## 👁️ 7. Наблюдаемость
 
 - **processing_logs** (PostgreSQL) — стадии, `execution_id`, JSON-детали для консоли.
 - **logs.db** (SQLite) — технические записи провайдеров; не смешивать со схемой Postgres без явной связи.
 - **GET /api/health** — postgres, chroma, rag, LLM; статус `degraded` при частичных сбоях.
+- **admin_audit_log** — привилегированные действия и обращения к Admin API (включая отказы 401/403).
 
 Страницы: Overview, Summary, Logs; модальные экраны по модальностям.
 
@@ -185,11 +299,30 @@ Telegram: фото или image/* document
 
 ---
 
-## Развёртывание
+## 🚀 8. Развёртывание
 
 ### Portfolio (канонический GitHub/demo)
 
-`docker-compose.portfolio.yml` — postgres + chroma + weaviate + bot + admin-api + admin-ui.  
+```mermaid
+flowchart LR
+    T[Traefik :443<br/>единый TLS-вход] -->|af-admin.alex-n8n.site| UI[admin-ui]
+
+    subgraph portfolio compose
+        UI -->|same-origin /api| A[admin-api :8600]
+        B[assistant-flow<br/>Telegram-бот]
+        PG[(postgres :5433)]
+        CH[(chroma :8001)]
+        WV[(weaviate :8089)]
+    end
+
+    B -->|polling| TG[Telegram Bot API]
+    A --> PG
+    B --> PG
+    A --> CH
+    B --> CH
+    A --> WV
+```
+
 Команда, порты и полный порядок развёртывания: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ### Server (продвинутый)
@@ -199,7 +332,7 @@ Telegram: фото или image/* document
 
 ---
 
-## Ограничения
+## ⚠️ 9. Ограничения
 
 - Прототип / single-tenant; нет multi-tenant изоляции и external IAM.
 - Потеря тома Chroma/Weaviate = переиндексация.
