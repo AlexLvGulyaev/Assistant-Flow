@@ -226,14 +226,6 @@ LangChain `OpenAIEmbeddings` не экспонирует usage; оценка —
 
 ---
 
-## Server-контур (не portfolio)
-
-`docker-compose.assistant.yml`, `.env.server`, Traefik — отдельная топология
-(server-контур): бот + Chroma; операционная консоль в него не входит —
-admin-контур разворачивается portfolio-стеком. Не основной путь GitHub-демо.
-
----
-
 ## Типовые проблемы
 
 | Симптом | Причина / действие |

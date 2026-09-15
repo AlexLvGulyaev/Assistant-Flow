@@ -12,11 +12,9 @@
 Assistant-Flow/
 ├── README.md                            # Точка входа: что это, возможности, стек, быстрый старт, карта документации
 ├── .env.example                         # Шаблон переменных окружения (заполнить → .env)
-├── .env.server.example                  # Шаблон окружения для server-контура (docker-compose.assistant.yml)
 ├── .gitignore / .dockerignore           # Исключения git / Docker build context
 ├── Dockerfile                           # Многоступенчатый образ: бот + admin-api (INSTALL_RAGAS опционально)
 ├── docker-compose.portfolio.yml         # Portfolio-стек: postgres + chroma + weaviate + assistant-flow + admin-api + admin-ui
-├── docker-compose.assistant.yml         # Server-контур: бот + Chroma без операционной консоли (консоль — portfolio-стек)
 ├── requirements.txt                     # Python-зависимости основного контура (бот + admin-api)
 ├── requirements-ragas.txt               # Зависимости RAGAS-оценки (опционально, build-arg INSTALL_RAGAS)
 ├── main.py                              # Точка входа Telegram-бота (модуль)

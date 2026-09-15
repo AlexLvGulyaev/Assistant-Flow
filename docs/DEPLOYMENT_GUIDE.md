@@ -205,15 +205,7 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 
 ---
 
-## 🧩 10. Альтернативный контур (server, продвинутый)
-
-`docker-compose.assistant.yml` — server-контур: внешние сети, Traefik,
-`.env.server`. Не предназначен для клона репозитория; канонический путь
-демо/разработки — portfolio-compose выше. Описание — [OPERATIONS.md](OPERATIONS.md).
-
----
-
-## 🧯 11. Типовые проблемы
+## 🧯 10. Типовые проблемы
 
 | Симптом | Причина | Действие |
 |---------|---------|----------|

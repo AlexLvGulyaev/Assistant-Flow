@@ -9,7 +9,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
-!.env.server.example
 
 # Virtualenvs (local)
 .venv/

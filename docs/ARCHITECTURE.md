@@ -301,8 +301,6 @@ sequenceDiagram
 
 ## 🚀 8. Развёртывание
 
-### Portfolio (канонический GitHub/demo)
-
 ```mermaid
 flowchart LR
     T[Traefik :443<br/>единый TLS-вход] -->|af-admin.alex-n8n.site| UI[admin-ui]
@@ -324,10 +322,6 @@ flowchart LR
 ```
 
 Команда, порты и полный порядок развёртывания: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
-
-### Server (продвинутый)
-
-`docker-compose.assistant.yml` — внешние сети, Traefik, `.env.server`: бот + Chroma, операционная консоль в него не входит (admin-контур — portfolio-стек). Не основной путь для клона репозитория.
 
 ---
 
