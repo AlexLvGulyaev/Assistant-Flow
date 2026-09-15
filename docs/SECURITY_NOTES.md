@@ -1,87 +1,213 @@
-# 🛡️ Заметки по безопасности
+# 🛡️ Безопасность Assistant Flow
 
-Известные ограничения portfolio-прототипа. Не заменяет threat model и не претендует на полноту продакшен-чеклиста.
+Единый справочник безопасности: доступ к операционной консоли, RBAC, защита
+данных при retrieval, аудит, гигиена секретов. Факты соответствуют runtime
+(auth middleware `services/security/`, RBAC `services/security/rbac.py`,
+миграции 007/008, `.env.example`). Архитектура контуров —
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## Секреты и публикация репозитория
+## 🔑 1. Секреты и публикация репозитория
 
 - Ключи Telegram, LLM, Proxy API, embeddings и `DATABASE_URL` — **только** через переменные окружения.
-- В git: **`.env.example`** с плейсхолдерами; файлы `.env`, `.env.server` — в `.gitignore`, не коммитить.
-- Перед публичным GitHub: `git status`, сканирование истории ([GITHUB_PREP.md](GITHUB_PREP.md)), отсутствие IP внутренних серверов и приватных endpoint в документации.
+- В git: `.env.example` с плейсхолдерами; файлы `.env`, `.env.server` — в `.gitignore`, не коммитить.
 - Скриншоты и логи в репозитории не должны содержать реальные токены.
+- Перед публикацией проверять: `git status` чистый, в истории нет секретов, в документации нет IP внутренних серверов и приватных endpoint.
 
 ---
 
-## Admin API и Admin UI
+## 🔐 2. Модель доступа к консоли (демо-стандарт APL)
 
-- **Демо-стандарт APL (текущий):** задайте в `.env` `AF_ADMIN_TOKEN` (роль `admin`) и `AF_ADMIN_DEMO_TOKEN` (витринный «Войти в демо-режиме», роль `demo`, read-only). Токены заданы → enforcement автоматически `required`; `GET /api/auth/whoami` — авторитетная роль; входы пишутся в аудит (`console_login`). Демо-токен запекается в бандл `admin-ui` при сборке (`VITE_OPS_DEMO_TOKEN`) — смена требует пересборки UI.
-- **Легаси-режим P9.2:** `AF_AUTH_MIDDLEWARE_MODE` (`disabled` / `optional` / `required`) + Basic auth + `INITIAL_ADMIN_*` — [security/auth_modes.md](security/auth_modes.md). Без заданных токенов API остаётся открытым (локальный режим).
-- **P9.3:** ``POST /api/auth/login`` выдаёт Bearer token; задайте ``AF_SESSION_SECRET`` в production (не dev fallback). Режим ``required`` validated после применения ``007_identity_foundation.sql`` (см. P9.3a).
-- **P9.3a:** при ``column "email" does not exist`` на login — schema drift: применить ``database/migrations/007_identity_foundation.sql`` к PostgreSQL, затем restart Admin API. Bootstrap admin невозможен без актуальной схемы ``app_users``.
-- Admin UI (**8080**) хранит token в ``sessionStorage``; не выставлять в открытый интернет без:
-  - reverse proxy с TLS;
-  - VPN, IP allowlist, OAuth2-proxy или аналога;
-  - ограничения rate limit и размера тел.
+Доступ к Admin API/Admin UI — через статические Bearer-токены консоли:
 
----
+| Переменная | Роль | Возможности |
+|------------|------|-------------|
+| `AF_ADMIN_TOKEN` | `admin` | Полный доступ: все разделы, загрузка/reindex документов, retrieval settings, evaluation |
+| `AF_ADMIN_DEMO_TOKEN` | `demo` (read-only) | Только просмотр: Обзор, Сводка, Текст, RAG, Документы (список), Retrieval Settings (чтение), Логи, Аудит. Мутации → **403** |
+| не заданы | — | Авторизация выключена — консоль открыта (локальный режим разработки) |
 
-## CORS и сеть
+Правила:
 
-- `ADMIN_API_CORS_ORIGINS` — сузить под реальные origin UI вне localhost.
-- В demo-compose Postgres (**5433**), Chroma (**8001**), Weaviate (**8089**) публикуются на хост — на публичной машине ограничить firewall / bind address.
-
----
-
-## Данные
-
-- Превью ассетов через API — политика хранения и удаления на стороне оператора.
-- Векторные индексы и Postgres могут содержать содержимое загруженных документов; не использовать демо-стек для реальных персональных данных без оценки рисков.
-
----
-
-## RAG и политики доступа
-
-- **P8.1 (2026-05-19):** основной Telegram RAG path передаёт `security_context` через `policy_resolver` (env: `TELEGRAM_DEFAULT_RETRIEVAL_ROLE`, `TELEGRAM_ADMIN_USER_IDS`, `TELEGRAM_GUEST_USER_IDS`).
-- Роли: **guest** → только `visibility=public`; **employee** → public + internal + legacy `unspecified`; **admin** → unrestricted.
-- Дефолтная роль Telegram: **employee** (совместимость с corpus без явной visibility).
-- **P8.2:** при upload через Admin API задаётся `visibility` (`public` | `internal` | `restricted`); default **internal**; metadata попадает в chunk/vector store. Legacy `unspecified` не меняется.
-- Admin API закрыт авторизацией (демо-стандарт APL или легаси-режим P9.2); RBAC-права — P9.4 ([security/rbac_permissions.md](security/rbac_permissions.md)).
-- Design: [architecture/security_rbac_design.md](architecture/security_rbac_design.md).
+- **Enforcement автоматический:** задан `AF_ADMIN_TOKEN` (или демо-токен) → режим
+  защиты `required`; токенов нет → открытый режим. Явно переопределяется
+  `AF_AUTH_MIDDLEWARE_MODE` (§3).
+- **Авторитетная роль:** `GET /api/auth/whoami` — Bearer-токен → роль
+  (`admin`/`demo`); фронтенд сохраняет сессию `{token, role}`.
+- **Демо-вход в UI:** демо-токен запекается в бандл admin-ui при сборке
+  (`VITE_OPS_DEMO_TOKEN` ← `AF_ADMIN_DEMO_TOKEN`) — кнопка «Войти в демо-режиме».
+  **Смена демо-токена требует пересборки admin-ui.**
+- **Аудит входов:** каждый успешный вызов `whoami` с валидным ops-токеном пишется
+  в `admin_audit_log` как `auth.console.login` (действие `console_login`).
+- **Rate-limiting / квоты на демо-вход не реализованы** — ограничение демо-режима
+  только правами (read-only, 403 на мутации) и аудитом обращений.
+- Сессия UI хранится в `sessionStorage` (закрывается с вкладкой).
 
 ---
 
-## PII и операционные логи
+## 🗝️ 3. Режимы аутентификации (`AF_AUTH_MIDDLEWARE_MODE`)
 
-- **P8.3 (2026-05-19):** централизованный `services/security/log_sanitizer.py` — sanitization перед записью в `processing_logs` и при отдаче через Admin API (`truncate_details` / `_slim_details_for_payload`).
-- Operational policy: redact `user_input`, `retrieval_ready_query`, `chunk_text_full`, `transcript`, `context`, `query`, `raw_payload`; PII masking + length caps; markers `sanitized`, `redacted_fields`, `truncated_fields`, `sanitization_policy`.
-- Forensic (role=admin / `forensic=True`): bounded поля с PII masking, не raw unlimited.
-- **P8.1:** pre-LLM masking перед LLM; retrieval cache изолирован по security fingerprint.
-- `/api/logs/recent` под авторизацией (read-право, P9.4) — оператор видит записанное в БД (новые записи — sanitized; исторические строки — без ретро-очистки).
-- STT: `transcript` redact в operational logs → `transcript_preview` + `transcript_chars` (через lifecycle sanitizer).
-- **Known limitations:** retrieval cache SQLite (полные тексты чанков для hit quality); `chat_messages` / memory subsystem; исторические `processing_logs` в PostgreSQL.
-- **P8.4:** верификация — `scripts/test_p8_4_security_verification_smoke.py`.
-- **P8.5:** demo walkthrough — [security/security_walkthrough.md](security/security_walkthrough.md); session logs P8.1–P8.4 приведены к self-contained формату (полные prompt'ы встроены).
+| Режим | Поведение | Когда использовать |
+|-------|-----------|-------------------|
+| `disabled` | Все `/api/*` открыты | Локальная разработка (default при отсутствии токенов) |
+| `optional` | Credentials разбираются → principal; маршруты не блокируются | Отладка credentials |
+| `required` | Защищённые маршруты → **401** без principal | Консоль с заданным токеном; staging/production-style |
+
+**Legacy-режим (email/password, без ops-токенов):** `POST /api/auth/login` →
+HMAC-signed session token (`AF_SESSION_SECRET`, TTL `AF_SESSION_TTL_SECONDS`,
+default 28800 с = 8 ч); HTTP Basic (`INITIAL_ADMIN_EMAIL` /
+`INITIAL_ADMIN_PASSWORD`; bootstrap admin создаётся при старте Admin API, если
+активных admin нет). Пароль в логи не пишется; refresh-токенов нет.
+
+**Public allowlist (режим `required`):** `GET /api/health`, `GET /api/auth/me`,
+`POST /api/auth/login`, `POST /api/auth/logout`, `/docs`, `/redoc`,
+`/openapi.json`. Опционально (`AF_AUTH_PUBLIC_READ_ONLY=true`) — только GET для
+`/api/overview`, `/api/summary` и списка `/api/documents`.
+
+**Dev-only:** `AF_IDENTITY_DEV_HEADERS=true` — заголовки
+`X-AF-Principal-Email`/`X-AF-Principal-Password` (не для production).
+
+**Schema drift:** при `column "email" does not exist` на login — применить
+`database/migrations/007_identity_foundation.sql` и перезапустить Admin API
+(bootstrap невозможен без актуальной схемы `app_users`).
+
+**Экспозиция UI в интернет:** Admin UI (8080) не выставлять в открытый доступ
+без reverse proxy с TLS (demo-контур — same-origin `/api` через nginx
+контейнера admin-ui), VPN/IP-allowlist/OAuth2-proxy или аналога; CORS
+(`ADMIN_API_CORS_ORIGINS`) — для прямого доступа браузера к API на 8600.
 
 ---
 
-## Identity & control plane (P9.0–P9.1)
+## 🧩 4. RBAC (роль → permission)
 
-- **P9.0:** архитектура — [architecture/identity_and_security_architecture.md](architecture/identity_and_security_architecture.md).
-- **P9.1 (2026-05-19):** identity foundation — `app_users` расширен, `user_channel_identities`, `auth_login_events`, `IdentityService`, `PrincipalContext`, middleware foundation, bootstrap admin.
-- Admin API auth: по умолчанию **выключен** (`AF_AUTH_MIDDLEWARE_MODE=disabled`); для проверки Basic auth — `optional` или `required` + `INITIAL_ADMIN_*`.
-- Миграция: `database/migrations/007_identity_foundation.sql`.
-- **P9.2 (2026-05-19):** enforcement middleware — режимы `disabled` / `optional` / `required`; `GET /api/auth/me`; защита Admin API в `required`. См. [security/auth_modes.md](security/auth_modes.md).
-- **P9.3 (2026-05-19):** Admin UI login/session (Bearer); **P9.3a:** runtime validation выявила schema drift — перед login обязательна миграция 007.
-- **P9.4 (2026-05-19):** real RBAC — `services/security/rbac.py`, `require_permission` на Admin API routes, UI `hasPermission`. Bootstrap = `admin`. См. [security/rbac_permissions.md](security/rbac_permissions.md).
-- **P9.5 (2026-05-19):** security audit trail — `admin_audit_log`, `AuditService`, `GET /api/security/audit/*`. См. [security/audit_and_observability.md](security/audit_and_observability.md).
-- **P9.5b (2026-05-19):** Security console — narrative scenarios, severity, retrieval/RBAC visualization в Admin UI `/audit`. См. [security/security_console_walkthrough.md](security/security_console_walkthrough.md).
-- `app_users` / `PrincipalContext` / RBAC используются в Admin API; retrieval role bridge подключён (P9.1–P9.4).
-- Ограничения control-plane: нет user-management UI, нет multi-tenant isolation, нет external IAM/OAuth, retention audit — вручную оператором.
-- Направление: local auth first; Keycloak/OAuth — P9.7; multi-tenant — P9.6.
+Модель: bounded role → permission для Admin API control plane
+(`services/security/rbac.py`, миграция `007_identity_foundation.sql`).
+
+### Permissions
+
+| Permission | Назначение |
+|------------|------------|
+| `documents:read` | Список/детали документов, overview, summary, preview ассетов |
+| `documents:write` | Upload, edit-text |
+| `documents:reindex` | Reindex документа / всей коллекции |
+| `logs:read` | Логи, memory observability, evaluation read |
+| `logs:forensic` | Полные тела чанков в operational logs API |
+| `retrieval:read` | Retrieval overview/tuning GET |
+| `retrieval:admin` | Смена активного backend, tuning PUT/DELETE |
+| `settings:read` | Чтение tuning (operator) |
+| `settings:write` | Evaluation import, RAGAS run, item patch |
+| `users:read` / `users:write` | Управление пользователями (`users:write` — только `superadmin`) |
+| `audit:read` | Чтение журнала аудита |
+
+### Роли → permissions
+
+| Роль | Admin API | Retrieval (data path) |
+|------|-----------|----------------------|
+| `end_user`/`guest` | — | guest |
+| `employee` | — | employee |
+| `operator` | documents (read/write/reindex) + logs read + retrieval read + settings read | employee |
+| `auditor` | logs + forensic + audit + documents read + retrieval read | employee |
+| `admin` | все operational permissions | admin |
+| `superadmin` | operational + `users:write` | admin |
+| `demo` | только чтение: documents/logs/retrieval/settings/audit read | — |
+
+Bootstrap admin (identity foundation): `platform_role=admin`, `retrieval_role=admin`.
+
+### Route enforcement
+
+Маршруты защищены через `require_permission(...)`:
+
+- `GET /api/documents*` → `documents:read`; upload/edit-text → `documents:write`; reindex → `documents:reindex`
+- `GET /api/logs/recent`, `GET /api/memory/*` → `logs:read` (forensic-поля — при `logs:forensic`)
+- `GET /api/overview`, `/api/summary` → `documents:read`
+- `GET /api/retrieval/*` → `retrieval:read`; PUT/DELETE → `retrieval:admin`
+- `GET /api/evaluation/*` → `logs:read`; write-операции → `settings:write`
+- `GET /api/security/audit/*` → `audit:read`
+- `/api/auth/*`, `/api/health` — public/session
+
+Ответы: **401** — нет/невалидный токен; **403** — токен есть, permission нет.
+Фронтенд (`AuthProvider.hasPermission()`) скрывает недоступные операции.
+
+**Ограничения RBAC:** нет UI управления пользователями/ролями; нет ABAC /
+row-level security.
 
 ---
 
-## Честная оценка зрелости
+## 🗄️ 5. Retrieval security (data path)
 
-Проект демонстрирует архитектуру и эксплуатацию AI-сервисов, но **не** сертифицирован как готовое мультиарендное или compliance-ready решение. Data-path security (P8) и control-plane security (P9) — разные этапы зрелости. Деградация и восстановление — best-effort в коде, не регламентированный SLA.
+Безопасность пользовательского контура (Telegram RAG) — отдельный слой:
+
+- **Retrieval-роли:** `guest` (только `visibility=public`) / `employee` (public +
+  internal + legacy `unspecified`) / `admin` (unrestricted). Роль задаётся env
+  (`TELEGRAM_DEFAULT_RETRIEVAL_ROLE`, списки `TELEGRAM_ADMIN_USER_IDS` /
+  `TELEGRAM_GUEST_USER_IDS`) и фильтрует результаты поиска (Chroma `where` +
+  post-filter; FAISS — oversample + post-filter).
+- **Visibility документов:** `public` | `internal` (default для новых) |
+  `restricted` — задаётся при upload, распространяется: документ → чанки →
+  vector store → retrieval filter.
+- **Pre-LLM masking:** перед вызовом LLM — email → `[EMAIL]`, телефон →
+  `[PHONE]`, длинные числа → `[PII]`.
+- **Sanitization логов:** `services/security/log_sanitizer.py` — политики
+  `operational` (default: redact опасных полей + PII mask + preview) и
+  `forensic_admin` (bounded поля + PII mask); markers в `processing_logs.details`.
+- **Isolation кэша:** fingerprint retrieval cache учитывает роль/visibility —
+  guest и employee не делят cache entry.
+
+---
+
+## 📜 6. Audit trail
+
+`admin_audit_log` (базовая таблица — миграция `002_runtime_lifecycle.sql`,
+расширение — `008_admin_audit_extend.sql`) — единый security audit; параллельно
+`auth_login_events` (identity, 007) — auth-специфичный поток.
+
+Поля события: `event_type` (`auth.login.success`, `security.permission.denied`,
+`privileged.documents.upload`, …), `admin_user_id`, `principal_email`,
+`platform_role`, `action`, `target_type`/`target_id`, `status`
+(`success`/`failure`), `reason` (без секретов), `request_path`/`request_method`,
+`ip_hash` (SHA256-префикс, не raw IP), `user_agent` (до 512 символов),
+`execution_id`, `details` (JSONB, sanitized).
+
+Что аудируется: auth (login success/failure, logout, console login), access
+denied (401, dedup 60s), permission denied (403), privileged-операции
+documents/retrieval/settings, evaluation write.
+
+API (`audit:read`): `GET /api/security/audit/recent`,
+`GET /api/security/audit/summary` (фильтры: `event_type`, `status`,
+`principal_email`, `since_hours`).
+
+UI: страница **Аудит** (`/audit`) — сценарии (не raw events), severity, split
+«список / pipeline», collapsible raw JSON.
+
+Sanitization: `AuditService` redact — `password`, `token`, `authorization`,
+`secret`, `api_key` и т.п.; raw Bearer-заголовки не пишутся.
+
+**Retention — ручной** (автоматической ротации нет). Audit не SIEM: нет
+distributed tracing, immutable WORM storage. Graceful degradation: ошибка
+INSERT в audit не блокирует privileged-операцию.
+
+---
+
+## ⚠️ 7. Границы и известные ограничения
+
+| Ограничение | Комментарий |
+|-------------|-------------|
+| Single-tenant | Нет multi-tenant изоляции; external IAM/OAuth — не реализовано |
+| Encrypted storage at rest | Нет (векторы и кэш в открытом виде) |
+| Retention audit/логов | Ручная очистка |
+| Rate-limiting консоли | Нет (права + аудит, без квот) |
+| FAISS | Фильтрация post-filter, не pre-vector deny |
+| SQLite retrieval cache | Хранит тексты чанков для качества HIT |
+
+Документ не заменяет threat model и не претендует на полноту
+продакшен-чеклиста — это честная карта фактического security-контура
+portfolio-прототипа.
+
+---
+
+## 📚 Связанные документы
+
+- [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) — env-переменные доступа при развёртывании
+- [ARCHITECTURE.md](ARCHITECTURE.md) — архитектура контуров
+- [USER_GUIDE.md](../USER_GUIDE.md) — вход в консоль (пользовательский взгляд)
+- [database/db_contract.md](../database/db_contract.md) — контракт БД (identity, аудит)

@@ -58,14 +58,38 @@ intake_events
 3. Не обращаться к PostgreSQL напрямую из handlers.
 4. Доступ к БД — через слой repositories/services.
 5. Telegram `user_id` — внешний идентификатор; в БД пользователь представлен в `app_users`.
-6. Роли: `user`, `admin` — как в v1.
-7. Обычный пользователь не меняет базу знаний и индексацию; админ — может, с фиксацией в `admin_audit_log` по мере внедрения.
+6. Роли: legacy-поля `role` (`user`, `admin`) сохранены для совместимости; с миграции **007** действуют `platform_role` (`end_user`, `employee`, `operator`, `admin`, `auditor`, `superadmin`) и `retrieval_role` (`guest`, `employee`, `admin`). RBAC консоли оперирует `platform_role` — [SECURITY_NOTES.md](../docs/SECURITY_NOTES.md) §4.
+7. Обычный пользователь не меняет базу знаний и индексацию; админ — может, с фиксацией в `admin_audit_log`.
+
+## Объекты миграций 004–008
+
+Snapshot `schema.sql` включает объекты миграций 002–008 (таблица `async_jobs` — из отдельного init-скрипта 02).
+
+### async_jobs (004)
+
+Очередь фоновых задач (reindex и др.): тип задачи, параметры (`payload`), статус (`queued`/`running`/`done`/`failed`/`cancelled`), попытки и ошибки; воркер — поток в admin-api.
+
+### platform_settings (005)
+
+Runtime-настройки платформы (ключ → значение): retrieval backend, retrieval cache, параметры безопасности; редактируются из консоли.
+
+### Оценка качества (006)
+
+`evaluation_dataset`, `evaluation_dataset_item`, `evaluation_run`, `evaluation_item`, `evaluation_metric_fact` — датасеты, прогоны оценки RAG (RAGAS), метрики по элементам.
+
+### Identity (007)
+
+`app_users` расширен: `email`, `password_hash`, `display_name`, `status`, **`platform_role`**, **`retrieval_role`**, `last_login_at`; legacy `role` сохранён. Новые таблицы: `user_channel_identities` (связка платформенный пользователь ↔ канал, например Telegram `user_id`), `auth_login_events` (события входов: способ, статус, IP-hash).
+
+### admin_audit_log (008)
+
+Расширение журнала аудита: `event_type`, `principal_email`, `platform_role`, `status`, `reason`, `request_path`, `request_method`, `ip_hash`, `user_agent` — записи не только о действиях администратора, но и об обращениях к Admin API (в т.ч. отказы 401/403).
 
 ## Таблицы (существующие, расширенные в v2)
 
 ### app_users
 
-Пользователи Telegram и роли. Без изменений контракта от v1.
+Пользователи Telegram и роли. С миграции **007** — также platform-пользователи: `email` + `password_hash` (legacy-вход), `display_name`, `status`, `platform_role`, `retrieval_role`, `last_login_at`; `telegram_user_id` допускает NULL. Связка с каналами — `user_channel_identities`.
 
 ### documents
 

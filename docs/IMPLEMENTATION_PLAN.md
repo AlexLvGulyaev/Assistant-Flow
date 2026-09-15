@@ -44,7 +44,7 @@ Telegram-бот (interfaces/telegram_bot.py)      Admin UI (React/Vite, frontend
 
 ## 3. Модель данных (основные области PostgreSQL)
 
-`documents` / `document_versions` / `document_chunks`, `indexing_jobs`, `async_jobs` (очередь фоновых задач, воркер в admin-api), `processing_logs` / `intake_events` / `error_logs`, `generated_assets`, `usage_metrics`, `platform_settings`, `app_users` + `user_channel_identities` + `auth_login_events` (identity, P9.1), `admin_audit_log` (P9.5), `evaluation_*` (P1-lite). Контракт полей — `database/db_contract.md`.
+`documents` / `document_versions` / `document_chunks`, `indexing_jobs`, `async_jobs` (очередь фоновых задач, воркер в admin-api), `processing_logs` / `intake_events` / `error_logs`, `generated_assets`, `usage_metrics`, `platform_settings`, `app_users` + `user_channel_identities` + `auth_login_events` (identity), `admin_audit_log`, `evaluation_*` (оценка качества). Контракт полей — `database/db_contract.md`.
 
 Векторные данные: Chroma (`assistant-flow_portfolio_chroma_data`) / Weaviate / FAISS (`storage/faiss`), переключаются через `platform_settings` (Retrieval Settings).
 
@@ -63,20 +63,20 @@ Telegram-бот (interfaces/telegram_bot.py)      Admin UI (React/Vite, frontend
 | Этап | Содержание | Статус |
 |------|-----------|--------|
 | Ядро | Telegram-бот, текстовый контур, память диалога, провайдеры | ✅ |
-| P5.1–P5.2 | Healthchecks, graceful degradation, storage abstraction (AssetRepository) | ✅ |
-| P5.3 | Async processing: таблица `async_jobs`, постановка reindex-задач, retry, UI-список, воркер-поток в admin-api (вариант A) | ✅ |
-| P5.4 | Voice/Audio: STT/TTS foundation, UI, observability; remainder — runtime hardening (таймауты/ретраи), нормализация telemetry, учёт стоимости (cost_basis=estimated) | ✅ |
-| P5.5 | Retrieval Quality Engineering: диагностика, полный текст чанка, RAGAS | ✅ (база) |
-| P6 | Admin UI зрелость: React/FastAPI, modality-консоли, token economy | ✅ |
-| P6.x | Multi-backend retrieval (Chroma/FAISS/Weaviate), chunking, memory, preprocessing pipeline | ✅ |
-| P8 | Data-path security: RBAC-retrieval, visibility ingestion, sanitization логов | ✅ |
-| P9 | Control-plane: identity, auth middleware, RBAC, audit trail, security console | ✅ |
+| Операционный фундамент | Healthchecks, graceful degradation, storage abstraction (AssetRepository) | ✅ |
+| Фоновые задачи | Таблица `async_jobs`, постановка reindex-задач, retry, UI-список, воркер-поток в admin-api | ✅ |
+| Голосовой контур | STT/TTS foundation, UI, observability, runtime hardening (таймауты/ретраи), нормализация telemetry, учёт стоимости (cost_basis=estimated) | ✅ |
+| Качество retrieval | Диагностика, полный текст чанка, RAGAS | ✅ (база) |
+| Операционная консоль | React/FastAPI, modality-консоли, token economy | ✅ |
+| Расширение retrieval | Multi-backend (Chroma/FAISS/Weaviate), chunking, memory, preprocessing pipeline | ✅ |
+| Data-path security | RBAC-retrieval, visibility ingestion, sanitization логов | ✅ |
+| Control-plane security | Identity, auth middleware, RBAC, audit trail, security console | ✅ |
 | Production build | Multi-stage Dockerfile, .dockerignore, fd-leak fix | ✅ |
 | Демо-стандарт APL | Токен-вход + демо read-only, витрина `af-admin.alex-n8n.site` | ✅ |
 
 ## 6. Критерии готовности
 
-- Стек поднимается по RUNBOOK с нуля; Docker healthchecks зелёные.
+- Стек поднимается по DEPLOYMENT_GUIDE с нуля; Docker healthchecks зелёные ([DEPLOYMENT_VALIDATION_REPORT.md](DEPLOYMENT_VALIDATION_REPORT.md)).
 - Все модальности smoke-проверены на живом инстансе (текст, RAG с источниками, OCR, память).
 - Консоль: вход по токену, демо read-only (мутации → 403), аудит пишет обращения.
 - Миграции идемпотентны; снимок `schema.sql` совпадает с результатом цепочки 002–008.

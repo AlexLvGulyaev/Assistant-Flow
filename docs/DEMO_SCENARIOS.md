@@ -1,6 +1,8 @@
-# 🎬 Демо-сценарии (GitHub v2.0)
+# 🎬 Демо-сценарии
 
-Проверки перед демонстрацией или review репозитория. Команды — из **корня** проекта; стек — portfolio ([OPERATIONS.md](OPERATIONS.md)).
+Расширенная матрица проверок перед демонстрацией или review репозитория
+(базовый маршрут 2–5 действий — [DEMO_ROUTE.md](DEMO_ROUTE.md)).
+Команды — из **корня** проекта; стек — portfolio ([OPERATIONS.md](OPERATIONS.md)).
 
 **Предусловия:** `.env` из `.env.example`, ключи LLM/embeddings; для Postgres-метаданных — `DATABASE_URL` и init-схема.
 

@@ -1,5 +1,11 @@
 # 🏠 Assistant Flow
 
+![Assistant Flow: интерфейс системы (светлая тема)](docs/screenshots/AF_portfolio_light.png)
+
+<p align="center"><em>
+Операционная консоль Assistant Flow (светлая тема): обзор состояния платформы, health-check сервисов, retrieval backend.
+</em></p>
+
 Мультимодальная AI-платформа для работы с корпоративными знаниями, AI-ассистентами и эксплуатацией AI-сервисов.
 
 RAG и операционная консоль встроены в уже существующий мультимодальный контур обработки запросов, а не заменяют его.
@@ -136,7 +142,7 @@ RAG-ответ Telegram-ассистента на основе корпорат�
 
 ### Кэширование запросов к базе знаний
 
-Повторяемые RAG-запросы можно ускорять кэшем результатов поиска. В консоли видны состояния OFF / MISS / HIT и задержки поиска. Включение и TTL — в **Retrieval Settings** или через `.env` (подробности — `docs/architecture/cache_layer_design.md`).
+Повторяемые RAG-запросы можно ускорять кэшем результатов поиска. В консоли видны состояния OFF / MISS / HIT и задержки поиска. Включение и TTL — в **Retrieval Settings** или через `.env` (подробности — [docs/OPERATIONS.md](docs/OPERATIONS.md) § Retrieval cache).
 
 📷 Скриншот:
 
@@ -462,20 +468,19 @@ assistant-flow/
 ├── admin_api/              # FastAPI Admin API
 ├── core/                   # оркестрация запросов
 ├── providers/              # клиенты AI-провайдеров, embeddings
-├── services/               # RAG, поиск, кэш, evaluation, индексация
+├── services/               # RAG, поиск, кэш, evaluation, индексация, security
 ├── interfaces/             # Telegram-бот (run_telegram_bot.py)
 ├── repositories/           # PostgreSQL
 ├── database/               # schema.sql, миграции
 ├── frontend/
 │   └── admin-ui/           # React операционная консоль (Vite)
-├── docs/                   # архитектура, OPERATIONS, screenshots/
+├── docs/                   # архитектура, DEPLOYMENT_GUIDE, OPERATIONS, screenshots/
 ├── evaluation/             # датасеты и контур оценки качества
 ├── scripts/                # smoke, индексация, утилиты
 ├── storage/                # FAISS, SQLite cache, assets (volume в compose)
 ├── utils/                  # AppConfig, общие утилиты
 ├── docker-compose.portfolio.yml
 ├── .env.example
-├── RUNBOOK.md
 ├── USER_GUIDE.md
 ├── PROJECT_STATE.md
 └── README.md
@@ -507,7 +512,7 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 
 Volumes: `./data/documents`, `./storage`, `./outputs` → контейнеры `assistant-flow` и `admin-api`. Данные PostgreSQL и векторных хранилищ живут в named volumes вида `assistant-flow_portfolio_*`.
 
-Backend-образы собираются multi-stage: сборочные зависимости остаются в builder-стадии, runtime содержит только venv + ffmpeg. Опциональные extras включаются build-args (`INSTALL_RAGAS`, `INSTALL_DASHBOARD`) — см. RUNBOOK §E.
+Backend-образы собираются multi-stage: сборочные зависимости остаются в builder-стадии, runtime содержит только venv + ffmpeg. Опциональные extras включаются build-args (`INSTALL_RAGAS`, `INSTALL_DASHBOARD`) — см. [docs/OPERATIONS.md](docs/OPERATIONS.md) § «Сборка образов».
 
 Проверка после запуска:
 
@@ -516,7 +521,7 @@ curl -sS http://localhost:8600/api/health
 # браузер: http://localhost:8080 (UI), API: http://localhost:8600
 ```
 
-Подробные эксплуатационные процедуры, SSH-туннель и типовые сбои — в [RUNBOOK.md](RUNBOOK.md).
+Полная процедура развёртывания с нуля (требования, сеть, .env, первый запуск, проверки) — в [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md). Эксплуатация, SSH-туннель и типовые сбои — [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 
@@ -549,9 +554,11 @@ curl -sS http://localhost:8600/api/health
 - индексация документов с heavy-RAG safeguard-ами (лимит размера upload, защита reindex);
 - диагностика поиска по базе знаний и полный текст чанка в консоли;
 - кэширование запросов к базе знаний;
+- аудио-контур (STT/TTS): таймауты/ретраи OpenAI-клиентов, оценочная стоимость в телеметрии;
 - техническое логирование и трассировка pipeline;
 - механизм памяти диалога;
-- авторизация консоли (Bearer-токен, демо-вход read-only) и журнал аудита обращений к Admin API;
+- авторизация консоли (Bearer-токен, демо-вход read-only), RBAC на Admin API и журнал аудита;
+- retrieval security в пользовательском контуре (роли по visibility документов);
 - операционная наблюдаемость;
 - multi-stage production-образы (без сборочных зависимостей и dev-пакетов в runtime).
 
@@ -561,17 +568,16 @@ curl -sS http://localhost:8600/api/health
 
 - React Admin UI;
 - оценка качества RAG (RAGAS, `ENABLE_RAGAS_EVALUATION`);
-- аудио-контур (STT/TTS) — остаток по P5.4;
 - фильтрация поиска по источникам.
 
 ---
 
 ## Roadmap
 
-- Завершение аудио-контура (P5.4 remainder).
 - Фильтрация поиска по источникам.
 - Резервная маршрутизация провайдеров (OpenAI / GigaChat / Proxy API).
-- Улучшение разбиения документов на чанки.
+- Улучшение разбиения документов на чанки (semantic/glossary-aware).
+- Multi-tenant изоляция, external IAM/OAuth.
 
 ---
 
@@ -580,16 +586,20 @@ curl -sS http://localhost:8600/api/health
 | Документ | Назначение |
 |---|---|
 | [README.md](README.md) | Общее описание платформы (входная точка GitHub) |
-| [RUNBOOK.md](RUNBOOK.md) | Развёртывание, smoke-проверки, эксплуатация и диагностика |
+| [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) | Развёртывание с нуля (SOT воспроизводимости) + [отчёт Validation](docs/DEPLOYMENT_VALIDATION_REPORT.md) |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Эксплуатация: compose, порты, backends, диагностика |
+| [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) | Доступ, RBAC, аудит, security-контур |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура системы |
+| [docs/DEMO_ROUTE.md](docs/DEMO_ROUTE.md) | Маршрут проверки демо |
+| [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Расширенная матрица демо-проверок |
 | [USER_GUIDE.md](USER_GUIDE.md) | Руководство пользователя и оператора |
+| [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md) | Индексация базы знаний |
+| [docs/RAG_SMOKE_TEST.md](docs/RAG_SMOKE_TEST.md) | Smoke-тест RAG |
 | [docs/SPEC.md](docs/SPEC.md) | Продуктовая спецификация |
 | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Технический план реализации |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура системы |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Compose, env, процедуры развёртывания |
-| [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) | Модель безопасности и авторизация |
-| [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Демо-чеклист |
 | [database/POSTGRES_SETUP.md](database/POSTGRES_SETUP.md) | PostgreSQL: схема и миграции |
-| [docs/architecture/](docs/architecture/) | Детальные проектные документы (кэш, оценка, UI contract) |
+| [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | Карта репозитория |
+| [docs/screenshots/MEDIA_INDEX.md](docs/screenshots/MEDIA_INDEX.md) | Каталог медиаматериалов |
 
 ---
 

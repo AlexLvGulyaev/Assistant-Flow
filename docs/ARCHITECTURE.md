@@ -1,4 +1,10 @@
-# Архитектура Assistant Flow
+# 🏗️ Архитектура Assistant Flow
+
+![Assistant Flow: интерфейс системы (тёмная тема)](screenshots/AF_portfolio_dark.png)
+
+<p align="center"><em>
+Операционная консоль Assistant Flow (тёмная тема): обзор состояния платформы.
+</em></p>
 
 Документ дополняет [README.md](../README.md): границы компонентов, потоки данных и модели развёртывания. Рантайм — `core/`, `services/`, `providers/`, `interfaces/`, `repositories/`, `admin_api/`, `frontend/admin-ui/`.
 
@@ -87,8 +93,8 @@ flowchart TD
 ### FastAPI Admin API
 
 - `admin_api/`, `run_admin_api.py` (порт **8600**).
-- `/api`: `health`, `overview`, `summary`, `logs`, `documents`, `assets`, retrieval settings, evaluation и др.
-- Аутентификация на уровне приложения **не** реализована — [SECURITY_NOTES.md](SECURITY_NOTES.md).
+- `/api`: `health`, `overview`, `summary`, `logs`, `documents`, `assets`, retrieval settings, evaluation, security audit и др.
+- Аутентификация и RBAC: Bearer-токены консоли (`AF_ADMIN_TOKEN` — admin, `AF_ADMIN_DEMO_TOKEN` — demo read-only), permission-проверки на маршрутах, журнал аудита — [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
 ### React Admin UI
 
@@ -108,7 +114,6 @@ flowchart TD
 ### Evaluation
 
 - RAGAS и ручная оценка — Admin UI **Анализ RAG**, опционально `ENABLE_RAGAS_EVALUATION`.
-- Дизайн: `docs/architecture/evaluation_layer_design.md`.
 
 ### Asset storage
 
@@ -186,8 +191,8 @@ Telegram: фото или image/* document
 
 ### Portfolio (канонический GitHub/demo)
 
-`docker-compose.portfolio.yml` — автономная сеть, postgres + chroma + weaviate + bot + admin-api + admin-ui.  
-Команда и порты: [OPERATIONS.md](OPERATIONS.md), [RUNBOOK.md](../RUNBOOK.md).
+`docker-compose.portfolio.yml` — postgres + chroma + weaviate + bot + admin-api + admin-ui.  
+Команда, порты и полный порядок развёртывания: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ### Server (продвинутый)
 
@@ -198,8 +203,8 @@ Telegram: фото или image/* document
 
 ## Ограничения
 
-- Прототип / single-tenant; без RBAC на Admin API.
+- Прототип / single-tenant; нет multi-tenant изоляции и external IAM.
 - Потеря тома Chroma/Weaviate = переиндексация.
-- Фильтрация поиска по источникам — задел `retrieval_security`, не основной путь Telegram по умолчанию.
+- Retrieval security активен в пользовательском контуре (роли guest/employee/admin по visibility), FAISS — post-filter.
 
-Риски: [SECURITY_NOTES.md](SECURITY_NOTES.md). Операции: [OPERATIONS.md](OPERATIONS.md).
+Риски и границы security-контура: [SECURITY_NOTES.md](SECURITY_NOTES.md). Операции: [OPERATIONS.md](OPERATIONS.md).

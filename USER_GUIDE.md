@@ -1,6 +1,6 @@
 # 📖 Assistant Flow User Guide
 
-Как **пользоваться** уже запущенной системой. Развёртывание и smoke — [🚀 RUNBOOK.md](RUNBOOK.md).
+Как **пользоваться** уже запущенной системой. Развёртывание — [🚀 docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
 
 ---
 
@@ -24,19 +24,19 @@ Assistant Flow — мультимодальная AI-платформа:
 | **Telegram** | Пользователь | Вопросы, RAG, фото, голос, картинки |
 | **Admin UI** | Оператор | Диагностика, документы, память, оценка RAG |
 
-Адрес UI после portfolio-запуска: `http://localhost:8080` (см. RUNBOOK).
+Адрес UI после portfolio-запуска: `http://localhost:8080` (см. [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)).
 
 ---
 
 ## 3. Подключение к Telegram-боту
 
-Система должна быть уже запущена ([RUNBOOK.md](RUNBOOK.md)).
+Система должна быть уже запущена ([DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)).
 
 1. Найдите в Telegram бота по **@username**, который задал оператор в BotFather (в репозитории имени нет).
 2. **Start** или `/start`.
 3. `/help` — режимы и примеры.
 
-Если бот не отвечает — оператору: RUNBOOK §G (токен, restart).
+Если бот не отвечает — оператору: [docs/OPERATIONS.md](docs/OPERATIONS.md) § «Типовые проблемы» (токен, restart).
 
 ---
 
@@ -326,7 +326,7 @@ Admin UI → **Документы**: загрузка, индексация, rei
 - Токены заданы в `.env` (`AF_ADMIN_TOKEN`, `AF_ADMIN_DEMO_TOKEN`) → при открытии консоли открывается экран входа: введите токен или нажмите **«Войти в демо-режиме»** (read-only, токен запечён в UI при сборке).
 - Токены не заданы → консоль открывается без авторизации (локальный режим).
 - Выход — кнопка **Выход** (экран `/exit`) сбрасывает сессию.
-- Подробности и legacy-режим Basic-аутентификации — [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) и [docs/security/auth_modes.md](docs/security/auth_modes.md).
+- Подробности (режимы, legacy-режим Basic-аутентификации, RBAC, аудит) — [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md).
 
 ### Разделы
 
@@ -398,5 +398,6 @@ Admin UI → **Документы**: загрузка, индексация, rei
 ## 14. См. также
 
 - [🏠 README.md](README.md)
+- [🧭 docs/DEMO_ROUTE.md](docs/DEMO_ROUTE.md)
 - [🎬 docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md)
 - [🏗️ docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство системы

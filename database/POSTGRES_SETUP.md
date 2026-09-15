@@ -1,6 +1,6 @@
 # 🗄️ PostgreSQL: применение схемы Assistant Flow
 
-**SQL-level справочник.** Первый запуск в Docker, проверка таблиц и smoke — [RUNBOOK.md](../RUNBOOK.md) §D. Краткие факты compose — [docs/OPERATIONS.md](../docs/OPERATIONS.md) § PostgreSQL.
+**SQL-level справочник.** Первый запуск в Docker, проверка таблиц и smoke — [docs/DEPLOYMENT_GUIDE.md](../docs/DEPLOYMENT_GUIDE.md) §5–6. Краткие факты compose — [docs/OPERATIONS.md](../docs/OPERATIONS.md) § PostgreSQL.
 
 Документ описывает создание БД **вне** portfolio-compose и цепочку `schema.sql` / `database/migrations/`. Контракт полей — `database/db_contract.md`. Прикладной код использует **`DATABASE_URL`**.
 
@@ -93,7 +93,7 @@ python -c "from repositories.connection import check_connection; print(check_con
 
 ## Portfolio Docker Compose
 
-Автоматический bootstrap при **новом** volume — только в [RUNBOOK.md](../RUNBOOK.md) §D (без дублирования здесь).
+Автоматический bootstrap при **новом** volume — только в [docs/DEPLOYMENT_GUIDE.md](../docs/DEPLOYMENT_GUIDE.md) §5 (без дублирования здесь).
 
 Ключевые факты:
 

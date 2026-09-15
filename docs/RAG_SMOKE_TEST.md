@@ -11,7 +11,7 @@ cp .env.example .env
 COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
-Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy). Telegram: свой бот через BotFather — [RUNBOOK.md](../RUNBOOK.md) §G (плейсхолдер-токен polling не запускает).
+Заполните в `.env` минимум: ключи LLM/embeddings (`OPENAI_*` или Proxy). Telegram: свой бот через BotFather — [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) §4 (плейсхолдер-токен polling не запускает).
 
 ---
 
@@ -64,7 +64,7 @@ python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос по 
 
 1. Два одинаковых запроса подряд в RAG UI.
 2. **Успех:** первый — MISS (или OFF при выключенном кэше), второй — **HIT**; в заголовке карточки видны задержки поиска и кэша.
-3. Сравнение Δ между сессиями — только когда кэш участвовал в обеих (см. `docs/architecture/cache_observability_console_design.md`).
+3. Сравнение Δ между сессиями — только когда кэш участвовал в обеих (см. [OPERATIONS.md](OPERATIONS.md) § Retrieval cache).
 
 ---
 

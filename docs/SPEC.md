@@ -43,8 +43,8 @@
 
 ### 3.4 Доступ и безопасность
 - Демо-стандарт APL: `AF_ADMIN_TOKEN` (admin) / `AF_ADMIN_DEMO_TOKEN` (демо, read-only, запечён в UI при сборке); без токенов — локальный режим.
-- RBAC-права на Admin API (P9.4), журнал аудита (P9.5), identity foundation (P9.1).
-- Data-path security (P8): роли retrieval (guest/employee/admin), visibility документов, санитизация логов (PII masking).
+- RBAC-права на Admin API, журнал аудита, identity foundation (детали — [SECURITY_NOTES.md](SECURITY_NOTES.md)).
+- Data-path security: роли retrieval (guest/employee/admin), visibility документов, санитизация логов (PII masking).
 
 ### 3.5 Наблюдаемость и эксплуатация
 - Healthchecks (Docker healthcheck admin-api, probes postgres/chroma/weaviate), graceful degradation.
@@ -56,20 +56,20 @@
 
 - Production-ориентированность: multi-stage Docker-образы, health-статусы в compose, идемпотентные миграции.
 - Ресурсный контур: работа на VPS 7.8 GiB RAM; heavy-RAG safeguards (лимиты upload, защищённые пробы с таймаутами, закрытие клиентов).
-- Воспроизводимость: `.env.example` с плейсхолдерами, RUNBOOK как SOT развёртывания.
+- Воспроизводимость: `.env.example` с плейсхолдерами, DEPLOYMENT_GUIDE как SOT развёртывания.
 
 ---
 
 ## 5. Вне скоупа текущей версии
 
-- Multi-tenant изоляция, external IAM/OAuth (Keycloak — направление P9.7).
+- Multi-tenant изоляция, external IAM/OAuth (Keycloak — направление развития).
 - Отдельный контейнер-воркер (воркер — поток внутри admin-api), CI/CD, автоматические бэкапы, S3 object storage.
-- Semantic/glossary-aware chunking (P5.5).
+- Semantic/glossary-aware chunking.
 
 ---
 
 ## 6. Критерии приёмки
 
-- Развёртывание с нуля по RUNBOOK в чистом окружении (Deployment Validation).
+- Развёртывание с нуля по DEPLOYMENT_GUIDE в чистом окружении (Deployment Validation — [DEPLOYMENT_VALIDATION_REPORT.md](DEPLOYMENT_VALIDATION_REPORT.md)).
 - Smoke: health, Telegram `/start`, загрузка документа + RAG-запрос с источниками, вход в консоль по токену и демо-входом, журнал аудита фиксирует обращения.
 - Демо-сценарии из [DEMO_SCENARIOS.md](DEMO_SCENARIOS.md) проходят на живом инстансе.
