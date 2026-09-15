@@ -18,10 +18,10 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 ## 2. Health Admin API
 
 ```bash
-curl -sS http://localhost:8600/api/health | jq .
+curl -sS http://localhost:8600/api/health
 ```
 
-**Успех:** HTTP 200, JSON с полями зависимостей; общий статус `ok` или осознанный `degraded` (например, без ключей LLM) с понятными причинами в теле.
+**Успех:** HTTP 200, JSON с полями зависимостей; общий статус `ok` или осознанный `degraded` (например, без ключей LLM) с понятными причинами в теле. При наличии `jq` ответ удобно форматировать: `… | jq .`.
 
 ---
 
