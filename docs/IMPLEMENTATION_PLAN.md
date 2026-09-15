@@ -6,18 +6,31 @@
 
 ## 1. Архитектура решения
 
-```text
-Telegram-бот (interfaces/telegram_bot.py)      Admin UI (React/Vite, frontend/admin-ui)
-        │                                              │
-        └──────────> Оркестратор (core/orchestrator.py) <──── Admin API (FastAPI, admin_api/)
-                            │
-        ┌───────────┬───────┴────┬──────────────┬─────────────┐
-   Текстовый     RAG / retrieval   OCR/Vision    Voice        Images
-   контур        Chroma|FAISS|Weaviate   (OpenAI)   STT/TTS      generation
-        │             │                                │            │
-        └── AI providers: OpenAI · GigaChat · ProxyAPI ─┴────────────┘
-                            │
-   PostgreSQL (metadata, sessions, logs, audit)   Vector store (векторы)   Filesystem (assets)
+```mermaid
+flowchart TB
+    U[Пользователь Telegram] --> BOT[Telegram-бот<br/>interfaces/telegram_bot.py]
+    O[Оператор] --> UI[Admin UI — React/Vite<br/>frontend/admin-ui]
+    UI --> API[Admin API — FastAPI<br/>admin_api/]
+
+    BOT --> ORCH[Оркестратор<br/>core/orchestrator.py]
+
+    ORCH --> TEXT[Текстовый контур]
+    ORCH --> RAG[RAG / retrieval<br/>Chroma · FAISS · Weaviate]
+    ORCH --> OCR[OCR / Vision<br/>OpenAI]
+    ORCH --> VOICE[Voice<br/>STT/TTS]
+    ORCH --> IMG[Images<br/>generation]
+
+    TEXT --> PROV[AI providers<br/>OpenAI · GigaChat · ProxyAPI]
+    RAG --> PROV
+    OCR --> PROV
+    VOICE --> PROV
+    IMG --> PROV
+
+    RAG --> VS[(Vector store<br/>векторы)]
+    ORCH --> PG[(PostgreSQL<br/>metadata · sessions · logs)]
+    API --> PG
+    API --> VS
+    IMG --> FS[(Filesystem<br/>assets — AssetRepository)]
 ```
 
 Ключевые архитектурные решения:
