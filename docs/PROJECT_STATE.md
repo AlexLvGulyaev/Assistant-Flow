@@ -74,6 +74,7 @@
 | 2026-09-03 | Разработка | Долг №7 закрыт: аудио-контур — таймауты/ретраи OpenAI STT/TTS, оценочная стоимость (cost_usd, cost_basis=estimated), token economy с per-stage/model/grand cost, стоимость в UI Сводки и Аудио |
 | 2026-09-15 | Упаковка | Рефакторинг публичной документации: канонический DEPLOYMENT_GUIDE, OPERATIONS (консолидация RUNBOOK), SECURITY_NOTES, DEMO_ROUTE, PROJECT_STRUCTURE, MEDIA_INDEX; устранение исторического sprawl (docs/security/, docs/architecture/, P-коды) |
 | 2026-09-15 | Разработка | RAG-поведение доведено до документации: блок «Источники» в Telegram, retrieval top_k 3→5 (батарея PASS); канон возврата на лэндинг (goProject), подпись логинформы без dev-жаргона, позиционирование /start; USER_GUIDE и PROJECT_STATE перенесены в docs/ |
+| 2026-09-15 | Сопровождение | Консоль: демо-доступ к KB (demo → employee-scope, read-only), честный бейдж «Экспозиция админки» (по auth-состоянию, не health), предупреждение рассинхронизации только для реальных статусов; страница «Текст» без чужих сессий (voice → «Аудио», memory-сбросы → Memory) |
 
 ---
 
