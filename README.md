@@ -1,6 +1,6 @@
 # 🏠 Assistant Flow
 
-![Assistant Flow: интерфейс системы (светлая тема)](docs/screenshots/AF_portfolio_light.png)
+![Assistant Flow: интерфейс системы](docs/screenshots/AF_portfolio_light.png)
 
 ⚡ **Корпоративные знания, доступные AI-ассистенту, — с полной наблюдаемостью, а не «чёрным ящиком».**
 
@@ -219,7 +219,6 @@ curl -sS http://localhost:8600/api/health
 
 - **Исследовательская платформа (MVP)**: seed-документы — учебный материал для демонстрации RAG, а не корпоративная база знаний.
 - **Single-tenant**: нет multi-tenant изоляции и внешнего IAM/OAuth.
-- **Heavy RAG на малых VPS**: reindex при конкурентных RAG-запросах может деградировать при 8 GiB RAM.
 - Демо-вход в консоль — только чтение (RBAC); перед production требуется корпоративная аутентификация, CI/CD, мониторинг и бэкапы.
 
 ---

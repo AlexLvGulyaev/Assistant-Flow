@@ -222,7 +222,7 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 | Бот «молчит» | placeholder-токен | задать реальный `TELEGRAM_BOT_TOKEN`, пересоздать контейнер |
 | `documents`-таблиц нет, UI Документы пустой | volume БД создан до init-файлов | удалить volume `portfolio_pg_data` (чистый стенд) или применить SQL вручную ([POSTGRES_SETUP.md](../database/POSTGRES_SETUP.md)) |
 | RAG отвечает без источников | корпус не индексирован | §8 (загрузка + индексация) |
-| Деградация при тяжёлой индексации | heavy RAG на малом VPS | не совмещать reindex с параллельным RAG; лимит `ADMIN_UPLOAD_MAX_MB` |
+| Замедление при тяжёлой индексации | reindex при конкурентных RAG-запросах (на текущей конфигурации деградации не фиксировалось; прогон 15.09 — без деградации) | не совмещать reindex с параллельным RAG; лимит `ADMIN_UPLOAD_MAX_MB` |
 
 ---
 

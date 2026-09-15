@@ -2,11 +2,7 @@
 
 **Статус:** актуально на 2026-09-15.
 
-![Assistant Flow: интерфейс системы (тёмная тема)](screenshots/AF_portfolio_dark.png)
-
-<p align="center"><em>
-Операционная консоль Assistant Flow (тёмная тема): обзор состояния платформы.
-</em></p>
+![Assistant Flow: интерфейс системы](screenshots/AF_portfolio_dark.png)
 
 Документ дополняет [README.md](../README.md): границы компонентов, потоки данных и модели развёртывания. Рантайм — `core/`, `services/`, `providers/`, `interfaces/`, `repositories/`, `admin_api/`, `frontend/admin-ui/`.
 
