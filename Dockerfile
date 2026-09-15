@@ -6,7 +6,6 @@
 #
 # Опциональные extras (build-args):
 #   INSTALL_RAGAS      — offline RAGAS evaluation (admin-api в portfolio compose)
-#   INSTALL_DASHBOARD  — legacy Streamlit UI (assistant-admin в docker-compose.assistant.yml)
 # =============================================================================
 
 # ------------------------------- builder -------------------------------------
@@ -23,15 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt requirements-ragas.txt requirements-dashboard.txt ./
+COPY requirements.txt requirements-ragas.txt ./
 
 ARG INSTALL_RAGAS=false
-ARG INSTALL_DASHBOARD=false
 
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt \
-    && if [ "$INSTALL_RAGAS" = "true" ]; then pip install -r requirements-ragas.txt; fi \
-    && if [ "$INSTALL_DASHBOARD" = "true" ]; then pip install -r requirements-dashboard.txt; fi
+    && if [ "$INSTALL_RAGAS" = "true" ]; then pip install -r requirements-ragas.txt; fi
 
 # ------------------------------- runtime -------------------------------------
 FROM python:3.12-slim

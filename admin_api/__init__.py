@@ -1,4 +1,4 @@
-"""FastAPI Admin API foundation (parallel to Streamlit admin_ui)."""
+"""FastAPI Admin API — бэкенд операционной консоли (frontend/admin-ui)."""
 
 from admin_api.app import app, create_admin_api_app
 

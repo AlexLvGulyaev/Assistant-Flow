@@ -14,16 +14,14 @@ Assistant-Flow/
 ├── .env.example                         # Шаблон переменных окружения (заполнить → .env)
 ├── .env.server.example                  # Шаблон окружения для server-контура (docker-compose.assistant.yml)
 ├── .gitignore / .dockerignore           # Исключения git / Docker build context
-├── Dockerfile                           # Многоступенчатый образ: бот + admin-api (INSTALL_RAGAS/INSTALL_DASHBOARD)
+├── Dockerfile                           # Многоступенчатый образ: бот + admin-api (INSTALL_RAGAS опционально)
 ├── docker-compose.portfolio.yml         # Portfolio-стек: postgres + chroma + weaviate + assistant-flow + admin-api + admin-ui
-├── docker-compose.assistant.yml         # Server-контур: один образ без векторных БД (Chroma как сервис отдельно)
+├── docker-compose.assistant.yml         # Server-контур: бот + Chroma без операционной консоли (консоль — portfolio-стек)
 ├── requirements.txt                     # Python-зависимости основного контура (бот + admin-api)
 ├── requirements-ragas.txt               # Зависимости RAGAS-оценки (опционально, build-arg INSTALL_RAGAS)
-├── requirements-dashboard.txt           # Зависимости legacy Streamlit-консоли (опционально)
 ├── main.py                              # Точка входа Telegram-бота (модуль)
 ├── run_telegram_bot.py                  # Запуск бота: long polling, инициализация контура
 ├── run_admin_api.py                     # Запуск Admin API (FastAPI/uvicorn)
-├── dashboard.py                         # Legacy Streamlit-консоль (заменена React Admin UI; не входит в portfolio-стек)
 │
 ├── core/                                # Ядро
 │   └── orchestrator.py                  # Оркестратор: маршрутизация запросов по модальностям (text/rag/ocr/voice/image)
@@ -62,7 +60,7 @@ Assistant-Flow/
 │   ├── evaluation_* / admin_service.py  # Evaluation-сервисы, агрегация для консоли
 │   └── runtime_lifecycle_service.py     # Lifecycle runtime-статусов
 │
-├── admin_api/                           # Операционная консоль (бэкенд)
+├── admin_api/                           # Admin API (бэкенд операционной консоли)
 │   ├── app.py                           # FastAPI-приложение: маршруты, middleware, запуск воркера
 │   ├── deps.py                          # DI-зависимости маршрутов
 │   ├── routes/                          # /api: overview, summary, text, rag, documents, retrieval, logs, sessions, assets, evaluation, auth, security_audit, health
@@ -74,9 +72,6 @@ Assistant-Flow/
 │   ├── nginx.conf                       # Раздача статики, same-origin проксирование /api
 │   ├── e2e/                             # Playwright-сценарии (auth, demo-badge, меню, pairwise)
 │   └── src/                             # React/TypeScript: разделы консоли, auth (токен, permissions), компоненты
-│
-├── admin_ui/
-│   └── app.py                           # Legacy Streamlit-консоль (заменена frontend/admin-ui)
 │
 ├── providers/                           # AI-провайдеры (единый интерфейс)
 │   ├── openai_chat_provider.py          # OpenAI Chat Completions

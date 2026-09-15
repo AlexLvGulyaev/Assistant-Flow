@@ -75,7 +75,7 @@ async def _admin_api_lifespan(application: FastAPI):
 def create_admin_api_app() -> FastAPI:
     application = FastAPI(
         title="Assistant Flow Admin API",
-        description="JSON API for future React admin UI. Streamlit admin_ui unchanged.",
+        description="JSON API операционной консоли Assistant Flow (frontend/admin-ui).",
         version="0.1.0",
         lifespan=_admin_api_lifespan,
     )

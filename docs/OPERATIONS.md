@@ -127,8 +127,7 @@ Bind-mounts: `./data/documents`, `./storage`, `./outputs`.
 Backend-образ (`Dockerfile`) — два этапа: build-зависимости остаются в
 builder-стадии; runtime содержит только venv + ffmpeg + curl. Опциональные
 extras через build-args: `INSTALL_RAGAS=true` (в portfolio compose включён для
-`admin-api`), `INSTALL_DASHBOARD=true` (legacy Streamlit, только в
-server-compose). Streamlit не входит в runtime-образ по умолчанию.
+`admin-api`).
 
 ---
 
@@ -230,11 +229,8 @@ LangChain `OpenAIEmbeddings` не экспонирует usage; оценка —
 ## Server-контур (не portfolio)
 
 `docker-compose.assistant.yml`, `.env.server`, Traefik — отдельная топология
-(server-контур); не смешивать с portfolio-стеком без необходимости. Не основной
-путь GitHub-демо.
-
-Исторический Streamlit (`admin_ui/`) **не** текущая консоль; UI —
-`frontend/admin-ui/`.
+(server-контур): бот + Chroma; операционная консоль в него не входит —
+admin-контур разворачивается portfolio-стеком. Не основной путь GitHub-демо.
 
 ---
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from utils.config import AppConfig
 
-# Short defaults: avoid blocking Streamlit Overview or startup for long.
+# Short defaults: avoid blocking console overview or startup for long.
 DEFAULT_PG_TIMEOUT_S = 2.0
 DEFAULT_CHROMA_HTTP_TIMEOUT_S = 2.0
 DEFAULT_CHROMA_LOCAL_TIMEOUT_S = 3.0

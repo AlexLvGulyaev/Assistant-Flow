@@ -327,8 +327,7 @@ flowchart LR
 
 ### Server (продвинутый)
 
-`docker-compose.assistant.yml` — внешние сети, Traefik, `.env.server`. Не основной путь для клона репозитория.  
-Исторический Streamlit (`admin_ui/`) в server-compose **не** заменяет React Admin UI.
+`docker-compose.assistant.yml` — внешние сети, Traefik, `.env.server`: бот + Chroma, операционная консоль в него не входит (admin-контур — portfolio-стек). Не основной путь для клона репозитория.
 
 ---
 
