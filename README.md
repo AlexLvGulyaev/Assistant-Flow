@@ -158,6 +158,7 @@ flowchart TD
 | [✅ `docs/DEPLOYMENT_VALIDATION_REPORT.md`](docs/DEPLOYMENT_VALIDATION_REPORT.md) | Отчёт о Deployment Validation |
 | [🛡️ `docs/SECURITY_NOTES.md`](docs/SECURITY_NOTES.md) | Доступ, RBAC, аудит, security-контур |
 | [📊 `docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) | Текущее состояние проекта |
+| [🗺️ `docs/ROADMAP.md`](docs/ROADMAP.md) | Направления развития (гипотезы, не план) |
 | [🎯 `docs/SPEC.md`](docs/SPEC.md) | Продуктовая спецификация |
 | [📋 `docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Технический план реализации |
 | [🧪 `docs/RAG_SMOKE_TEST.md`](docs/RAG_SMOKE_TEST.md) | Smoke-тест RAG |
