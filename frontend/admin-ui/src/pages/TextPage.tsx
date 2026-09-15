@@ -118,6 +118,33 @@ function sessionHasBackendTextModality(rows: LogItem[]): boolean {
   return false;
 }
 
+/** Audio-этапы: сессия с ними принадлежит странице «Аудио» (voice → STT →
+ * LLM text-answer → TTS содержит text-leg, но это аудио-сессия, не текстовая). */
+const AUDIO_STAGES = new Set([
+  "stt_started",
+  "stt_completed",
+  "tts_started",
+  "tts_completed",
+  "tts_skipped",
+  "tts_error",
+  "voice_processing_done",
+  "voice_processing_error",
+  "audio_generation_done",
+]);
+
+function sessionHasAudioStages(rows: LogItem[]): boolean {
+  return rows.some((row) => AUDIO_STAGES.has(String(row.stage ?? "").trim()));
+}
+
+/** Событие памяти (сброс сессии) — отдельный execution без пайплайна диалога;
+ * место таких событий — раздел Memory, не страница «Текст». */
+function sessionIsMemoryResetOnly(rows: LogItem[]): boolean {
+  return (
+    rows.length > 0 &&
+    rows.every((row) => String(row.stage ?? "").trim() === "memory_session_cleared")
+  );
+}
+
 /**
  * Одна карточка Text page = сессия только text-mode.
  * Не включаем execution, где встречаются чужие маршруты/стадии (RAG, image, voice, …),
@@ -126,6 +153,12 @@ function sessionHasBackendTextModality(rows: LogItem[]): boolean {
 export function isTextExecutionSession(rows: LogItem[]): boolean {
   if (!rows.length) return false;
   const ordered = [...rows].sort((a, b) => (toTs(a.created_at) ?? 0) - (toTs(b.created_at) ?? 0));
+  if (sessionIsMemoryResetOnly(ordered)) {
+    return false;
+  }
+  if (sessionHasAudioStages(ordered)) {
+    return false;
+  }
   if (sessionHasVisionOcr(ordered)) {
     return true;
   }
