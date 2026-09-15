@@ -2,357 +2,75 @@
 
 ![Assistant Flow: интерфейс системы (светлая тема)](docs/screenshots/AF_portfolio_light.png)
 
-<p align="center"><em>
-Операционная консоль Assistant Flow (светлая тема): обзор состояния платформы, health-check сервисов, retrieval backend.
-</em></p>
+⚡ **Корпоративные знания, доступные AI-ассистенту, — с полной наблюдаемостью, а не «чёрным ящиком».**
 
-Мультимодальная AI-платформа для работы с корпоративными знаниями, AI-ассистентами и эксплуатацией AI-сервисов.
+Assistant Flow — мультимодальная AI-платформа для работы с корпоративными знаниями: Telegram-ассистент (текст, RAG, OCR/Vision, голос STT/TTS, генерация изображений), управляемая база знаний с переключаемыми vector-бэкендами (Chroma / FAISS / Weaviate) и операционная консоль с трассировкой обработки каждого запроса.
 
-RAG и операционная консоль встроены в уже существующий мультимодальный контур обработки запросов, а не заменяют его.
+- Пользователь задаёт вопрос в Telegram — текстом, голосом или фото — и получает ответ; в RAG-режиме — с блоком «Источники».
+- Оператор видит каждую сессию в консоли: этапы pipeline, телеметрию провайдеров, найденные чанки, latency, retrieval cache.
+- Администратор развивает базу знаний: индексация, версии документов, параметры поиска, смена vector-бэкенда — с RBAC и журналом аудита.
 
----
+Assistant Flow не скрывает, как получен ответ: каждая сессия трассируется по этапам, каждый доступ — в журнале аудита.
 
-## Бизнес-сценарий и идея
-
-Во многих компаниях знания существуют, но ими сложно пользоваться.
-
-Регламенты лежат в PDF-файлах и папках.  
-Инструкции быстро устаревают.  
-Поддержка отвечает на одни и те же вопросы.  
-Новые сотрудники долго разбираются во внутренних процессах.  
-AI-боты часто работают как «черный ящик», когда невозможно понять, почему был получен тот или иной ответ.
-
-Assistant Flow создается как единая AI-платформа, которая объединяет:
-
-- AI-ассистента в Telegram;
-- текстовые, голосовые, графические сценарии и OCR с фотографий;
-- память диалога;
-- поиск по корпоративной базе знаний (RAG);
-- диагностику AI-контуров;
-- контроль качества ответов;
-- эксплуатационную телеметрию.
-
-Платформа ориентирована не только на генерацию ответов, но и на полноценную эксплуатацию AI-систем:
-
-- с диагностикой;
-- трассировкой обработки запросов;
-- наблюдаемостью поиска по базе знаний;
-- анализом качества ответов;
-- управлением индексами документов;
-- поддержкой нескольких AI-провайдеров.
+[▶️ Попробовать live demo](https://af-admin.alex-n8n.site) · [💼 Бизнес-ценность](docs/BUSINESS_VALUE.md) · [🎬 Как это работает](docs/SYSTEM_DEMO.md)
 
 ---
 
-## Основные возможности платформы
+## ▶️ Live Demo
 
-### Мультимодальные сценарии
+🌐 **Операционная консоль:** [af-admin.alex-n8n.site](https://af-admin.alex-n8n.site)
 
-Assistant Flow изначально рассчитан на несколько типов запросов в одном Telegram-боте:
+Нажмите **«Войти в демо-режиме»** (read-only) — обзор состояния платформы, AI-сессии, база знаний с диагностикой retrieval, память диалога, журнал аудита. Операции записи (upload, reindex, настройки) недоступны — полный доступ только с админ-токеном.
 
-- текстовые ответы и диалог;
-- RAG-запросы по корпоративной базе знаний;
-- генерация изображений по описанию;
-- голос: распознавание речи (STT) и озвучивание (TTS), если включено в окружении;
-- **OCR / Vision** — извлечение текста с фото через OpenAI Vision.
-
-Примеры формулировок в Telegram:
-
-- «объясни простыми словами, что такое фотосинтез» — текстовый режим;
-- «дай полную сводку по компании NovaTex» — RAG по проиндексированным документам;
-- «распознай текст на изображении» — OCR (режим `/mode ocr` или подпись к фото);
-- «нарисуй слона в посудной лавке» — генерация изображения в текстовом режиме.
+Скриншоты, живые сессии и типовой сценарий — в [`docs/SYSTEM_DEMO.md`](docs/SYSTEM_DEMO.md); маршрут проверки — [`docs/DEMO_ROUTE.md`](docs/DEMO_ROUTE.md).
 
 ---
 
-### Текстовые AI-сценарии
+## ❓ Зачем нужен Assistant Flow
 
-Assistant Flow поддерживает текстовые AI-ответы через Telegram и административную консоль.
+В компаниях знания существуют, но ими сложно пользоваться:
 
-Платформа:
-- определяет тип запроса;
-- запускает нужный сценарий обработки;
-- сохраняет историю взаимодействия;
-- отображает этапы обработки;
-- фиксирует задержки и техническую телеметрию.
+| Подход | Ограничение |
+|--------|-------------|
+| **Ручной поиск по документам** | регламенты в PDF и папках, инструкции устаревают, поддержка отвечает на одни и те же вопросы |
+| **AI-бот «как получится»** | ответ невозможно проверить: почему найден именно этот фрагмент, каким провайдером сгенерирован, что с качеством |
+| **LLM без контура эксплуатации** | нет индексации и версий документов, нет трассировки, нет аудита доступа |
 
-📷 Скриншоты:
+**Assistant Flow решает эту проблему**, объединяя в одном контуре:
 
-![Пример текстового ответа в Telegram](docs/screenshots/text-tg.png)
+- **Управляемую базу знаний** — загрузка, индексация, версии, lifecycle документов; visibility-роли при поиске.
+- **Мультимодального ассистента** — текст, RAG, OCR/Vision, голос (STT/TTS), генерация изображений.
+- **Полную наблюдаемость** — трассировка каждой сессии, телеметрия провайдеров, диагностика retrieval, журнал аудита.
+- **Оценку качества RAG** — RAGAS-метрики и ручная валидация, а не «на глаз».
 
-<p align="center"><em>
-Пример текстового ответа Telegram-ассистента в режиме обычного диалога.
-</em></p>
-
-![Консоль текстового pipeline](docs/screenshots/text-adm.png)
-
-<p align="center"><em>
-Консоль текстового pipeline: параметры LLM-запроса, telemetry и таймлайн обработки text-response.
-</em></p>
+Больше о бизнес-ценности — в [`docs/BUSINESS_VALUE.md`](docs/BUSINESS_VALUE.md).
 
 ---
 
-### Работа с базой знаний (RAG)
+## 🎯 Для кого
 
-Платформа поддерживает полноценный контур поиска по базе знаний:
-
-- загрузку документов;
-- индексацию;
-- разбиение документов на смысловые фрагменты;
-- поиск релевантной информации;
-- настройку параметров поиска;
-- анализ найденных чанков;
-- диагностику поиска;
-- выбор backend векторного поиска (Chroma / FAISS / Weaviate).
-
-Через административную консоль можно наблюдать RAG-сессии, анализировать чанки, настраивать поиск и переключать backend векторного хранилища.
-
-📷 Скриншоты:
-
-![RAG-ответ в Telegram](docs/screenshots/rag-tg.png)
-
-<p align="center"><em>
-RAG-ответ Telegram-ассистента на основе корпоративной базы знаний Assistant Flow.
-</em></p>
-
-![Операционная консоль RAG-сессий](docs/screenshots/rag-adm.png)
-
-<p align="center"><em>
-Операционная консоль RAG-сессий с диагностикой retrieval, latency, cache-state и найденных чанков.
-</em></p>
-
-![Расширенная диагностика retrieval](docs/screenshots/retrieval-details-adm.png)
-
-<p align="center"><em>
-Расширенная диагностика retrieval: найденные чанки, relevance-score, latency retrieval и состояние retrieval cache.
-</em></p>
-
-![Управление документами knowledge base](docs/screenshots/documents-adm.png)
-
-<p align="center"><em>
-Управление документами knowledge base: индексация, preprocessing, версии документов, жизненный цикл ingestion pipeline и фоновые задачи reindex (воркер потребляет очередь <code>async_jobs</code> внутри admin-api).
-</em></p>
-
-![Панель Retrieval Settings](docs/screenshots/rs-adm.png)
-
-<p align="center"><em>
-Панель управления retrieval backend: переключение vector storage, runtime tuning, chunking и cache-настройки RAG.
-</em></p>
+- Команды, которые вводят AI-ассистентов по корпоративным базам знаний и хотят контроль, а не «чёрный ящик».
+- Владельцы знаний (регламенты, инструкции, справочники), которым нужен управляемый контур индексации.
+- Инженеры и операторы, эксплуатирующие AI-сервисы: диагностика, latency, cache, аудит.
+- Поставщики решений, которым нужна архитектура «ассистент + операционная консоль» как референс.
 
 ---
 
-### Кэширование запросов к базе знаний
+## ✨ Ключевые возможности
 
-Повторяемые RAG-запросы можно ускорять кэшем результатов поиска. В консоли видны состояния OFF / MISS / HIT и задержки поиска. Включение и TTL — в **Retrieval Settings** или через `.env` (подробности — [docs/OPERATIONS.md](docs/OPERATIONS.md) § Retrieval cache).
-
-📷 Скриншот:
-
-![Сравнение retrieval cache MISS и HIT](docs/screenshots/cache-hit-adm.png)
-
-<p align="center"><em>
-Сравнение retrieval cache MISS и HIT: снижение latency retrieval при повторном запросе.
-</em></p>
-
----
-
-### Память диалога
-
-Платформа запоминает контекст разговора с пользователем: можно продолжить диалог без повторения вводных. История хранится в PostgreSQL (при настроенной БД); размер контекста, передаваемого модели, ограничивается, чтобы ответы оставались устойчивыми и предсказуемыми.
-
-Оператор в административной консоли (**Memory**, `/memory`) видит сессии, реплики и диагностику того, как память повлияла на ответ.
-
-📷 Скриншот:
-
-![Диагностика runtime memory](docs/screenshots/mem-adm.png)
-
-<p align="center"><em>
-Диагностика runtime memory: контекст диалога, trimming history и политика ограничения conversational memory.
-</em></p>
+- **Мультимодальный Telegram-ассистент** — текстовый диалог, RAG по базе знаний, OCR/Vision с фото, голос (STT/TTS), генерация изображений.
+- **Управляемая база знаний** — загрузка, индексация, версии и lifecycle документов, heavy-RAG safeguards, фоновые задачи reindex (очередь `async_jobs`).
+- **Переключаемые vector-бэкенды** — Chroma / FAISS / Weaviate, смена без смены кода (Retrieval Settings).
+- **RAG с наблюдаемостью** — найденные чанки с полным текстом и score, latency, retrieval cache OFF/MISS/HIT.
+- **Операционная консоль (React)** — 12 разделов: обзор, сводка, сессии по модальностям, документы, логи, память, аудит.
+- **Оценка качества RAG** — RAGAS-метрики, ручная валидация ответов, сравнение сессий внутри evaluation run.
+- **Память диалога** — контекст в PostgreSQL, диагностика влияния истории на ответ.
+- **Безопасность** — Bearer-токен, RBAC на Admin API, демо-вход read-only, журнал аудита, retrieval security по visibility.
+- **Эксплуатация** — healthchecks, graceful degradation, multi-stage production-образы.
 
 ---
 
-### Голосовые сценарии
-
-Платформа поддерживает:
-
-- распознавание речи (STT);
-- синтез речи (TTS);
-- голосовые ответы;
-- диагностику аудио-сценариев;
-- телеметрию голосовых AI-контуров.
-
-📷 Скриншоты:
-
-![Голосовое взаимодействие в Telegram](docs/screenshots/audio-tg.png)
-
-<p align="center"><em>
-Пример голосового взаимодействия с Telegram-ассистентом: распознавание речи и генерация аудио-ответа.
-</em></p>
-
-![Консоль voice pipeline](docs/screenshots/audio-adm.png)
-
-<p align="center"><em>
-Операционная консоль voice pipeline: STT/TTS telemetry, аудио-сессия и таймлайн обработки голосового запроса.
-</em></p>
-
----
-
-### Генерация изображений
-
-Assistant Flow поддерживает генерацию изображений по текстовому описанию.
-
-Платформа:
-- обрабатывает пользовательский запрос;
-- уточняет описание для генерации;
-- запускает контур генерации изображений;
-- сохраняет сохранённые ассеты;
-- отображает этапы обработки в административной консоли.
-
-📷 Скриншоты:
-
-![Генерация изображения в Telegram](docs/screenshots/image-tg.png)
-
-<p align="center"><em>
-Пример генерации изображения Telegram-ассистентом по текстовому запросу пользователя.
-</em></p>
-
-![Консоль генерации изображений](docs/screenshots/image-adm.png)
-
-<p align="center"><em>
-Консоль генерации изображений: refined prompt, telemetry image pipeline и сохранённый generated asset.
-</em></p>
-
----
-
-### Распознавание текста (OCR)
-
-Распознавание выполняется через **OpenAI Vision** (без локальных OCR-библиотек). Нужны `OPENAI_API_KEY` и vision-capable модель из `.env`.
-
-**Как запустить:**
-
-- режим **`/mode ocr`** — отправьте фото (подпись необязательна);
-- в режимах **`text`** или **`rag`** — фото с подписью, где явно просят прочитать текст, например: «распознай текст», «OCR», «извлеки текст», «прочитай изображение».
-
-Ответ приходит одним сообщением с распознанным текстом. В режиме OCR подпись может уточнить задание для vision-модели (например «объясни простыми словами, что написано») — это один вызов Vision, без отдельного текстового ассистента после OCR.
-
-**Ограничения:** качество зависит от снимка; хуже распознаются размытые кадры, рукопись, мелкий шрифт и сложные таблицы. RAG по содержимому изображения без OCR отдельно не запускается.
-
-📷 Скриншоты:
-
-![OCR в Telegram](docs/screenshots/ocr_tg.png)
-
-<p align="center"><em>
-Пример OCR-обработки изображения в Telegram: распознавание текста средствами OpenAI Vision.
-</em></p>
-
-![OCR / Vision pipeline в консоли](docs/screenshots/ocr_adm.png)
-
-<p align="center"><em>
-OCR/Vision pipeline: распознавание изображения, telemetry обработки и извлечённый текст документа.
-</em></p>
-
-Подробнее — [USER_GUIDE.md](docs/USER_GUIDE.md).
-
----
-
-## Операционная консоль
-
-Административная консоль предназначена для эксплуатации и наблюдаемости AI-платформы.
-
-Консоль позволяет:
-
-- контролировать состояние платформы;
-- анализировать AI-сессии;
-- наблюдать этапы обработки запросов;
-- анализировать этапы поиска по базе знаний;
-- управлять индексацией документов;
-- наблюдать память диалога;
-- анализировать качество RAG;
-- отслеживать техническую телеметрию AI-контуров.
-
-Основной UI: `frontend/admin-ui` (React). Пункты бокового меню (как в коде):
-
-| Раздел | Путь |
-|--------|------|
-| Обзор | `/` |
-| Сводка | `/summary` |
-| Текст | `/text` |
-| RAG | `/rag` |
-| Изображения | `/images` |
-| Аудио | `/audio` |
-| Документы | `/documents` |
-| Retrieval Settings | `/retrieval` |
-| Логи | `/logs` |
-| Memory | `/memory` |
-| Анализ RAG | `/evaluation` |
-| Аудит | `/audit` |
-
-Доступ к консоли: при заданных `AF_ADMIN_TOKEN` / `AF_ADMIN_DEMO_TOKEN` вход по Bearer-токену (экран `/login`), есть демо-вход read-only; без токенов консоль открыта (локальный режим). Журнал `/audit` фиксирует обращения к Admin API.
-
-📷 Скриншоты:
-
-![Обзор состояния платформы](docs/screenshots/overview-adm.png)
-
-<p align="center"><em>
-Обзор состояния платформы Assistant Flow: health-check сервисов, активные AI-провайдеры, retrieval backend и операционные метрики.
-</em></p>
-
-![Сводная операционная статистика](docs/screenshots/summary-adm.png)
-
-<p align="center"><em>
-Сводная операционная статистика платформы: маршруты обработки, этапы pipeline, телеметрия провайдеров и агрегированные метрики.
-</em></p>
-
-![Журнал execution-сессий](docs/screenshots/logs-adm.png)
-
-<p align="center"><em>
-Журнал execution-сессий и трассировка pipeline обработки запросов Assistant Flow.
-</em></p>
-
----
-
-## Анализ качества RAG
-
-В платформу встроен отдельный контур оценки качества RAG и AI-ответов.
-
-Поддерживаются:
-- RAGAS;
-- ручная оценка ответов;
-- анализ точности поиска;
-- анализ найденных чанков;
-- оценка faithfulness;
-- оценка relevance.
-
-Это позволяет не только запускать RAG, но и контролировать качество работы поиска по базе знаний.
-
-📷 Скриншоты:
-
-![Консоль оценки качества RAG](docs/screenshots/ragas-adm.png)
-
-<p align="center"><em>
-Консоль оценки качества RAG: RAGAS-метрики, ручная валидация ответов и анализ retrieved chunks.
-</em></p>
-
-![Сравнение сессий в evaluation run](docs/screenshots/evaluation-run-adm.png)
-
-<p align="center"><em>
-Сравнение отдельных RAG-сессий внутри evaluation run с отображением метрик quality evaluation.
-</em></p>
-
----
-
-## Типовой сценарий работы
-
-1. Оператор загружает документы в административную консоль.
-2. Платформа индексирует базу знаний.
-3. Пользователь задаёт вопрос в Telegram.
-4. Система выполняет поиск по базе знаний и формирует ответ.
-5. Оператор просматривает диагностику запроса в консоли (RAG, логи, задержки).
-
----
-
-## Архитектура платформы
-
-Assistant Flow состоит из нескольких связанных контуров. Ниже — схема верхнего уровня (без деталей реализации).
+## 🏗️ Краткий обзор архитектуры
 
 ```mermaid
 flowchart TD
@@ -391,226 +109,132 @@ flowchart TD
     API --> OBS
 ```
 
-### Пользовательский контур
+- **Telegram-бот + оркестратор** — маршрутизация запросов по модальностям, память диалога.
+- **Admin API + Admin UI** — операционная консоль: сессии, документы, retrieval, аудит.
+- **Контур базы знаний** — индексация, retrieval security по ролям, retrieval cache, векторные хранилища.
 
-Поддерживает:
-- Telegram-интерфейс;
-- текстовые сценарии;
-- голосовые сценарии;
-- генерацию изображений;
-- RAG-запросы.
+Подробнее — в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-### Контур обработки запросов
+## 🌐 Публичные точки входа
 
-Маршрутизация по типу запроса, контуры обработки AI, память диалога, логирование и диагностика этапов.
+| Роль | Сервис | Адрес | Назначение |
+|------|--------|-------|-----------|
+| Пользователь | Telegram-бот | имя задаётся при развёртывании ([DEPLOYMENT_GUIDE](docs/DEPLOYMENT_GUIDE.md) §4) | вопросы во всех режимах |
+| Оператор / администратор | Операционная консоль | [af-admin.alex-n8n.site](https://af-admin.alex-n8n.site) (витрина) · localhost:8080 (локально) | обзор, сессии, база знаний, аудит |
+| Интегратор | Admin API | localhost:8600 (локально) | REST Admin API |
 
----
-
-### Контур базы знаний
-
-Загрузка документов, индексация, метаданные чанков, настройка поиска и опциональный кэш повторных запросов.
-
----
-
-### Контур наблюдаемости
-
-Поддерживаются:
-- трассировка AI-сессий;
-- техническое логирование;
-- диагностика контуров обработки AI;
-- анализ задержек;
-- контроль состояния сервисов;
-- эксплуатационная телеметрия.
+> 🔓 **Вход в консоль:** по Bearer-токену (`AF_ADMIN_TOKEN`); публичный демо-вход — кнопка «Войти в демо-режиме» (`AF_ADMIN_DEMO_TOKEN`), read-only RBAC. Не корпоративный SSO.
 
 ---
 
-## Технологический стек
+## 📚 Документация
 
-### Backend
+### Для заказчиков и менеджеров
 
-- Python
-- FastAPI
-- PostgreSQL
-- ChromaDB
-- Weaviate
-- FAISS
+| Документ | Описание |
+|----------|----------|
+| [💼 `docs/BUSINESS_VALUE.md`](docs/BUSINESS_VALUE.md) | Бизнес-проблема, решение, эффект, выгода |
+| [🎬 `docs/SYSTEM_DEMO.md`](docs/SYSTEM_DEMO.md) | Скриншоты, live demo, типовой сценарий |
+| [🧭 `docs/DEMO_ROUTE.md`](docs/DEMO_ROUTE.md) | Маршрут проверки демо за 5 шагов |
+| [🎬 `docs/DEMO_SCENARIOS.md`](docs/DEMO_SCENARIOS.md) | Расширенная матрица демо-проверок |
 
----
+### Для пользователей и операторов
 
-### Frontend
+| Документ | Описание |
+|----------|----------|
+| [📖 `docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Руководство пользователя Telegram-ассистента |
+| [🎛️ `docs/ADMIN_GUIDE.md`](docs/ADMIN_GUIDE.md) | Руководство администратора консоли |
+| [🖥️ `docs/ADMIN_INDEXING.md`](docs/ADMIN_INDEXING.md) | Индексация базы знаний: workflow и safeguard-и |
 
-- React
-- Vite
+### Для инженеров и интеграторов
 
----
-
-### AI-провайдеры
-
-- OpenAI
-- GigaChat
-- Proxy API
-
----
-
-### Инфраструктура
-
-- Docker
-- Docker Compose (`docker-compose.portfolio.yml`)
-
----
-
-## Структура проекта
-
-```text
-assistant-flow/
-├── admin_api/              # FastAPI Admin API
-├── core/                   # оркестрация запросов
-├── providers/              # клиенты AI-провайдеров, embeddings
-├── services/               # RAG, поиск, кэш, evaluation, индексация, security
-├── interfaces/             # Telegram-бот (run_telegram_bot.py)
-├── repositories/           # PostgreSQL
-├── database/               # schema.sql, миграции
-├── frontend/
-│   └── admin-ui/           # React операционная консоль (Vite)
-├── docs/                   # USER_GUIDE, PROJECT_STATE, DEPLOYMENT_GUIDE, OPERATIONS, screenshots/
-├── evaluation/             # датасеты и контур оценки качества
-├── scripts/                # smoke, индексация, утилиты
-├── storage/                # FAISS, SQLite cache, assets (volume в compose)
-├── utils/                  # AppConfig, общие утилиты
-├── docker-compose.portfolio.yml
-├── .env.example
-└── README.md
-```
-
+| Документ | Описание |
+|----------|----------|
+| [🏗️ `docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Архитектурные решения и контуры |
+| [⚙️ `docs/OPERATIONS.md`](docs/OPERATIONS.md) | Эксплуатация: compose, порты, backends, диагностика |
+| [🚀 `docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) | Развёртывание с нуля (SOT воспроизводимости) |
+| [✅ `docs/DEPLOYMENT_VALIDATION_REPORT.md`](docs/DEPLOYMENT_VALIDATION_REPORT.md) | Отчёт о Deployment Validation |
+| [🛡️ `docs/SECURITY_NOTES.md`](docs/SECURITY_NOTES.md) | Доступ, RBAC, аудит, security-контур |
+| [📊 `docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) | Текущее состояние проекта |
+| [🎯 `docs/SPEC.md`](docs/SPEC.md) | Продуктовая спецификация |
+| [📋 `docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Технический план реализации |
+| [🧪 `docs/RAG_SMOKE_TEST.md`](docs/RAG_SMOKE_TEST.md) | Smoke-тест RAG |
+| [📂 `docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md) | Карта репозитория |
+| [🗄️ `database/POSTGRES_SETUP.md`](database/POSTGRES_SETUP.md) | PostgreSQL: схема и миграции |
+| [🖼️ `docs/screenshots/MEDIA_INDEX.md`](docs/screenshots/MEDIA_INDEX.md) | Каталог медиаматериалов |
 
 ---
 
-## Развертывание
+## ✅ Статус проекта
 
-Каноническая команда для локального демо и GitHub (имя compose-проекта берётся из имени каталога, по умолчанию `assistant-flow`):
+Реализованы все ключевые компоненты: текстовый AI-контур, RAG-контур с тремя переключаемыми бэкендами, управляемая индексация, retrieval cache, память диалога, аудио-контур (STT/TTS), операционная консоль (React), security-контур (Bearer + RBAC + журнал аудита; e2e 19/19 PASS), async-воркер фоновых задач, оценка качества RAG (RAGAS), multi-stage production-образы. Живой инстанс работает как витрина (демо-вход read-only).
+
+**GitHub:** репозиторий Assistant Flow (public).
+
+Текущее состояние и следующие шаги — в [📊 `docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
+
+---
+
+## 🛠️ Технологии
+
+- **Backend** — Python, FastAPI, PostgreSQL.
+- **Vector store** — Chroma / FAISS / Weaviate (переключаемые).
+- **Frontend** — React, Vite (операционная консоль).
+- **AI-провайдеры** — OpenAI / GigaChat / Proxy API (embeddings отделены от chat).
+- **Deploy** — Docker, Docker Compose (`docker-compose.portfolio.yml`).
+
+---
+
+## 🚀 Быстрый запуск
+
+### Локально
 
 ```bash
 cp .env.example .env
 COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build --remove-orphans
 ```
 
-Поднимаются сервисы: `postgres`, `chroma`, `weaviate`, `assistant-flow` (Telegram), `admin-api`, `admin-ui`.
-
-Порты на хосте (по умолчанию):
-
-| Сервис | Порт |
-|--------|------|
-| Admin UI | 8080 |
-| Admin API | 8600 |
-| PostgreSQL | 5433 → 5432 в сети compose |
+| Сервис | URL / порт |
+|--------|-----------|
+| Admin UI | http://localhost:8080 |
+| Admin API | http://localhost:8600 |
+| PostgreSQL | 5433 → 5432 (в сети compose) |
 | Chroma HTTP | 8001 → 8000 |
 | Weaviate HTTP | 8089 → 8080 |
-
-Volumes: `./data/documents`, `./storage`, `./outputs` → контейнеры `assistant-flow` и `admin-api`. Данные PostgreSQL и векторных хранилищ живут в named volumes вида `assistant-flow_portfolio_*`.
-
-Backend-образы собираются multi-stage: сборочные зависимости остаются в builder-стадии, runtime содержит только venv + ffmpeg. Опциональные extras включаются build-args (`INSTALL_RAGAS`, `INSTALL_DASHBOARD`) — см. [docs/OPERATIONS.md](docs/OPERATIONS.md) § «Сборка образов».
 
 Проверка после запуска:
 
 ```bash
 curl -sS http://localhost:8600/api/health
-# браузер: http://localhost:8080 (UI), API: http://localhost:8600
+# браузер: http://localhost:8080 (UI)
 ```
 
-Полная процедура развёртывания с нуля (требования, сеть, .env, первый запуск, проверки) — в [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md). Эксплуатация, SSH-туннель и типовые сбои — [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Подробные инструкции (требования, сеть, .env, первый запуск, проверки) — [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md); эксплуатация и типовые сбои — [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ---
 
-## Конфигурация (.env)
+## ⚠️ Ограничения демо
 
-`cp .env.example .env` — только плейсхолдеры в git; секреты не коммитить.
-
-| Группа | Ключевые переменные |
-|--------|---------------------|
-| Telegram | `TELEGRAM_BOT_TOKEN` (реальный токен, не заглушка) |
-| Текст / RAG | `GIGACHAT_*`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, `PROXY_*` |
-| PostgreSQL | `DATABASE_URL` → `postgresql://assistant:assistant@postgres:5432/assistant_flow` (portfolio) |
-| Поиск / кэш | `RAG_BACKEND`, `CHROMA_*`, `FAISS_INDEX_DIR`, `WEAVIATE_*`, `RAG_DOCUMENTS_DIR`, `ENABLE_RETRIEVAL_CACHE` |
-| Аудио | `AUDIO_ENABLED`, `STT_PROVIDER`, `TTS_PROVIDER` (по умолчанию `disabled`), `AUDIO_TIMEOUT_SECONDS` (default 60), `AUDIO_MAX_RETRIES` (default 1), `STT_COST_PER_MINUTE_USD` (default 0.006), `TTS_COST_PER_1M_CHARS_USD` (default 15.0) — таймауты/ретраи OpenAI-клиентов STT/TTS и оценочная стоимость (cost_basis=estimated) |
-| Доступ к консоли | `AF_ADMIN_TOKEN` (полный доступ), `AF_ADMIN_DEMO_TOKEN` (демо read-only, запечён в UI при сборке), `AF_AUTH_MIDDLEWARE_MODE` (legacy Basic-аутентификация) |
-| Лимиты | `ADMIN_UPLOAD_MAX_MB` (лимит размера документа, default 25) |
-| Фоновый воркер | `AF_ASYNC_WORKER_ENABLED` (default on), `AF_ASYNC_WORKER_POLL_SECONDS` (default 5), `AF_ASYNC_WORKER_STALE_RUNNING_SECONDS` (default 1800) |
-| Admin UI | `ADMIN_API_CORS_ORIGINS` → `http://localhost:8080` |
-
-Полный перечень — `.env.example`, [docs/OPERATIONS.md](docs/OPERATIONS.md).
+- **Исследовательская платформа (MVP)**: seed-документы — учебный материал для демонстрации RAG, а не корпоративная база знаний.
+- **Single-tenant**: нет multi-tenant изоляции и внешнего IAM/OAuth.
+- **Heavy RAG на малых VPS**: reindex при конкурентных RAG-запросах может деградировать при 8 GiB RAM.
+- Демо-вход в консоль — только чтение (RBAC); перед production требуется корпоративная аутентификация, CI/CD, мониторинг и бэкапы.
 
 ---
 
-## Текущий статус проекта
+## 🔑 Ключевые принципы
 
-### Стабильные подсистемы
-
-- текстовый AI-контур;
-- RAG-контур (Chroma / FAISS / Weaviate, backend переключается в Retrieval Settings);
-- индексация документов с heavy-RAG safeguard-ами (лимит размера upload, защита reindex);
-- диагностика поиска по базе знаний и полный текст чанка в консоли;
-- кэширование запросов к базе знаний;
-- аудио-контур (STT/TTS): таймауты/ретраи OpenAI-клиентов, оценочная стоимость в телеметрии;
-- техническое логирование и трассировка pipeline;
-- механизм памяти диалога;
-- авторизация консоли (Bearer-токен, демо-вход read-only), RBAC на Admin API и журнал аудита;
-- retrieval security в пользовательском контуре (роли по visibility документов);
-- операционная наблюдаемость;
-- multi-stage production-образы (без сборочных зависимостей и dev-пакетов в runtime).
+1. **Ответы прозрачны** — трассировка каждого этапа обработки, от запроса до найденных чанков.
+2. **База знаний управляема** — индексация, версии, lifecycle, visibility-роли; не «файлы на диске».
+3. **Observability-first** — метрики, телеметрия провайдеров, cache-состояния, журнал аудита.
+4. **Честные границы** — Bearer-токены, демо read-only, известные ограничения; MVP перед production.
 
 ---
 
-### Активно развиваются
+## 📁 Структура проекта
 
-- React Admin UI;
-- оценка качества RAG (RAGAS, `ENABLE_RAGAS_EVALUATION`);
-- фильтрация поиска по источникам.
+Полная карта каталогов и файлов — в [📂 `docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md).
 
----
-
-## Roadmap
-
-- Фильтрация поиска по источникам.
-- Резервная маршрутизация провайдеров (OpenAI / GigaChat / Proxy API).
-- Улучшение разбиения документов на чанки (semantic/glossary-aware).
-- Multi-tenant изоляция, external IAM/OAuth.
-
----
-
-## Документация проекта
-
-| Документ | Назначение |
-|---|---|
-| [README.md](README.md) | Общее описание платформы (входная точка GitHub) |
-| [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) | Развёртывание с нуля (SOT воспроизводимости) + [отчёт Validation](docs/DEPLOYMENT_VALIDATION_REPORT.md) |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Эксплуатация: compose, порты, backends, диагностика |
-| [docs/SECURITY_NOTES.md](docs/SECURITY_NOTES.md) | Доступ, RBAC, аудит, security-контур |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура системы |
-| [docs/DEMO_ROUTE.md](docs/DEMO_ROUTE.md) | Маршрут проверки демо |
-| [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) | Расширенная матрица демо-проверок |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Руководство пользователя и оператора |
-| [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) | Паспорт состояния проекта |
-| [docs/ADMIN_INDEXING.md](docs/ADMIN_INDEXING.md) | Индексация базы знаний |
-| [docs/RAG_SMOKE_TEST.md](docs/RAG_SMOKE_TEST.md) | Smoke-тест RAG |
-| [docs/SPEC.md](docs/SPEC.md) | Продуктовая спецификация |
-| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Технический план реализации |
-| [database/POSTGRES_SETUP.md](database/POSTGRES_SETUP.md) | PostgreSQL: схема и миграции |
-| [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | Карта репозитория |
-| [docs/screenshots/MEDIA_INDEX.md](docs/screenshots/MEDIA_INDEX.md) | Каталог медиаматериалов |
-
----
-
-## Важное замечание
-
-Assistant Flow является инженерным AI-проектом и исследовательской платформой для:
-
-- RAG;
-- мультимодальных AI-сценариев;
-- эксплуатации AI-систем;
-- наблюдаемости AI-контуров;
-- диагностики поиска по базе знаний;
-- проектирования мультимодальных AI-систем.
-
-Проект активно развивается и используется как практический полигон для разработки и сопровождения AI-сервисов.
+> **Примечание:** внутренние материалы AI Automation Portfolio Lab (например, `task_history/`, черновики архитектурных решений) хранятся вне публичного репозитория и не входят в поставку.

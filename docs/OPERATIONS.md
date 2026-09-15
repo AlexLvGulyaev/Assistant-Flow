@@ -1,5 +1,7 @@
 # ⚙️ OPERATIONS.md — Assistant Flow
 
+**Статус:** актуально на 2026-09-15.
+
 Справочник эксплуатации portfolio-стека: топология, compose, PostgreSQL,
 vector backends, кэш, логи, диагностика, типовые проблемы.
 

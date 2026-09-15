@@ -1,5 +1,7 @@
 # 🎬 Демо-сценарии
 
+**Статус:** актуально на 2026-09-15.
+
 Расширенная матрица проверок перед демонстрацией или review репозитория
 (базовый маршрут 2–5 действий — [DEMO_ROUTE.md](DEMO_ROUTE.md)).
 Команды — из **корня** проекта; стек — portfolio ([OPERATIONS.md](OPERATIONS.md)).
@@ -12,7 +14,7 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 
 ---
 
-## 1. Текстовый режим (GigaChat)
+## 💬 1. Текстовый режим (GigaChat)
 
 1. Запустить бота (контейнер `assistant-flow` или `python run_telegram_bot.py`).
 2. Telegram: `/reset`, `/mode text`.
@@ -23,7 +25,7 @@ Admin UI: раздел **Текст** — трассировка запроса 
 
 ---
 
-## 2. RAG по документам
+## 🔍 2. RAG по документам
 
 1. Индексировать базу ([ADMIN_INDEXING.md](ADMIN_INDEXING.md) или smoke `--reindex`).
 2. `/mode rag` в Telegram **или** запрос в Admin UI → **RAG**.
@@ -32,7 +34,7 @@ Admin UI: раздел **Текст** — трассировка запроса 
 
 ---
 
-## 3. Кэш запросов к базе знаний
+## 💾 3. Кэш запросов к базе знаний
 
 1. Включить кэш (Retrieval Settings / `ENABLE_RETRIEVAL_CACHE`).
 2. Два одинаковых RAG-запроса подряд в **RAG**.
@@ -40,7 +42,7 @@ Admin UI: раздел **Текст** — трассировка запроса 
 
 ---
 
-## 4. Документы: загрузка и reindex
+## 📄 4. Документы: загрузка и reindex
 
 1. Admin UI → **Документы**: загрузить PDF/TXT/MD.
 2. Дождаться индексации; при сбое — **Reindex**.
@@ -50,7 +52,7 @@ CLI (альтернатива): `python scripts/admin_index_documents.py --reind
 
 ---
 
-## 5. Генерация изображений
+## 🖼️ 5. Генерация изображений
 
 1. `/mode text`.
 2. *«Нарисуй закат над морем в минималистичном стиле»*.
@@ -60,7 +62,7 @@ Admin UI: **Изображения** — телеметрия.
 
 ---
 
-## 6. OCR (распознавание текста с фото)
+## 🔤 6. OCR (распознавание текста с фото)
 
 1. Настроить `OPENAI_API_KEY` и vision-модель.
 2. Telegram: `/mode ocr` → фото с печатным текстом (или фото с подписью «распознай текст» в `/mode text`).
@@ -70,7 +72,7 @@ Admin UI: **Изображения** — телеметрия.
 
 ---
 
-## 7. Аудио (STT/TTS)
+## 🔊 7. Аудио (STT/TTS)
 
 Если в `.env`: `AUDIO_ENABLED=true`, настроены `STT_PROVIDER` / `TTS_PROVIDER`.
 
@@ -81,28 +83,28 @@ Admin UI: **Изображения** — телеметрия.
 
 ---
 
-## 8. Обзор консоли, логи, оценка
+## 📊 8. Консоль: обзор, логи, оценка
 
 | Раздел | Что показать |
 |--------|----------------|
-| **Обзор** | Health зависимостей, счётчики |
+| **Панель состояния** | Health зависимостей, счётчики |
 | **Сводка** | Агрегаты по времени |
 | **Логи** | `processing_logs`, фильтры |
 | **Memory** | Сессии и контекст (при Postgres) |
 | **Анализ RAG** | RAGAS / ручная оценка (если включено) |
 
-Скриншоты для README: `docs/screenshots/`.
+Скриншоты интерфейса — [SYSTEM_DEMO.md](SYSTEM_DEMO.md); каталог медиаматериалов — [screenshots/MEDIA_INDEX.md](screenshots/MEDIA_INDEX.md).
 
 ---
 
-## 9. `/stats` и `/reset` (Telegram)
+## 📜 9. `/stats` и `/reset` (Telegram)
 
 - `/stats` — число чанков, backend, каталог документов.
-- `/reset` — режим `text`, очистка in-memory RAG-истории.
+- `/reset` — сброс режима, очистка in-memory RAG-истории и ротация диалоговой сессии (в консоли — `memory_session_cleared`).
 
 ---
 
-## Быстрый RAG без Telegram
+## ⚡ Быстрый RAG без Telegram
 
 ```bash
 curl -sS http://localhost:8600/api/health

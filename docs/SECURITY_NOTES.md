@@ -1,5 +1,7 @@
 # 🛡️ Безопасность Assistant Flow
 
+**Статус:** актуально на 2026-09-15.
+
 Единый справочник безопасности: доступ к операционной консоли, RBAC, защита
 данных при retrieval, аудит, гигиена секретов. Факты соответствуют runtime
 (auth middleware `services/security/`, RBAC `services/security/rbac.py`,
@@ -24,7 +26,7 @@
 | Переменная | Роль | Возможности |
 |------------|------|-------------|
 | `AF_ADMIN_TOKEN` | `admin` | Полный доступ: все разделы, загрузка/reindex документов, retrieval settings, evaluation |
-| `AF_ADMIN_DEMO_TOKEN` | `demo` (read-only) | Только просмотр: Обзор, Сводка, Текст, RAG, Документы (список), Retrieval Settings (чтение), Логи, Аудит. Мутации → **403** |
+| `AF_ADMIN_DEMO_TOKEN` | `demo` (read-only) | Только просмотр: Обзор, Сводка, Текст, RAG, Документы (база знаний в employee-scope: public + internal), Retrieval Settings (чтение), Логи, Аудит. Мутации → **403** |
 | не заданы | — | Авторизация выключена — консоль открыта (локальный режим разработки) |
 
 Правила:
@@ -109,7 +111,7 @@ default 28800 с = 8 ч); HTTP Basic (`INITIAL_ADMIN_EMAIL` /
 | `auditor` | logs + forensic + audit + documents read + retrieval read | employee |
 | `admin` | все operational permissions | admin |
 | `superadmin` | operational + `users:write` | admin |
-| `demo` | только чтение: documents/logs/retrieval/settings/audit read | — |
+| `demo` | только чтение: documents/logs/retrieval/settings/audit read | employee (просмотр KB: public + internal) |
 
 Bootstrap admin (identity foundation): `platform_role=admin`, `retrieval_role=admin`.
 

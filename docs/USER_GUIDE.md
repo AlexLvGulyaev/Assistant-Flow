@@ -1,34 +1,24 @@
-# 📖 Assistant Flow User Guide
+# 📖 Assistant Flow — руководство пользователя
 
-Как **пользоваться** уже запущенной системой. Развёртывание — [🚀 docs/DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+Как пользоваться Telegram-ассистентом Assistant Flow. Развёртывание — [🚀 `DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md); операционная консоль — [🎛️ `ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
+
+**Статус:** актуально на 2026-09-15.
 
 ---
 
-## 1. Назначение платформы
+## 🎯 1. Назначение
 
-Assistant Flow — мультимодальная AI-платформа:
+Assistant Flow — мультимодальный AI-ассистент в Telegram:
 
-- корпоративная база знаний и RAG;
-- текстовый диалог в Telegram;
-- голос (STT/TTS), если включено оператором;
-- генерация изображений;
+- текстовый диалог;
+- RAG — вопросы по корпоративной базе знаний;
 - OCR / Vision — текст с фотографий;
-- административная консоль для оператора.
+- голос (STT/TTS), если включено оператором;
+- генерация изображений.
 
 ---
 
-## 2. Основные интерфейсы
-
-| Интерфейс | Кто | Назначение |
-|-----------|-----|------------|
-| **Telegram** | Пользователь | Вопросы, RAG, фото, голос, картинки |
-| **Admin UI** | Оператор | Диагностика, документы, память, оценка RAG |
-
-Адрес UI после portfolio-запуска: `http://localhost:8080` (см. [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)).
-
----
-
-## 3. Подключение к Telegram-боту
+## 🔌 2. Подключение к боту
 
 Система должна быть уже запущена ([DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)).
 
@@ -36,15 +26,15 @@ Assistant Flow — мультимодальная AI-платформа:
 2. **Start** или `/start`.
 3. `/help` — режимы и примеры.
 
-Если бот не отвечает — оператору: [docs/OPERATIONS.md](OPERATIONS.md) § «Типовые проблемы» (токен, restart).
+Если бот не отвечает — оператору: [⚙️ `OPERATIONS.md`](OPERATIONS.md) § «Типовые проблемы» (токен, restart).
 
 ---
 
-## 4. Сценарии (схемы)
+## 🧭 3. Сценарии (схемы)
 
-Операционные потоки: стадии соответствуют `processing_logs` и карточкам в Admin UI (разделы **Текст**, **RAG**, **Логи**). Это не полная архитектурная схема — внутренние вызовы сервисов свёрнуты.
+Операционные потоки: стадии соответствуют `processing_logs` и карточкам в консоли (разделы **Текст**, **RAG**, **Логи**). Это не полная архитектурная схема — внутренние вызовы сервисов свёрнуты.
 
-*Этапы pipeline отражаются в `processing_logs` и доступны в Admin UI.*
+*Этапы pipeline отражаются в `processing_logs` и доступны в операционной консоли.*
 
 ### Текст
 
@@ -121,40 +111,9 @@ flowchart LR
 
 *Стадии в логах:* `intake_received` → `stt_started` → `stt_completed` → `route_selected` → `text_answer_done` → `tts_started` / `tts_skipped` / `tts_completed` → `voice_processing_done`.
 
-### Индексация документов (оператор)
-
-```mermaid
-flowchart LR
-    OP[Оператор] --> UI[Admin UI: Документы]
-    UI --> S1[Загрузка файла]
-    S1 --> S2[Предобработка текста]
-    S2 --> S3[Артефакт сохранён]
-    S3 --> S4[Копия для RAG-каталога]
-    S4 --> S5[Индексация: чанки]
-    S5 --> S6[Эмбеддинги в vector backend]
-    S5 --> PG[(Метаданные PostgreSQL)]
-    S6 --> S7[Пайплайн загрузки завершён]
-```
-
-*Стадии в логах:* `admin_document_uploaded_raw` → `document_preprocessing_started` → `document_preprocessing_done` → `document_processed_artifact_saved` → `document_compatibility_file_written` → `document_indexing_started` → `document_indexing_done` → `document_upload_pipeline_done`.
-
-### Кэш retrieval (внутри RAG)
-
-```mermaid
-flowchart LR
-    Q[RAG-запрос] --> C{Кэш retrieval}
-    C -->|HIT| H[Повторное использование чанков]
-    C -->|MISS| R[Поиск в vector backend]
-    R --> W[Сохранение в кэш]
-    W --> H
-    H --> L[Дальше: RAG prompt и LLM]
-```
-
-*В UI:* OFF / MISS / HIT и `retrieval_latency_ms` в карточке RAG; в логах — поля `retrieval_cache_hit` / `retrieval_cache_miss` внутри `rag_answer_done`.
-
 ---
 
-## 5. Команды Telegram
+## 📜 4. Команды Telegram
 
 | Команда | Действие |
 |---------|----------|
@@ -164,12 +123,14 @@ flowchart LR
 | `/mode rag` | Вопросы по базе знаний |
 | `/mode ocr` | Распознавание текста на фото |
 | `/stats` | Статистика индекса (RAG) |
-| `/reset` | Сброс режима и in-memory RAG |
+| `/reset` | Сброс режима и in-memory RAG + ротация диалоговой сессии |
 | `/clear` | Очистка контекста RAG (см. `/help`) |
+
+> 💡 `/reset` также завершает текущую диалоговую сессию памяти: следующий диалог начинается с чистой историей (в консоли видно событие `memory_session_cleared` — раздел [🎛️ `ADMIN_GUIDE.md`](ADMIN_GUIDE.md) § Memory).
 
 ---
 
-## 6. Текстовый режим (`/mode text`)
+## 💬 5. Текстовый режим (`/mode text`)
 
 - Вопросы на естественном языке.
 - «Нарисуй…» — генерация изображения.
@@ -183,23 +144,17 @@ flowchart LR
 Пример текстового ответа Telegram-ассистента в режиме обычного диалога.
 </em></p>
 
-![Консоль текстового pipeline](screenshots/text-adm.png)
-
-<p align="center"><em>
-Консоль текстового pipeline: параметры LLM-запроса, telemetry и таймлайн обработки text-response.
-</em></p>
-
 ---
 
-## 7. RAG (`/mode rag`)
+## 🔍 6. RAG (`/mode rag`)
 
-Оператор заранее загружает документы (**Документы** в Admin UI).
+Оператор заранее загружает документы ([🎛️ `ADMIN_GUIDE.md`](ADMIN_GUIDE.md) § Документы).
 
 1. `/mode rag`.
 2. Вопрос по содержимому проиндексированных файлов.
 3. Ответ + блок **Источники**.
 
-**Пример:** «дай сводку по компании NovaTex» (если такие документы есть в базе).
+**Пример:** «дай полную сводку по компании НоваТех» (если такие документы есть в базе).
 
 Без индексации — fallback без релевантных источников.
 
@@ -209,21 +164,9 @@ flowchart LR
 RAG-ответ Telegram-ассистента на основе корпоративной базы знаний Assistant Flow.
 </em></p>
 
-![Операционная консоль RAG-сессий](screenshots/rag-adm.png)
-
-<p align="center"><em>
-Операционная консоль RAG-сессий с диагностикой retrieval, latency, cache-state и найденных чанков.
-</em></p>
-
-![Расширенная диагностика retrieval](screenshots/retrieval-details-adm.png)
-
-<p align="center"><em>
-Расширенная диагностика retrieval: найденные чанки, relevance-score, latency retrieval и состояние retrieval cache.
-</em></p>
-
 ---
 
-## 8. Распознавание текста (OCR)
+## 📄 7. Распознавание текста (OCR)
 
 OpenAI Vision; локальный Tesseract не используется.
 
@@ -237,25 +180,17 @@ OpenAI Vision; локальный Tesseract не используется.
 
 **Ограничения:** размытие, рукопись, мелкий шрифт, сложные таблицы. RAG по картинке без OCR не выполняется.
 
-Оператор смотрит маршрут `vision_ocr` в **Текст** / **Логи**.
-
 ![OCR в Telegram](screenshots/ocr_tg.png)
 
 <p align="center"><em>
 Пример OCR-обработки изображения в Telegram: распознавание текста средствами OpenAI Vision.
 </em></p>
 
-![OCR / Vision pipeline в консоли](screenshots/ocr_adm.png)
-
-<p align="center"><em>
-OCR/Vision pipeline: распознавание изображения, telemetry обработки и извлечённый текст документа.
-</em></p>
-
 ---
 
-## 9. Голос
+## 🔊 8. Голос
 
-При включённом аудио в окружении: голосовое → текст (и опционально озвучка). По умолчанию в demo — отключено.
+При включённом аудио в окружении: голосовое → текст (и опционально озвучка). По умолчанию в демо — отключено.
 
 ![Голосовое взаимодействие в Telegram](screenshots/audio-tg.png)
 
@@ -263,15 +198,9 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 Пример голосового взаимодействия с Telegram-ассистентом: распознавание речи и генерация аудио-ответа.
 </em></p>
 
-![Консоль voice pipeline](screenshots/audio-adm.png)
-
-<p align="center"><em>
-Операционная консоль voice pipeline: STT/TTS telemetry, аудио-сессия и таймлайн обработки голосового запроса.
-</em></p>
-
 ---
 
-## 10. Генерация изображений
+## 🖼️ 9. Генерация изображений
 
 `/mode text` → «нарисуй слона в посудной лавке» → изображение в чате.
 
@@ -281,123 +210,22 @@ OCR/Vision pipeline: распознавание изображения, telemetr
 Пример генерации изображения Telegram-ассистентом по текстовому запросу пользователя.
 </em></p>
 
-![Консоль генерации изображений](screenshots/image-adm.png)
-
-<p align="center"><em>
-Консоль генерации изображений: refined prompt, telemetry image pipeline и сохранённый generated asset.
-</em></p>
-
 ---
 
-## 11. Память диалога
+## 🧠 10. Память диалога
 
 - История в PostgreSQL (если настроено).
-- Контекст для модели ограничен по размеру.
-- Оператор: **Memory** (`/memory`) в Admin UI.
+- Контекст для модели ограничен по размеру — ответы остаются устойчивыми и предсказуемыми.
+- `/reset` — начать диалог заново (см. § 4).
 
-`/reset` — сброс режима и in-memory RAG.
-
-![Диагностика runtime memory](screenshots/mem-adm.png)
-
-<p align="center"><em>
-Диагностика runtime memory: контекст диалога, trimming history и политика ограничения conversational memory.
-</em></p>
+Как память видна оператору — [🎛️ `ADMIN_GUIDE.md`](ADMIN_GUIDE.md) § Memory.
 
 ---
 
-## 12. Документы (оператор)
+## 📚 11. См. также
 
-Admin UI → **Документы**: загрузка, индексация, reindex, `chunk_count`.
-
-[docs/ADMIN_INDEXING.md](ADMIN_INDEXING.md)
-
-![Управление документами knowledge base](screenshots/documents-adm.png)
-
-<p align="center"><em>
-Управление документами knowledge base: индексация, preprocessing, версии документов и жизненный цикл ingestion pipeline.
-</em></p>
-
----
-
-## 13. Административная консоль
-
-### Вход
-
-- Токены заданы в `.env` (`AF_ADMIN_TOKEN`, `AF_ADMIN_DEMO_TOKEN`) → при открытии консоли открывается экран входа: введите токен или нажмите **«Войти в демо-режиме»** (read-only, токен запечён в UI при сборке).
-- Токены не заданы → консоль открывается без авторизации (локальный режим).
-- Выход — кнопка **Выход** (экран `/exit`) сбрасывает сессию.
-- Подробности (режимы, legacy-режим Basic-аутентификации, RBAC, аудит) — [docs/SECURITY_NOTES.md](SECURITY_NOTES.md).
-
-### Разделы
-
-| Раздел | Путь |
-|--------|------|
-| Обзор | `/` |
-| Сводка | `/summary` |
-| Текст | `/text` |
-| RAG | `/rag` |
-| Изображения | `/images` |
-| Аудио | `/audio` |
-| Документы | `/documents` |
-| Retrieval Settings | `/retrieval` |
-| Логи | `/logs` |
-| Memory | `/memory` |
-| Анализ RAG | `/evaluation` |
-| Аудит | `/audit` |
-| Вход | `/login` |
-| Выход | `/exit` |
-
-Раздел **Аудит** показывает журнал обращений к Admin API (действие, ресурс, роль, IP). В демо-режиме запись недоступна для изменения — только просмотр.
-
-Кэш OFF/MISS/HIT — в карточках RAG.
-
-![Обзор состояния платформы](screenshots/overview-adm.png)
-
-<p align="center"><em>
-Обзор состояния платформы Assistant Flow: health-check сервисов, активные AI-провайдеры, retrieval backend и операционные метрики.
-</em></p>
-
-![Сводная операционная статистика](screenshots/summary-adm.png)
-
-<p align="center"><em>
-Сводная операционная статистика платформы: маршруты обработки, этапы pipeline, телеметрия провайдеров и агрегированные метрики.
-</em></p>
-
-![Панель Retrieval Settings](screenshots/rs-adm.png)
-
-<p align="center"><em>
-Панель управления retrieval backend: переключение vector storage, runtime tuning, chunking и cache-настройки RAG.
-</em></p>
-
-![Сравнение retrieval cache MISS и HIT](screenshots/cache-hit-adm.png)
-
-<p align="center"><em>
-Сравнение retrieval cache MISS и HIT: снижение latency retrieval при повторном запросе.
-</em></p>
-
-![Журнал execution-сессий](screenshots/logs-adm.png)
-
-<p align="center"><em>
-Журнал execution-сессий и трассировка pipeline обработки запросов Assistant Flow.
-</em></p>
-
-![Консоль оценки качества RAG](screenshots/ragas-adm.png)
-
-<p align="center"><em>
-Консоль оценки качества RAG: RAGAS-метрики, ручная валидация ответов и анализ retrieved chunks.
-</em></p>
-
-![Сравнение сессий в evaluation run](screenshots/evaluation-run-adm.png)
-
-<p align="center"><em>
-Сравнение отдельных RAG-сессий внутри evaluation run с отображением метрик quality evaluation.
-</em></p>
-
----
-
-## 14. См. также
-
-- [🏠 README.md](../README.md)
-- [🧭 docs/DEMO_ROUTE.md](DEMO_ROUTE.md)
-- [🎬 docs/DEMO_SCENARIOS.md](DEMO_SCENARIOS.md)
-- [🏗️ docs/ARCHITECTURE.md](ARCHITECTURE.md) — устройство системы
+- [🏠 `README.md`](../README.md) — точка входа в проект.
+- [🎛️ `ADMIN_GUIDE.md`](ADMIN_GUIDE.md) — руководство администратора консоли.
+- [🎬 `SYSTEM_DEMO.md`](SYSTEM_DEMO.md) — скриншоты и типовой сценарий.
+- [🧭 `DEMO_ROUTE.md`](DEMO_ROUTE.md) — маршрут проверки демо.
+- [🏗️ `ARCHITECTURE.md`](ARCHITECTURE.md) — устройство системы.

@@ -1,10 +1,12 @@
 # 🧪 Smoke-тест RAG
 
+**Статус:** актуально на 2026-09-15.
+
 Проверка поиска по базе знаний после подъёма стека или изменений retrieval/кэша. Для полной индексации с Postgres см. [ADMIN_INDEXING.md](ADMIN_INDEXING.md).
 
 ---
 
-## 1. Запуск portfolio-стека
+## ▶️ 1. Запуск portfolio-стека
 
 ```bash
 cp .env.example .env
@@ -15,7 +17,7 @@ COMPOSE_BAKE=false docker compose -f docker-compose.portfolio.yml up -d --build 
 
 ---
 
-## 2. Health Admin API
+## 🩺 2. Health Admin API
 
 ```bash
 curl -sS http://localhost:8600/api/health
@@ -25,14 +27,14 @@ curl -sS http://localhost:8600/api/health
 
 ---
 
-## 3. Admin UI — RAG
+## 🖥️ 3. Admin UI — RAG
 
 1. Открыть `http://localhost:8080/rag`.
 2. **Успех:** страница загружается, нет ошибки CORS к `localhost:8600`.
 
 ---
 
-## 4. Документы и индекс
+## 📄 4. Документы и индекс
 
 1. Загрузить тестовый `.txt` / `.md` в **Документы** или положить файл в `data/documents/`.
 2. Выполнить индексацию (UI pipeline или `python scripts/admin_index_documents.py --reindex`).
@@ -40,7 +42,7 @@ curl -sS http://localhost:8600/api/health
 
 ---
 
-## 5. Тестовый RAG-запрос
+## 🔍 5. Тестовый RAG-запрос
 
 **Через Admin UI (RAG):** вопрос по содержимому загруженного файла.
 
@@ -58,7 +60,7 @@ python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос по 
 
 ---
 
-## 6. Кэш запросов (если включён)
+## 💾 6. Кэш запросов (если включён)
 
 В `.env` или **Retrieval Settings**: `ENABLE_RETRIEVAL_CACHE=true`.
 
@@ -68,16 +70,18 @@ python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос по 
 
 ---
 
-## 7. Параметры в UI
+## 🔧 7. Параметры поиска
 
-В RAG-консоли и **Retrieval Settings** проверить видимость:
+В **Retrieval Settings** проверить:
 
-- активного **backend** (chroma / faiss / weaviate);
-- **top_k** и связанных параметров поиска (если отображаются в текущей сборке).
+- активный **backend** (chroma / faiss / weaviate) — источник истины: `platform_settings.active_rag_backend` в PostgreSQL, а не `RAG_BACKEND` в `.env`;
+- runtime-параметры поиска (в т.ч. `rag_top_k`) — применяются по цепочке: значение в Retrieval Settings (PostgreSQL) → переменные окружения → default кода; эффективные значения видны в панели.
+
+> ⚠️ CLI `scripts/rag_smoke_test.py` tuning-резолвер не использует: он тестирует env-конфиг, а не effective-настройки консоли. Effective-настройки проверяйте в Retrieval Settings и через UI-сессии RAG.
 
 ---
 
-## 8. Telegram (опционально)
+## 💬 8. Telegram (опционально)
 
 ```bash
 # в контейнере или локально с тем же .env
@@ -88,7 +92,7 @@ python run_telegram_bot.py
 
 ---
 
-## Локальный smoke без compose
+## 🔧 Локальный smoke без compose
 
 Если Postgres/Chroma уже подняты вручную:
 
@@ -101,7 +105,7 @@ python scripts/rag_smoke_test.py --question "Что такое RAG в этом �
 
 ---
 
-## Ожидаемые коды выхода CLI индексации
+## ✅ Ожидаемые коды выхода CLI индексации
 
 `scripts/admin_index_documents.py`: `0` — успех; ненулевой — ошибки по файлам (см. вывод консоли).
 

@@ -1,5 +1,7 @@
 # 🗄️ PostgreSQL: применение схемы Assistant Flow
 
+**Статус:** актуально на 2026-09-15.
+
 **SQL-level справочник.** Первый запуск в Docker, проверка таблиц и smoke — [docs/DEPLOYMENT_GUIDE.md](../docs/DEPLOYMENT_GUIDE.md) §5–6. Краткие факты compose — [docs/OPERATIONS.md](../docs/OPERATIONS.md) § PostgreSQL.
 
 Документ описывает создание БД **вне** portfolio-compose и цепочку `schema.sql` / `database/migrations/`. Контракт полей — `database/db_contract.md`. Прикладной код использует **`DATABASE_URL`**.

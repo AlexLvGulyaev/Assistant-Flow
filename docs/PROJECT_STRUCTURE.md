@@ -122,9 +122,12 @@ Assistant-Flow/
 │   └── p9_6*.py                         # Форензик-скрипты security-эпохи (visibility backfill, parity)
 │
 ├── docs/                                # Публичная документация
+│   ├── BUSINESS_VALUE.md                # Бизнес-проблема, решение, эффект, выгода
+│   ├── SYSTEM_DEMO.md                   # Скриншоты, live demo, типовой сценарий
 │   ├── DEPLOYMENT_GUIDE.md              # Развёртывание с нуля (Source of Truth)
 │   ├── DEPLOYMENT_VALIDATION_REPORT.md  # Отчёт Deployment Validation (чистое окружение)
-│   ├── USER_GUIDE.md                    # Руководство пользователя: Telegram-команды, режимы, консоль
+│   ├── USER_GUIDE.md                    # Руководство пользователя Telegram-ассистента
+│   ├── ADMIN_GUIDE.md                   # Руководство администратора консоли
 │   ├── PROJECT_STATE.md                 # Паспорт состояния проекта (статус, следующие шаги, история)
 │   ├── OPERATIONS.md                    # Эксплуатация: compose, БД, векторные бэкенды, кэш, логи
 │   ├── SECURITY_NOTES.md                # Секреты, модель доступа, RBAC, retrieval security, аудит
@@ -133,7 +136,7 @@ Assistant-Flow/
 │   ├── IMPLEMENTATION_PLAN.md           # Технический план и критерии готовности
 │   ├── DEMO_ROUTE.md                    # Маршрут проверки демо (2–5 действий)
 │   ├── DEMO_SCENARIOS.md                # Расширенная матрица демо-проверок
-│   ├── ADMIN_INDEXING.md                # Гигиена и аудит индекса базы знаний
+│   ├── ADMIN_INDEXING.md                # Индексация базы знаний: workflow и safeguard-и
 │   ├── RAG_SMOKE_TEST.md                # Smoke-проверка RAG
 │   ├── PROJECT_STRUCTURE.md             # Этот документ
 │   └── screenshots/                     # Скриншоты системы (каталог — [MEDIA_INDEX.md](screenshots/MEDIA_INDEX.md))

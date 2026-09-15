@@ -1,5 +1,7 @@
 # 🏗️ Архитектура Assistant Flow
 
+**Статус:** актуально на 2026-09-15.
+
 ![Assistant Flow: интерфейс системы (тёмная тема)](screenshots/AF_portfolio_dark.png)
 
 <p align="center"><em>
