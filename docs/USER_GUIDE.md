@@ -48,7 +48,7 @@ flowchart TB
         direction LR
         S5[Ответ сформирован] --> S6[Завершение обработки] --> A[Ответ пользователю]
     end
-    S4 --> S5
+    r1 --> r2
     style r1 fill:none,stroke:none
     style r2 fill:none,stroke:none
 ```
@@ -63,14 +63,14 @@ flowchart TB
         direction LR
         U[Вопрос по документам] --> TG[Telegram] --> S1[Запрос получен] --> S2[Маршрут: RAG] --> C{Кэш retrieval}
         C -->|MISS| R1[Поиск в векторной базе]
-        R1 --> R2[Чанки и ранжирование]
+        R1 --> R2[Чанки и ранжирование] --> R3[Запись в кэш] --> C1[Контекст из кэша]
+        C -->|HIT| C1
     end
     subgraph r2 [" "]
         direction LR
-        R3[Запись в кэш] --> C1[Контекст из кэша] --> L1[Сборка RAG prompt] --> L2[Запрос к AI-провайдеру] --> S3[Ответ RAG зафиксирован] --> S4[Завершение обработки] --> A[Ответ и источники]
+        L1[Сборка RAG prompt] --> L2[Запрос к AI-провайдеру] --> S3[Ответ RAG зафиксирован] --> S4[Завершение обработки] --> A[Ответ и источники]
     end
-    R2 --> R3
-    C -->|HIT| C1
+    r1 --> r2
     style r1 fill:none,stroke:none
     style r2 fill:none,stroke:none
 ```
@@ -89,7 +89,7 @@ flowchart TB
         direction LR
         S5[Текст извлечён] --> S6[Ответ отправлен] --> S7[Завершение обработки] --> A[Распознанный текст]
     end
-    S4 --> S5
+    r1 --> r2
     style r1 fill:none,stroke:none
     style r2 fill:none,stroke:none
 ```
@@ -109,7 +109,7 @@ flowchart TB
         T{TTS включён?} -->|да| S5[Синтез речи TTS] --> S6[Голосовая сессия завершена] --> A[Ответ в чат]
         T -->|нет| S6
     end
-    S4 --> T
+    r1 --> r2
     style r1 fill:none,stroke:none
     style r2 fill:none,stroke:none
 ```
