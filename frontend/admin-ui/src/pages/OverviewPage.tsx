@@ -17,6 +17,7 @@ import { OperationalSessionEmptyHint } from "../components/OperationalSessionEmp
 import { SectionCard } from "../components/SectionCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatRetrievalBackendTitle, retrievalReadinessForStatusBadge } from "../utils/operationalLabels";
+import { useAuth } from "../auth/AuthContext";
 
 const READINESS_KEYS: { key: string; label: string }[] = [
   { key: "database_url_configured", label: "DATABASE_URL" },
@@ -35,6 +36,7 @@ const OVERVIEW_SUMMARY_WINDOWS: Array<{ label: string; hours: number }> = [
 ];
 
 export function OverviewPage() {
+  const auth = useAuth();
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
@@ -407,7 +409,18 @@ export function OverviewPage() {
             </dd>
             <dt>Экспозиция админки</dt>
             <dd>
-              <StatusBadge status={health?.status === "ok" ? "degraded" : "warning"} />
+              {/* Реальное состояние доступа, а не health-API: required + сессия
+                  открыта → доступ закрыт Bearer-токеном (норма); auth disabled →
+                  отключено; промежуточное — н/д. */}
+              <StatusBadge
+                status={
+                  auth.authMode === "required" && auth.authenticated
+                    ? "ok"
+                    : auth.authMode === "disabled"
+                      ? "disabled"
+                      : "unknown"
+                }
+              />
             </dd>
             <dt>Последнее admin-действие</dt>
             <dd className="mono">{formatVal(lastAdmin?.stage)}</dd>
@@ -568,7 +581,9 @@ function buildOverviewWarnings(args: {
   } else if (args.chromaStatus && args.chromaStatus !== "ok") {
     out.push("Chroma недоступна или нестабильна.");
   }
-  if (args.docsSyncState !== "ok") {
+  // "unknown" (пустой список, например роль не видит ни одного документа) —
+  // не признак рассинхронизации; предупреждение только для реальных статусов.
+  if (args.docsSyncState === "warning" || args.docsSyncState === "degraded") {
     out.push("Индекс и документы потенциально рассинхронизированы.");
   }
   if (!args.readiness.openai_configured && !args.readiness.proxy_configured) {

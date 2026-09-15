@@ -123,7 +123,9 @@ def retrieval_role_for_platform(platform_role: str) -> str:
     if role in (PLATFORM_END_USER, "guest"):
         return ROLE_GUEST
     if role == PLATFORM_DEMO:
-        return ROLE_GUEST
+        # Демо-вход — витрина просмотра KB: employee-scope (public + internal),
+        # права остаются read-only (_ROLE_PERMISSIONS["demo"]).
+        return ROLE_EMPLOYEE
     return ROLE_EMPLOYEE
 
 
