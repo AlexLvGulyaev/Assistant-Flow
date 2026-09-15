@@ -77,7 +77,7 @@ python scripts/rag_smoke_test.py --reindex --question "Ваш вопрос по 
 - активный **backend** (chroma / faiss / weaviate) — источник истины: `platform_settings.active_rag_backend` в PostgreSQL, а не `RAG_BACKEND` в `.env`;
 - runtime-параметры поиска (в т.ч. `rag_top_k`) — применяются по цепочке: значение в Retrieval Settings (PostgreSQL) → переменные окружения → default кода; эффективные значения видны в панели.
 
-> ⚠️ CLI `scripts/rag_smoke_test.py` tuning-резолвер не использует: он тестирует env-конфиг, а не effective-настройки консоли. Effective-настройки проверяйте в Retrieval Settings и через UI-сессии RAG.
+> 💡 CLI `scripts/rag_smoke_test.py` использует тот же tuning-резолвер, что и прод-контур (DB override → env → default кода): smoke-тест проверяет effective-настройки, которые видит пользователь, а не сырой env-конфиг.
 
 ---
 

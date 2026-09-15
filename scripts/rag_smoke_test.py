@@ -63,6 +63,7 @@ def main() -> None:
     from services.rag_query_service import RagQueryService
     from services.retrieval.chroma_backend import ChromaBackend
     from services.retrieval.factory import build_retrieval_backend
+    from services.retrieval.retrieval_tuning_resolver import RetrievalTuningResolver
     from utils.config import load_config
 
     config = load_config()
@@ -104,8 +105,13 @@ def main() -> None:
             sys.exit(1)
 
     chat = OpenAIChatProvider(config)
-    retrieval = build_retrieval_backend(config, chroma_store=store, embeddings=embeddings)
-    rag = RagQueryService(retrieval, chat, config)
+    # Effective tuning, как в прод-контуре (DB override → env → default кода),
+    # а не сырой env-конфиг: smoke-тест проверяет то, что видит пользователь.
+    tuning = RetrievalTuningResolver(config)
+    retrieval = build_retrieval_backend(
+        config, chroma_store=store, embeddings=embeddings, tuning_resolver=tuning
+    )
+    rag = RagQueryService(retrieval, chat, config, tuning_resolver=tuning)
 
     print(f"\nQuestion: {args.question}\n")
     retrieved = rag.retrieve(args.question)
